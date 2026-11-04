@@ -2,30 +2,39 @@
 
 A small personal Android app that catches links and ideas for your knowledge base. The current version saves to a local Markdown inbox used by Obsidian, without opening Obsidian.
 
-Repository: https://github.com/VenkateshDas/sparkbox. The installed app currently retains its original **Save to Obsidian** label and package ID.
+Repository: https://github.com/VenkateshDas/sparkbox. The package ID keeps its original name (`me.venkatesh.saveobsidian`) so updates install in place.
 
 **Share → Save to Obsidian → “Added” in the OnePlus island → continue reading.**
 
-The app saves the link, title, and local capture time. It has no server, accounts, advertising, analytics, or third-party app dependencies.
+The app saves the link (or text), title, and local capture time. It has no server, accounts, advertising, analytics, or third-party app dependencies.
 
 ## Current behavior
 
-Example entry appended to the selected Markdown file:
+Example entries appended to the selected Markdown file:
 
 ```markdown
-- 2026-11-04 22:24 — Article or video title
-  <https://example.org/article>
+- 🔗 Article or video title
+  https://example.org/article
+  Captured: 2026-11-04 22:24 · via Sparkbox
+
+- 📝 A shared thought with no link
+  Captured: 2026-11-04 22:25 · via Sparkbox
+  Why: added from the app
+  Ideas: more lines are indented
+    four spaces
 ```
 
-1. Receive an Android `ACTION_SEND` intent with MIME type `text/*`.
-2. Extract the first HTTP(S) URL and capture the phone's current local date/time.
-3. Persist the capture in the app's private queue before starting background work.
-4. Prefer the shared subject as the title. Otherwise fetch the page's HTML `<title>` over HTTPS. On lookup failure, use the URL.
-5. Decode HTML entities and normalize title whitespace.
-6. Append to the user-selected inbox, flush the write, and read it back to verify that all existing bytes plus the exact new entry are present.
-7. Show a brief completed progress acknowledgment, then stop the foreground service.
+The format matches the Telegram captures already in the inbox, so `Process inbox` in the vault reads both. See `Agents.md` → Inbox Entry Format in the vault.
 
-Obsidian is not launched. On the tested OnePlus, the notification title is **Source added** and the compact island text is **Added**. The acknowledgment clears after approximately 3.5 seconds once processing finishes. Other devices may show a regular notification rather than an island.
+1. Receive an Android `ACTION_SEND` intent with MIME type `text/*`.
+2. Extract the first HTTP(S) URL, remove tracking parameters (`utm_*`, `fbclid`, `gclid`, `igshid`, `mc_cid`, `mc_eid`, `si`, `ref_src`), and capture the phone's current local date/time. Text with no link is saved as a 📝 text entry.
+3. Persist the capture in the app's private queue before starting background work.
+4. Choose the title: shared subject, then text written before the link, then a fetched title (`og:title`, `twitter:title`, `<title>`; YouTube uses its oEmbed endpoint), then the URL. Generic titles such as "YouTube" or "LinkedIn" count as missing.
+5. Skip the write and show "Already in inbox" if the URL is already a line in the file.
+6. Append to the user-selected inbox with one blank line between entries, flush the write, and read it back to verify that all existing bytes plus the exact new entry are present.
+7. Show a brief completed progress acknowledgment, then stop the foreground service. A failed save keeps the capture privately, with Retry in the notification and on the home screen. Retrying is safe because step 5 finds an entry that did land.
+
+Obsidian is not launched. On the tested OnePlus, the notification title is **Source added** (**Already in inbox** for a duplicate) and the compact island text is **Added**. The acknowledgment clears after approximately 3.5 seconds once processing finishes. Other devices may show a regular notification rather than an island.
 
 **Saving is local.** The existing GSync plugin uploads entries when Obsidian next opens and syncs. This app does not independently synchronize with Google Drive.
 
@@ -33,13 +42,17 @@ Obsidian is not launched. On the tested OnePlus, the notification title is **Sou
 
 Install `build/Save-to-Obsidian.apk` on the phone. The APK is personally signed, not published on Google Play.
 
-1. Open **Save to Obsidian** from the launcher.
-2. Tap **Choose Inbox.md** and select the existing local inbox using Android's document picker.
+1. Open **Sparkbox** from the launcher. The home screen shows a setup checklist until the inbox and notifications are ready.
+2. Tap **Choose inbox file** and select the existing local inbox (any `.md` file) using Android's document picker.
 3. Allow notifications.
 4. On OnePlus, open the app's notification settings and enable **Show Live Updates on Live Alerts**. Enable banners if a standard notification fallback is desired.
-5. Share a webpage, video, or post link and select **Save to Obsidian**.
+5. Share a webpage, video, post link, or plain text and select **Sparkbox**.
 
-The original setup uses `Tiny experiments/Sources/Inbox.md`. The picker initially opens `Documents/Obsidian/Tiny experiments/Sources`. That path is a navigation hint, not a direct filesystem permission. The actual destination is the persisted URI of the selected file. The current picker validates the filename `Inbox.md` case-insensitively, not the entire parent path.
+The home screen lists the entries currently in the inbox file, newest first. The card heading shows the total (for example "Inbox · 42") with a line below: links, notes, and how many have a Why or Ideas. It re-reads the file every time you open the app, so entries you delete or process in Obsidian disappear from the list. Tap an entry to write **Why I saved this** and **My ideas** (saved as `Why:` and `Ideas:` lines under the entry) or to **Delete** it from the file; long-press copies the link. It also lists captures that need attention (Retry, Copy, Discard), **Open Inbox in Obsidian**, and **Check inbox access**.
+
+**Editing rewrites the file.** Saving a share is still append-only, but delete and notes rewrite `Inbox.md`. Before each rewrite the app keeps the previous bytes in a private copy, refuses if the file changed since it was read, verifies the result, and restores the old bytes if verification fails. Edits made in Obsidian between opening the app and tapping Save are refused with "Refresh and try again". It follows the system dark mode.
+
+The original setup uses `Tiny experiments/Sources/Inbox.md`. The picker initially opens `Documents/Obsidian/Tiny experiments/Sources`. That path is a navigation hint, not a direct filesystem permission. The actual destination is the persisted URI of the selected file. The picker accepts any `.md` file.
 
 The old Automate flow is no longer required.
 
@@ -48,8 +61,9 @@ The old Automate flow is no longer required.
 | File | Responsibility |
 |---|---|
 | `AndroidManifest.xml` | App identity, permissions, share intent filter, activities, short foreground service |
-| `src/me/venkatesh/saveobsidian/ShareActivity.java` | Receive shares, persist jobs, start service, and provide setup/document selection logic |
-| `src/me/venkatesh/saveobsidian/SetupActivity.java` | Separate launcher entry point; inherits the setup logic |
+| `src/me/venkatesh/saveobsidian/ShareActivity.java` | Receive shares, queue them privately, start the service |
+| `src/me/venkatesh/saveobsidian/SetupActivity.java` | Launcher home screen: setup checklist, live inbox list with edit/delete, needs-attention list, inbox picker |
+| `src/me/venkatesh/saveobsidian/InboxFile.java` | Pure inbox parsing: list entries, delete one, set Why/Ideas |
 | `src/me/venkatesh/saveobsidian/CaptureService.java` | Private queue, title lookup orchestration, append/verification, progress and completion notifications |
 | `src/me/venkatesh/saveobsidian/PageTitle.java` | Bounded HTTPS HTML title retrieval |
 | `src/me/venkatesh/saveobsidian/Capture.java` | URL extraction, title cleanup, local timestamp, Markdown formatting |
@@ -59,7 +73,7 @@ The old Automate flow is no longer required.
 | `build.py` | Compile, test, package, sign, and verify without Gradle |
 | `docs/design.md` | Original design plus the later background-capture extension; the extension supersedes URI delivery |
 
-App ID: `me.venkatesh.saveobsidian`. Current version: `1.1`, version code `2`. Minimum API: `26`. Compile/target API: `35`.
+App ID: `me.venkatesh.saveobsidian`. Current version: `1.2`, version code `3`. Minimum API: `26`. Compile/target API: `35`.
 
 ## Build
 

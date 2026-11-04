@@ -1,0 +1,9 @@
+<resources>
+    <color name="w_bg">#141415</color>
+    <color name="w_surface">#19191B</color>
+    <color name="w_ink">#EDEDED</color>
+    <color name="w_sub">#A1A1A6</color>
+    <color name="w_muted">#85858B</color>
+    <color name="w_line">#14EDEDED</color>
+    <color name="w_accent">#4CC38A</color>
+</resources>
