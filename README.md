@@ -1,6 +1,8 @@
-# Save to Obsidian
+# Sparkbox
 
-A small personal Android app that captures shared links into an Obsidian inbox without opening Obsidian.
+A small personal Android app that catches links and ideas for your knowledge base. The current version saves to a local Markdown inbox used by Obsidian, without opening Obsidian.
+
+Repository: https://github.com/VenkateshDas/sparkbox. The installed app currently retains its original **Save to Obsidian** label and package ID.
 
 **Share → Save to Obsidian → “Added” in the OnePlus island → continue reading.**
 
