@@ -29,14 +29,14 @@ public class ShareActivity extends Activity {
     }
     private void receive(CharSequence extra, CharSequence subject) {
         try {
-            String text = extra == null ? "" : extra.toString().trim();
-            if (text.isEmpty()) { Toast.makeText(this, "Nothing to save", Toast.LENGTH_SHORT).show(); return; }
+            String text = extra == null ? "" : extra.toString();
+            if (text.trim().isEmpty()) { Toast.makeText(this, "Nothing to save", Toast.LENGTH_SHORT).show(); return; }
             String found = null;
             try { found = Capture.firstUrl(text); } catch (IllegalArgumentException noLink) { }
             if (found == null) CaptureService.enqueue(this, "text", "", "", text);
             else {
                 String title = Capture.chooseTitle(subject == null ? "" : subject.toString(), Capture.leadingText(text, found), "", Capture.cleanUrl(found));
-                CaptureService.enqueue(this, "link", Capture.cleanUrl(found), title, "");
+                CaptureService.enqueue(this, "link", Capture.cleanUrl(found), title, text);
             }
             if (getSharedPreferences("capture", 0).getString("inbox", "").isEmpty())
                 startActivity(new Intent(this, SetupActivity.class).putExtra("waiting", true)); // the capture is safe in the queue

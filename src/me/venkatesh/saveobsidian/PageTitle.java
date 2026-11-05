@@ -35,10 +35,11 @@ final class PageTitle {
         connection.setRequestProperty("User-Agent", AGENT);
         try {
             if (connection.getResponseCode() != 200) return "";
+            long deadline = System.currentTimeMillis() + 5000;
             try (InputStream input = connection.getInputStream(); ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[4096];
                 int size;
-                while (bytes.size() < 65536 && (size = input.read(buffer)) != -1) bytes.write(buffer, 0, size);
+                while (System.currentTimeMillis() < deadline && bytes.size() < 65536 && (size = input.read(buffer, 0, Math.min(buffer.length, 65536 - bytes.size()))) != -1) bytes.write(buffer, 0, size);
                 return new JSONObject(new String(bytes.toByteArray(), StandardCharsets.UTF_8)).optString("title");
             }
         } finally { connection.disconnect(); }

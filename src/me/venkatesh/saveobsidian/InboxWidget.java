@@ -25,8 +25,9 @@ public class InboxWidget extends AppWidgetProvider {
     }
 
     private static RemoteViews build(Context context) {
-        String total = "–", week = "–", oldest = "–";
+        String total = "–", week = "–", oldest = "–", status = "Choose inbox";
         if (!context.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) {
+            status = "Reconnect inbox";
             try {
                 java.util.List<InboxFile.Entry> entries = InboxFile.parse(CaptureService.readText(context));
                 LocalDate today = LocalDate.now(), first = null;
@@ -38,12 +39,14 @@ public class InboxWidget extends AppWidgetProvider {
                     long ago = ChronoUnit.DAYS.between(d, today);
                     if (ago >= 0 && ago < 7) thisWeek++;
                 }
+                status = "Sparkbox · remaining inbox";
                 total = String.valueOf(entries.size());
                 week = String.valueOf(thisWeek);
                 if (first != null) oldest = ChronoUnit.DAYS.between(first, today) + "d";
             } catch (Exception unreadable) { }
         }
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_inbox);
+        views.setTextViewText(R.id.w_status, status);
         views.setTextViewText(R.id.w_n1, total);
         views.setTextViewText(R.id.w_n2, week);
         views.setTextViewText(R.id.w_n3, oldest);

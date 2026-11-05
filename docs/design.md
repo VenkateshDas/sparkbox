@@ -19,3 +19,31 @@ Replaces the entry format with the vault's Telegram style (`- 🔗 Title`, bare 
 ## Edit and delete from the app (2026-11-04)
 
 Reverses two earlier decisions: no Why note, and strictly append-only. The home screen now lists entries parsed from the inbox file itself (the file is the source of truth, so Obsidian deletions show on next open) and offers Why/Ideas notes and delete. Both rewrite the file, so `CaptureService.edit` is the single truncating write: private pre-edit copy (`inbox.bak`), compare-before-write against the bytes read, read-back verification, restore on failure, one lock shared with appends. Entries are identified by their exact text; if it changed meanwhile the edit is refused. The old recent-captures log is removed because the file replaces it. Known gap: Obsidian edits between the compare and the write are not detectable; the window is milliseconds.
+
+
+## 1.2.1 stabilization (2026-11-05)
+
+Supersedes the earlier claims about safe retry and automatic restore. Captures retain full text within an explicit 1 MiB UTF-8 limit. Shared payloads preserve captions and additional URLs. Notes expose a complete body. Only supported capture blocks outside YAML/fences are parsed. Mutations use exact snapshot and occurrence position; ambiguous raw-only selection is refused.
+
+Editing retains a destination-scoped original/attempted journal before any truncating write. Snapshot checks and read-back verification reduce risk but cannot make SAF transactional across apps. Unverified writes retain recovery evidence and block subsequent writes. No automatic rollback can overwrite newer external edits. Recovery exports and explicit resolution live in the app. Old backup files stay exportable.
+
+Interrupted appends remain uncertain until the complete rendered entry is found. Retry never appends an uncertain capture again. Other queued appends wait for uncertain/unreadable captures to be resolved. Failed pre-write jobs can retry normally. Queue order is creation time, processing has a two-minute budget, and timeout stops the service while preserving jobs. The immediate foreground notification and separate share activity remain intact.
+
+This release fixes correctness, recovery, existing UI accessibility and misleading labels. Search, title correction, new review flows, quick notes, new widget actions and independent sync remain outside stabilization scope.
+
+
+## 1.2.2: inbox polish and Settings (2026-11-05)
+
+Audit: the earlier-backup card displaced the first capture, a full storage path dominated the header, and file/notification actions followed every inbox row. The existing neutral palette and annotation rail were already appropriate; this is a focused polish pass.
+
+- Product: a personal link-and-thought inbox feeding a Markdown vault.
+- Character: quiet, considered, readable.
+- World: a notebook's contents, with maintenance kept out of the reading flow.
+- Moments: saved titles and the user's annotation preview carry the emphasis.
+- Signature: the existing thin green rail identifies entries with personal context.
+
+Keep the graphite palette (#141415 / #19191B / #232325, text #EDEDED, accent #4CC38A in dark mode), system sans, 4dp spacing and 48dp touch targets. Use 16sp for the wordmark, 32sp for Inbox, 17sp medium for capture titles and 12–14sp for supporting text. No decorative assets or entrance animations are needed. This direction follows the user's request to move maintenance into Settings and retain a clear front page.
+
+A Settings page inside the existing Activity reuses the original file, notification and recovery actions. It keeps separate scroll positions for Settings and Inbox. Back and state restoration preserve the current screen and selected filter. A compact inbox notice links to Settings when unresolved jobs or edit journals exist; historical backups alone produce no notice. First-time file setup stays on the inbox because it is required to begin capturing.
+
+Design process reference: [unslop by Damir Sokolovsky (@heydamir)](https://heydamir.design/unslop), CC BY 4.0. No skill text or assets are bundled with the app.

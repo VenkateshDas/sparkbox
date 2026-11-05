@@ -18,20 +18,24 @@ import java.util.concurrent.*;
 public class CaptureService extends Service {
     private static final String CHANNEL = "source-capture";
     private static final int ACTIVE = 100;
+    static final String CHANGED = "me.venkatesh.saveobsidian.INBOX_CHANGED";
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
-    private int lastStart;
+    private volatile int lastStart;
+    private volatile long deadline;
+    private volatile boolean stopping;
     private long lastPost;
     /** One writer at a time: appends from shares and edits from the home screen. */
     private static final Object LOCK = new Object();
 
     /** Queue one capture privately before any work. kind is "link" or "text". */
     static void enqueue(Context context, String kind, String url, String title, String text) throws Exception {
+        if (text.getBytes(StandardCharsets.UTF_8).length > 1024 * 1024) throw new IOException("Shared text exceeds 1 MiB. Nothing was shortened; save it directly to your vault.");
         File directory = new File(context.getFilesDir(), "pending");
         if (!directory.exists() && !directory.mkdirs()) throw new IOException("Cannot create capture queue");
         File file = new File(directory, UUID.randomUUID().toString() + ".json");
         writeJob(file, new JSONObject().put("kind", kind).put("url", url).put("title", title).put("text", text)
-            .put("time", Capture.timestamp()).put("phase", "queued"));
+            .put("time", Capture.timestamp()).put("created", System.currentTimeMillis()).put("writeAttempted", false).put("phase", "queued"));
     }
     /** Chosen inbox file name; older installs did not store it, so fall back to the document id. */
     static String inboxName(Context context) {
@@ -44,34 +48,76 @@ public class CaptureService extends Service {
         } catch (Exception e) { return "inbox"; }
     }
 
-    /**
-     * Rewrite the inbox: delete an entry or change its notes. This is the one place the file is
-     * truncated, so it keeps a private copy first, refuses if the file changed since it was read,
-     * verifies the result, and puts the old bytes back if verification fails.
-     */
-    static void edit(Context context, java.util.function.Function<String, String> change) throws Exception {
+    static String inboxLocation(Context context) {
+        String saved = context.getSharedPreferences("capture", 0).getString("inbox", "");
+        try {
+            String id = android.provider.DocumentsContract.getDocumentId(Uri.parse(saved));
+            if (id.contains("/")) return id.substring(id.indexOf(':') + 1);
+        } catch (Exception ignored) { }
+        return inboxName(context);
+    }
+
+    /** Snapshot-checked edit. Unverified writes keep both versions; never auto-restore. */
+    static void edit(Context context, String destination, String snapshot, java.util.function.Function<String, String> change) throws Exception {
         synchronized (LOCK) {
             String saved = context.getSharedPreferences("capture", 0).getString("inbox", "");
-            if (saved.isEmpty()) throw new IOException("No inbox file chosen");
+            if (saved.isEmpty() || !saved.equals(destination)) throw new IOException("Inbox destination changed. Close the editor and refresh. Your draft is kept.");
+            if (hasRecovery(context, saved)) throw new IOException("Resolve Edit recovery before changing this inbox.");
             Uri inbox = Uri.parse(saved);
             android.content.ContentResolver resolver = context.getContentResolver();
-            byte[] before = readInbox(resolver, inbox);
-            byte[] after = change.apply(new String(before, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
-            if (java.util.Arrays.equals(before, after)) return;
-            AtomicFile backup = new AtomicFile(new File(context.getFilesDir(), "inbox.bak"));
-            FileOutputStream copy = backup.startWrite();
-            try { copy.write(before); backup.finishWrite(copy); } catch (Exception e) { backup.failWrite(copy); throw e; }
-            if (!java.util.Arrays.equals(before, readInbox(resolver, inbox))) throw new IOException("Inbox changed in Obsidian. Refresh and try again.");
-            overwrite(resolver, inbox, after);
-            if (!java.util.Arrays.equals(after, readInbox(resolver, inbox))) {
-                try { overwrite(resolver, inbox, before); } catch (Exception ignored) { }
-                throw new IOException("Could not verify the edit. The previous inbox was restored.");
-            }
+            byte[] before = snapshot.getBytes(StandardCharsets.UTF_8);
+            byte[] after = change.apply(snapshot).getBytes(StandardCharsets.UTF_8);
+            if (after.length > 32 * 1024 * 1024) throw new IOException("Edited inbox exceeds 32 MiB. Your draft is kept.");
+            File recovery = new File(context.getFilesDir(), "edit-recovery/" + UUID.randomUUID() + ".json");
+            VerifiedEdit.apply(before, after, () -> readInbox(resolver, inbox), bytes -> overwrite(resolver, inbox, bytes), (original, attempted) -> {
+                File directory = recovery.getParentFile();
+                if (!directory.exists() && !directory.mkdirs()) throw new IOException("Cannot create edit recovery");
+                // One atomic journal keeps destination and both versions together, including after process death.
+                writeJob(recovery, new JSONObject().put("destination", saved).put("name", inboxName(context))
+                    .put("time", Capture.timestamp()).put("encoding", "base64").put("before", android.util.Base64.encodeToString(original, android.util.Base64.NO_WRAP))
+                    .put("after", android.util.Base64.encodeToString(attempted, android.util.Base64.NO_WRAP)));
+            });
+            new AtomicFile(recovery).delete();
             InboxWidget.refresh(context);
         }
     }
+    static File[] recoveries(Context context) {
+        File[] files = new File(context.getFilesDir(), "edit-recovery").listFiles((dir, name) -> name.endsWith(".json"));
+        return files == null ? new File[0] : files;
+    }
+    private static boolean hasRecovery(Context context, String destination) {
+        for (File file : recoveries(context)) {
+            try { if (destination.equals(readJob(file).optString("destination"))) return true; }
+            catch (Exception unreadable) { return true; } // retain/block until exported and inspected
+        }
+        return false;
+    }
+    private static boolean hasUncertainCapture(Context context, File current) {
+        for (File file : pending(context)) {
+            if (file.equals(current)) continue;
+            try {
+                JSONObject job = readJob(file);
+                if (job.optBoolean("writeAttempted") || "writing".equals(job.optString("phase")) || "uncertain".equals(job.optString("phase")) ||
+                    ("failed".equals(job.optString("phase")) && !job.has("writeAttempted"))) return true;
+            } catch (Exception unreadable) { return true; }
+        }
+        return false;
+    }
+    /** Explicit dismissal only; serialized with writes. Exports never write to the selected inbox. */
+    static void dismissRecovery(File file) { synchronized (LOCK) { new AtomicFile(file).delete(); } }
+    static void discard(Context context, File file) throws Exception {
+        synchronized (LOCK) {
+            File trash = new File(context.getFilesDir(), "discarded");
+            if (!trash.exists() && !trash.mkdirs()) throw new IOException("Cannot keep discarded capture");
+            if (file.exists() && !file.renameTo(new File(trash, file.getName()))) throw new IOException("Capture could not be discarded");
+        }
+    }
     private static byte[] readInbox(android.content.ContentResolver resolver, Uri inbox) throws Exception {
-        try (InputStream input = resolver.openInputStream(inbox)) { return readAll(input); }
+        try (InputStream input = resolver.openInputStream(inbox)) {
+            byte[] bytes = readAll(input);
+            if (bytes.length > 32 * 1024 * 1024) throw new IOException("Inbox exceeds 32 MiB");
+            return bytes;
+        }
     }
     private static void overwrite(android.content.ContentResolver resolver, Uri inbox, byte[] bytes) throws Exception {
         try (ParcelFileDescriptor descriptor = resolver.openFileDescriptor(inbox, "rwt")) {
@@ -89,7 +135,13 @@ public class CaptureService extends Service {
     }
     static File[] pending(Context context) {
         File[] jobs = new File(context.getFilesDir(), "pending").listFiles((dir, name) -> name.endsWith(".json"));
-        return jobs == null ? new File[0] : jobs;
+        if (jobs == null) return new File[0];
+        java.util.Arrays.sort(jobs, java.util.Comparator.comparingLong(CaptureService::created).thenComparing(File::getName));
+        return jobs;
+    }
+    private static long created(File file) {
+        try { return readJob(file).optLong("created", file.lastModified()); }
+        catch (Exception e) { return file.lastModified(); }
     }
     static JSONObject readJob(File file) throws Exception {
         try (InputStream input = new AtomicFile(file).openRead()) {
@@ -138,21 +190,30 @@ public class CaptureService extends Service {
         if (Build.VERSION.SDK_INT >= 34) startForeground(ACTIVE, progress, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
         else startForeground(ACTIVE, progress);
         lastPost = SystemClock.uptimeMillis();
+        if (deadline == 0) {
+            deadline = lastPost + 120000;
+            main.postDelayed(() -> onTimeout(lastStart), 140000);
+        } // leave headroom within shortService's three minutes
         String retry = intent == null ? null : intent.getStringExtra("retry");
         worker.execute(() -> {
             for (File file : pending(this)) {
+                if (stopping || SystemClock.uptimeMillis() > deadline) break;
                 if (file.getName().equals(retry)) reopen(file);
                 save(file);
             }
             main.postDelayed(() -> {
-                if (startId == lastStart) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(startId); }
+                if (startId == lastStart) { stopping = true; stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(startId); }
             }, 3500);
         });
         return START_NOT_STICKY;
     }
-    /** Clear a failed state so save() tries again. Safe: save() skips entries already in the inbox. */
+    /** Retry failed pre-write work; interrupted writes remain check-only. */
     private void reopen(File file) {
-        try { JSONObject job = readJob(file); job.put("phase", job.optString("entry").isEmpty() ? "queued" : "prepared").remove("error"); writeJob(file, job); }
+        try { JSONObject job = readJob(file);
+            if ("failed".equals(job.optString("phase")) && !job.has("writeAttempted")) job.put("phase", "uncertain");
+            if (!job.optBoolean("writeAttempted") && !"writing".equals(job.optString("phase")) && !"uncertain".equals(job.optString("phase")))
+                job.put("phase", job.optString("entry").isEmpty() ? "queued" : "prepared");
+            job.remove("error"); writeJob(file, job); }
         catch (Exception ignored) { }
     }
     private void save(File file) {
@@ -166,6 +227,8 @@ public class CaptureService extends Service {
             if ("failed".equals(phase)) return; // waits for an explicit Retry or Discard
             boolean link = "link".equals(job.optString("kind", "link"));
             String url = job.optString("url"), entry = job.optString("entry"), time = job.getString("time");
+            boolean uncertain = job.optBoolean("writeAttempted") || "writing".equals(phase) || "uncertain".equals(phase);
+            if (uncertain && entry.isEmpty()) throw new IOException("Capture state is uncertain. Export it and inspect the inbox.");
             if (entry.isEmpty()) {
                 String label;
                 if (link) {
@@ -178,6 +241,7 @@ public class CaptureService extends Service {
                         label = Capture.chooseTitle(label, "", fetched, url);
                     }
                     entry = Capture.entry(time, label, url);
+                    if (!job.optString("text").isEmpty()) entry += Capture.block("Shared text", job.optString("text"));
                 } else {
                     entry = Capture.textEntry(time, job.optString("text"));
                     label = Capture.clean(job.optString("text"));
@@ -189,30 +253,42 @@ public class CaptureService extends Service {
             String label = job.optString("label"), name = inboxName(this);
             String saved = getSharedPreferences("capture", 0).getString("inbox", "");
             if (saved.isEmpty()) throw new IOException("No inbox file chosen");
-            stage("Sparkbox", label.isEmpty() ? "Got it" : label, "Found", 55);
             stage("Sparkbox", "Filing into " + name + "…", "Filing", 85);
+            if (hasRecovery(this, saved)) throw new IOException("Resolve Edit recovery before saving to this inbox.");
+            if (!job.optString("destination", saved).equals(saved)) throw new IOException("This capture belongs to a different inbox. Export it before changing destinations.");
             Uri inbox = Uri.parse(saved);
             byte[] before;
-            try (InputStream input = getContentResolver().openInputStream(inbox)) { before = readAll(input); }
+            before = readInbox(getContentResolver(), inbox);
             String beforeText = new String(before, StandardCharsets.UTF_8);
-            // Also makes retrying an interrupted write safe: if it landed, it is found here.
-            boolean duplicate = link ? Capture.alreadyListed(beforeText, url) : beforeText.contains(entry);
+            // URL-only presence cannot resolve an interrupted write; require the entire entry.
+            boolean complete = InboxFile.containsEntry(beforeText, entry);
+            if (uncertain && !complete) {
+                job.put("phase", "uncertain");
+                throw new IOException("Save is uncertain. Check the inbox and export this capture. Retry only checks for the complete entry; it will not append again.");
+            }
+            if (!uncertain && hasUncertainCapture(this, file)) throw new IOException("Resolve the uncertain or unreadable queued capture before appending more. This capture is kept.");
+            boolean duplicate = complete || (!uncertain && link && completeLink(beforeText, url));
             if (!duplicate) {
                 byte[] addition = (Capture.separator(before) + entry + "\n").getBytes(StandardCharsets.UTF_8);
+                if (before.length + addition.length > 32 * 1024 * 1024) throw new IOException("Inbox would exceed 32 MiB. Capture remains in recovery.");
+                if (stopping || SystemClock.uptimeMillis() > deadline) return;
                 // Append only. Never open a truncating write mode.
                 try (ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(inbox, "wa")) {
                     if (descriptor == null) throw new IOException("Inbox unavailable");
-                    job.put("phase", "writing"); writeJob(file, job);
+                    job.put("phase", "writing").put("writeAttempted", true).put("destination", saved); writeJob(file, job);
                     try (FileOutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
                         output.write(addition); output.flush(); output.getFD().sync();
                     }
                 }
                 byte[] after;
-                try (InputStream input = getContentResolver().openInputStream(inbox)) { after = readAll(input); }
+                after = readInbox(getContentResolver(), inbox);
                 if (!AppendCheck.matches(before, addition, after)) throw new IOException("Inbox changed during save");
             }
+            if (duplicate && !complete && !job.optString("text").isEmpty()) discard(this, file);
             new AtomicFile(file).delete();
+            getSystemService(NotificationManager.class).cancel(file.getName().hashCode());
             InboxWidget.refresh(this);
+            sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
             if (duplicate) stage("Already in inbox", label.isEmpty() ? "This is already in " + name : label, "Seen", 100);
             else stage("Source added", label.isEmpty() ? "Saved to " + name : label + " → " + name, "Added", 100);
         } catch (Exception e) {
@@ -226,31 +302,43 @@ public class CaptureService extends Service {
     private void stage(String title, String message, String shortText, int progress) {
         long wait = lastPost + 260 - SystemClock.uptimeMillis();
         if (wait > 0) try { Thread.sleep(wait); } catch (InterruptedException ignored) { }
-        getSystemService(NotificationManager.class).notify(ACTIVE, notification(title, message, shortText, progress));
+        if (!stopping) getSystemService(NotificationManager.class).notify(ACTIVE, notification(title, message, shortText, progress));
         lastPost = SystemClock.uptimeMillis();
     }
     private void fail(File file, JSONObject job, Exception e) {
         String reason = e instanceof SecurityException || e instanceof FileNotFoundException
             ? "Inbox file moved, renamed or permission revoked. Choose the inbox file again."
             : String.valueOf(e.getMessage());
-        try { if (job != null) writeJob(file, job.put("phase", "failed").put("error", reason)); } catch (Exception ignored) { }
+        try { if (job != null) writeJob(file, job.put("phase", job.optBoolean("writeAttempted") || "uncertain".equals(job.optString("phase")) || "writing".equals(job.optString("phase")) ? "uncertain" : "failed").put("error", reason)); } catch (Exception ignored) { }
         PendingIntent retry = PendingIntent.getForegroundService(this, file.getName().hashCode(),
             new Intent(this, CaptureService.class).putExtra("retry", file.getName()), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification error = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.notification_icon)
-            .setContentTitle("Source needs attention").setContentText(reason)
+            .setVisibility(Notification.VISIBILITY_PRIVATE).setContentTitle("Source needs attention").setContentText(reason)
             .setStyle(new Notification.BigTextStyle().bigText(reason)).setContentIntent(openApp()).setAutoCancel(true)
             .addAction(new Notification.Action.Builder(null, "Retry", retry).build()).build();
         getSystemService(NotificationManager.class).notify(file.getName().hashCode(), error);
+        sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
+    }
+    private static boolean completeLink(String text, String url) {
+        for (InboxFile.Entry e : InboxFile.parse(text))
+            if (e.url.replaceAll("/+$", "").equals(url.replaceAll("/+$", "")) && !e.time.isEmpty()) return true;
+        return false;
+    }
+    @Override public void onTimeout(int startId) {
+        stopping = true;
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf(); // interrupted jobs retain their atomic journal and write-attempt flag
+        worker.shutdownNow();
     }
     static byte[] readAll(InputStream input) throws Exception {
         if (input == null) throw new IOException("Inbox unavailable");
         ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count;
         while ((count = input.read(buffer)) != -1) {
-            if (bytes.size() + count > 32 * 1024 * 1024) throw new IOException("Inbox exceeds safe read limit");
+            if (bytes.size() + count > 96 * 1024 * 1024) throw new IOException("Inbox exceeds safe read limit");
             bytes.write(buffer, 0, count);
         }
         return bytes.toByteArray();
     }
     @Override public IBinder onBind(Intent intent) { return null; }
-    @Override public void onDestroy() { worker.shutdown(); super.onDestroy(); }
+    @Override public void onDestroy() { stopping = true; main.removeCallbacksAndMessages(null); worker.shutdownNow(); super.onDestroy(); }
 }

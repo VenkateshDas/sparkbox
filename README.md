@@ -30,9 +30,9 @@ The format matches the Telegram captures already in the inbox, so `Process inbox
 2. Extract the first HTTP(S) URL, remove tracking parameters (`utm_*`, `fbclid`, `gclid`, `igshid`, `mc_cid`, `mc_eid`, `si`, `ref_src`), and capture the phone's current local date/time. Text with no link is saved as a 📝 text entry.
 3. Persist the capture in the app's private queue before starting background work.
 4. Choose the title: shared subject, then text written before the link, then a fetched title (`og:title`, `twitter:title`, `<title>`; YouTube uses its oEmbed endpoint), then the URL. Generic titles such as "YouTube" or "LinkedIn" count as missing.
-5. Skip the write and show "Already in inbox" if the URL is already a line in the file.
+5. Skip an ordinary duplicate and show "Already in inbox" if a supported dated capture already contains the URL. Uncertain jobs require an exact complete entry match.
 6. Append to the user-selected inbox with one blank line between entries, flush the write, and read it back to verify that all existing bytes plus the exact new entry are present.
-7. Show a brief completed progress acknowledgment, then stop the foreground service. A failed save keeps the capture privately, with Retry in the notification and on the home screen. Retrying is safe because step 5 finds an entry that did land.
+7. Show a brief completed progress acknowledgment, then stop the foreground service. A failed save keeps the capture privately, with Retry in the notification and in Settings. An interrupted write is check-only: Retry requires the complete rendered entry, not just the URL. Partial writes require inspection/export and explicit resolution.
 
 Obsidian is not launched. On the tested OnePlus, the notification title is **Source added** (**Already in inbox** for a duplicate) and the compact island text is **Added**. The acknowledgment clears after approximately 3.5 seconds once processing finishes. Other devices may show a regular notification rather than an island.
 
@@ -42,17 +42,17 @@ Obsidian is not launched. On the tested OnePlus, the notification title is **Sou
 
 Install `build/Save-to-Obsidian.apk` on the phone. The APK is personally signed, not published on Google Play.
 
-1. Open **Sparkbox** from the launcher. The home screen shows a setup checklist until the inbox and notifications are ready.
+1. Open **Sparkbox** from the launcher. The home screen asks for an inbox on first use. File, notification and recovery controls live in Settings.
 2. Tap **Choose inbox file** and select the existing local inbox (any `.md` file) using Android's document picker.
 3. Allow notifications.
 4. On OnePlus, open the app's notification settings and enable **Show Live Updates on Live Alerts**. Enable banners if a standard notification fallback is desired.
 5. Share a webpage, video, post link, or plain text and select **Sparkbox**.
 
-The home screen lists the entries currently in the inbox file, newest first. The card heading shows the total (for example "Inbox · 42") with a line below: links, notes, and how many have a Why or Ideas. It re-reads the file every time you open the app, so entries you delete or process in Obsidian disappear from the list. Tap an entry to write **Why I saved this** and **My ideas** (saved as `Why:` and `Ideas:` lines under the entry) or to **Delete** it from the file; long-press copies the link. It also lists captures that need attention (Retry, Copy, Discard), **Open Inbox in Obsidian**, and **Check inbox access**.
+The home screen lists the entries currently in the inbox file, newest first. The Inbox heading shows the saved count; filters show links, notes and annotated entries. It re-reads the file every time you open the app, so entries you delete or process in Obsidian disappear from the list. Tap an entry to read/copy the full note or original shared text and write **Why I saved this** and **My ideas** (saved as `Why:` and `Ideas:` lines under the entry) or to **Delete** it from the file; long-press copies the link. Settings contains captures that need attention (Retry/check, Copy, Export, confirmed Discard with a private retained copy), **Open in Obsidian**, and **Check inbox access**. The inbox shows a compact notice only when something needs attention.
 
-**Editing rewrites the file.** Saving a share is still append-only, but delete and notes rewrite `Inbox.md`. Before each rewrite the app keeps the previous bytes in a private copy, refuses if the file changed since it was read, verifies the result, and restores the old bytes if verification fails. Edits made in Obsidian between opening the app and tapping Save are refused with "Refresh and try again". It follows the system dark mode.
+**Editing rewrites the file.** Saving a share remains append-only. Annotation and deletion require the exact full inbox snapshot and destination observed when the editor opened. Identical entries are addressed by their position within that snapshot. Before a rewrite, an atomic private journal stores the original, attempted edit and destination. Sparkbox compares again immediately before writing and verifies afterwards. On any unverified write it keeps both copies, blocks further writes to that destination, and offers **Edit recovery** exports in Settings. It never automatically rolls back over possible Obsidian/GSync changes. After exporting and inspecting the inbox, explicitly resolve the recovery. SAF does not provide an atomic transaction shared with other apps: an external change in the final compare/write window can still be overwritten. Avoid editing the same inbox concurrently.
 
-The original setup uses `Tiny experiments/Sources/Inbox.md`. The picker initially opens `Documents/Obsidian/Tiny experiments/Sources`. That path is a navigation hint, not a direct filesystem permission. The actual destination is the persisted URI of the selected file. The picker accepts any `.md` file.
+The original setup uses `Tiny experiments/Sources/Inbox.md`. The picker initially opens `Documents/Obsidian`. That path is a navigation hint, not a direct filesystem permission. The actual destination is the persisted URI of the selected file. The picker accepts any `.md` file.
 
 The old Automate flow is no longer required.
 
@@ -62,7 +62,8 @@ The old Automate flow is no longer required.
 |---|---|
 | `AndroidManifest.xml` | App identity, permissions, share intent filter, activities, short foreground service |
 | `src/me/venkatesh/saveobsidian/ShareActivity.java` | Receive shares, queue them privately, start the service |
-| `src/me/venkatesh/saveobsidian/SetupActivity.java` | Launcher home screen: setup checklist, live inbox list with edit/delete, needs-attention list, inbox picker |
+| `src/me/venkatesh/saveobsidian/SetupActivity.java` | Launcher inbox with edit/delete; Settings groups file access, notifications and recovery |
+| `src/me/venkatesh/saveobsidian/VerifiedEdit.java` | Snapshot, backup, write and read-back sequence, exercised with failing storage callbacks |
 | `src/me/venkatesh/saveobsidian/InboxFile.java` | Pure inbox parsing: list entries, delete one, set Why/Ideas |
 | `src/me/venkatesh/saveobsidian/CaptureService.java` | Private queue, title lookup orchestration, append/verification, progress and completion notifications |
 | `src/me/venkatesh/saveobsidian/PageTitle.java` | Bounded HTTPS HTML title retrieval |
@@ -73,7 +74,7 @@ The old Automate flow is no longer required.
 | `build.py` | Compile, test, package, sign, and verify without Gradle |
 | `docs/design.md` | Original design plus the later background-capture extension; the extension supersedes URI delivery |
 
-App ID: `me.venkatesh.saveobsidian`. Current version: `1.2`, version code `3`. Minimum API: `26`. Compile/target API: `35`.
+App ID: `me.venkatesh.saveobsidian`. Current version: `1.2.2`, version code `5`. Minimum API: `26`. Compile/target API: `35`.
 
 ## Build
 
@@ -141,9 +142,9 @@ Persistent file access comes from the Storage Access Framework grant for the sel
 
 The destination URI is stored in private shared preferences named `capture`, key `inbox`. Pending jobs are private JSON files under `files/pending/`, containing the URL, supplied title, capture time, phase, and eventually rendered entry.
 
-Job phases are `queued` → `prepared` → `writing` → `saved`. Successful jobs are deleted. Jobs still at `queued` or `prepared` can be processed on a later service start. A job found at `writing` is treated as uncertain and never appended automatically again. Setup shows selectable recovery text; there is currently no dedicated retry/delete recovery UI. Do not promise exactly-once delivery across every possible crash.
+Job phases are `queued` → `prepared` → `writing`, followed by deletion on verified completion, or `failed` / `uncertain` on error. A persistent write-attempt flag prevents reappending uncertain jobs. Retry checks for the exact complete rendered entry; a URL-only or partial match cannot clear uncertainty. Old 1.2 failed jobs without a write-attempt flag are conservatively check-only. Uncertain/unreadable queued jobs block new appends until resolved. Captures retain the original shared payload, including captions and additional URLs; only the first URL is the primary link. A duplicate's differing original payload is retained privately for export. New captures are processed by creation time with a filename tie-breaker. Do not promise exactly-once delivery across every possible crash.
 
-The inbox is opened with append mode `wa`, never a truncating mode. Verification reads are limited to 32 MiB. The app does not lock out other applications editing or synchronizing the file: a concurrent change can cause verification to fail even if the append itself succeeded. In that case inspect the inbox before retrying. Do not implement an automatic rewrite/restore of the inbox to handle this error.
+Capture writes open the inbox with append mode `wa`, never a truncating mode. Annotation/deletion uses the separately guarded rewrite described above. Verification reads are limited to 32 MiB. The app does not lock out other applications editing or synchronizing the file: a concurrent change can cause verification to fail even if the append itself succeeded. In that case inspect the inbox before retrying. Do not implement an automatic rewrite/restore of the inbox to handle this error.
 
 ## Live Alerts implementation details
 
@@ -159,7 +160,7 @@ Preserve these details when refactoring: both notification deferral and shared s
 
 ## Validation and known limits
 
-13 JVM checks passed for parsing, formatting, timestamp shape, invalid input, and rejection of truncated/changed/duplicated append results. APK v2/v3 signing verification passed.
+82 JVM checks passed for parsing, formatting, timestamp shape, invalid input, and rejection of truncated/changed/duplicated append results. APK v2/v3 signing verification passed.
 
 Tested through USB on OnePlus CPH2767, reporting Android 17/API 37, on 2026-11-04:
 
@@ -177,9 +178,26 @@ Known limits for the next coding agent:
 - First URL only; no bulk sharing or attachments.
 - Login-protected/JavaScript-only pages may yield a generic title or fall back to the URL. Publisher suffixes are retained.
 - Title retrieval follows a bounded redirect loop, reads at most 512 KiB, and uses connect/read timeouts plus an approximately eight-second deadline; it is not a strict wall-clock cancellation mechanism.
-- No independent cloud sync, boot rescheduling, WorkManager, persistent automatic retry, or dedicated recovery management screen.
-- Queue order follows directory enumeration, not an explicit FIFO sort. Large batches and foreground-service timeout behavior need additional work before general distribution.
+- No independent cloud sync, boot rescheduling, WorkManager, or persistent automatic retry. Recovery export and confirmed dismissal are available in the app.
+- New queue entries sort by creation time. Processing stops taking work after two minutes and stops the service at 140 seconds; the platform timeout callback also stops it. Remaining captures stay private. Provider I/O can still block and needs phone testing; large batches are not a supported bulk-import feature.
 - Minimum/target API declarations are not evidence of testing every supported OS; only the phone above was tested end to end.
 - Notifications can be disabled or demoted by the user/OEM. Saving can still work without a visible island.
 
 When continuing development, start by reading the manifest, `ShareActivity`, and `CaptureService`. Keep local save confirmation separate from cloud-sync confirmation. Run `python3 build.py` after code changes, then test an actual share on the phone without launching Obsidian. Use clearly labeled test entries, preserve existing note content, and keep phone dumps, vault notes, and signing material out of Git.
+
+## 1.2.1 stabilization
+
+- Plain text is no longer truncated at 2,000 characters. A 1 MiB UTF-8 limit rejects oversized shares explicitly before queuing. New multiline/whitespace-sensitive notes use `Text:` with four-space continuation; blank lines and indentation survive. `Why:` and `Ideas:` preserve multiline whitespace too. Old entries remain readable; already-truncated historical content cannot be recovered from Markdown.
+- Link captures retain original shared text under `Shared text:`. `si` removal is limited to YouTube hosts. URL extraction removes trailing sentence punctuation and unmatched closing brackets while keeping balanced brackets. Original payloads remain available if this heuristic is unsuitable for a URL.
+- Parsing excludes frontmatter, fenced examples and ordinary Markdown lists. Editing uses a snapshot plus occurrence position. Unknown content is preserved. This is a small supported-format parser, not a general Markdown editor.
+- Failed annotations stay open and drafts are kept atomically in private storage across recreation. Copy draft annotations lets you reapply a stale draft after refreshing. Saving/deleting disables duplicate submission. Open screens refresh on capture success/failure and retry completion. Filters and scroll position survive recreation; Show older removes the previous 50-item dead end.
+- Optional notifications are separate from file readiness. Status text describes local saving. Overview/widget labels describe remaining inbox items and last-seven-day windows. Controls have 48dp minimum targets; filters expose selection; form labels and button roles are explicit. The chart has a per-day accessible description and respects disabled system animation. Insets handle system bars, cutouts and keyboard. Layouts reflow instead of squeezing the footer/stat cards.
+- Recovery journals, drafts, retained captures and export staging remain private and excluded from backup. Export uses Android's create-document picker with JSON/Markdown MIME types, checks against the active inbox URI, and verifies the exported bytes. Keep exports outside the live vault inbox; different provider aliases cannot be proven to identify distinct files. Original/attempted journals are removed only after verified success or explicit recovery resolution. The earlier `inbox.bak` remains exportable.
+
+See [stabilization validation](docs/stabilization-validation.md) for executed checks and device coverage.
+
+## 1.2.2: focused inbox and Settings
+
+The front page now contains the Sparkbox wordmark, Settings, the inbox title/count, Overview, filters and captures. Stronger capture titles, consistent row spacing and the existing annotation rail give the list a clearer hierarchy. The full file path, file picker, access check, Obsidian link, refresh, notification preferences, Live Updates, edit recovery, earlier backup and retained captures are grouped in Settings. Historical backups no longer take space above the inbox. Unresolved captures or edit recovery still produce a small Review notice on the inbox.
+
+Settings reuses the native Activity and existing recovery actions. System Back and Back to inbox return to the list; filters and page position are kept, including across Activity recreation. No new dependencies, storage format changes or capture-service changes are introduced by this UI release.

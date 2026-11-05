@@ -20,8 +20,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 
 /**
- * Sparkbox look: graphite surfaces, system sans at two weights, one green accent that only ever
- * means "your own words are attached". Sizes: 12 / 14 / 16 / 20 / 48. Spacing: multiples of 4.
+ * Sparkbox look: graphite surfaces, system sans at two weights, a green accent for annotations and confirmed status. Sizes: 12 / 14 / 16 / 20 / 48. Spacing: multiples of 4.
  */
 final class Ui {
     final Context c;
@@ -80,11 +79,35 @@ final class Ui {
     TextView button(String label, boolean primary, View.OnClickListener click) {
         TextView view = text(label, 14, MEDIUM, primary ? bg : ink);
         view.setGravity(Gravity.CENTER);
-        view.setMinHeight(dp(44));
+        view.setMinHeight(dp(48));
+        view.setMinWidth(dp(48));
         view.setPadding(dp(16), 0, dp(16), 0);
         view.setBackground(ripple(round(primary ? ink : raised, primary ? 0 : line, 10)));
         view.setOnClickListener(click);
+        buttonRole(view);
         return view;
+    }
+
+    static void buttonRole(View view) {
+        view.setFocusable(true);
+        view.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, android.view.accessibility.AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(android.widget.Button.class.getName());
+                info.setSelected(host.isSelected());
+            }
+        });
+    }
+    static void insets(View view) {
+        view.setFitsSystemWindows(false);
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout() | android.view.WindowInsets.Type.ime());
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            } else v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+            return insets;
+        });
+        view.requestApplyInsets();
     }
 
     LinearLayout card(String heading) {
@@ -122,7 +145,7 @@ final class Ui {
         LocalDate d = InboxFile.day(e.time);
         if (d == null) return e.time;
         long n = ChronoUnit.DAYS.between(d, LocalDate.now());
-        if (n <= 0) return "Today";
+        if (n == 0) return "Today";
         if (n == 1) return "Yesterday";
         if (n < 7) return n + " days ago";
         return d.getDayOfMonth() + " " + d.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault())

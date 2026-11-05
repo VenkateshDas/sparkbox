@@ -39,6 +39,7 @@ public class DashboardActivity extends Activity {
         page.setPadding(ui.dp(20), ui.dp(12), ui.dp(20), ui.dp(32));
         scroll.addView(page);
         setContentView(scroll);
+        Ui.insets(scroll);
     }
 
     @Override protected void onResume() {
@@ -54,11 +55,14 @@ public class DashboardActivity extends Activity {
     private void draw(List<InboxFile.Entry> entries) {
         page.removeAllViews();
         TextView back = ui.text("‹  Inbox", 14, Ui.MEDIUM, ui.sub);
-        back.setMinHeight(ui.dp(44));
+        back.setMinHeight(ui.dp(48));
         back.setGravity(Gravity.CENTER_VERTICAL);
+        back.setMinWidth(ui.dp(48));
         back.setOnClickListener(v -> finish());
+        Ui.buttonRole(back);
         page.addView(back, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         page.addView(ui.text("Overview", 20, Ui.MEDIUM, ui.ink), ui.lp(8));
+        page.addView(ui.text("Only items still in this inbox. Processing items in Obsidian changes these counts.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (entries == null) { page.addView(ui.text("Cannot read the inbox. Go back and choose the file again.", 14, Typeface.DEFAULT, ui.sub), ui.lp(16)); return; }
 
         LocalDate today = LocalDate.now();
@@ -83,13 +87,15 @@ public class DashboardActivity extends Activity {
 
         // Three plain figures, each with what it compares to.
         LinearLayout stats = new LinearLayout(this);
+        boolean stacked = getResources().getConfiguration().screenWidthDp < 400 || getResources().getConfiguration().fontScale > 1.2f;
+        if (stacked) stats.setOrientation(LinearLayout.VERTICAL);
         long age = oldest == null ? 0 : ChronoUnit.DAYS.between(oldest, today);
-        stats.addView(stat("In inbox", String.valueOf(total), notes == 0 ? "all links" : notes + (notes == 1 ? " is a note" : " are notes")), cell(false));
-        stats.addView(stat("This week", String.valueOf(week), "vs " + before + " the week before"), cell(true));
-        stats.addView(stat("Oldest", oldest == null ? "–" : String.valueOf(age), oldest == null ? "no dates" : (age == 1 ? "day, " : "days, ") + "since " + day(oldest)), cell(true));
+        stats.addView(stat("In inbox", String.valueOf(total), notes == 0 ? "all links" : notes + (notes == 1 ? " is a note" : " are notes")), cell(false, stacked));
+        stats.addView(stat("Last 7 days", String.valueOf(week), "vs " + before + " in prior 7 days"), cell(true, stacked));
+        stats.addView(stat("Oldest", oldest == null ? "–" : String.valueOf(age), oldest == null ? "no dates" : (age == 1 ? "day, " : "days, ") + "since " + day(oldest)), cell(true, stacked));
         page.addView(stats, ui.lp(24));
 
-        LinearLayout chart = ui.card("Captures per day");
+        LinearLayout chart = ui.card("Inbox items by capture date");
         chart.addView(new Bars(this, ui, perDay, today), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(160)));
         chart.addView(ui.text(busiest == 0 ? "Nothing captured in the last " + DAYS + " days" : "Busiest day: " + day(today.minusDays(DAYS - 1 - busiestAt)) + ", " + busiest + (busiest == 1 ? " capture" : " captures"),
             12, Typeface.DEFAULT, ui.muted), ui.lp(12));
@@ -111,7 +117,8 @@ public class DashboardActivity extends Activity {
         }
     }
 
-    private LinearLayout.LayoutParams cell(boolean gap) {
+    private LinearLayout.LayoutParams cell(boolean gap, boolean stacked) {
+        if (stacked) { LinearLayout.LayoutParams p = ui.lp(gap ? 8 : 0); return p; }
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1);
         if (gap) p.leftMargin = ui.dp(8);
         return p;
@@ -171,7 +178,11 @@ public class DashboardActivity extends Activity {
             ValueAnimator rising = ValueAnimator.ofFloat(0, 1).setDuration(400);
             rising.setInterpolator(new android.view.animation.DecelerateInterpolator(2));
             rising.addUpdateListener(a -> { rise = (float) a.getAnimatedValue(); invalidate(); });
-            rising.start();
+            if (ValueAnimator.areAnimatorsEnabled()) rising.start(); else rise = 1;
+            StringBuilder description = new StringBuilder("Inbox items by capture date. ");
+            for (int i = 0; i < DAYS; i++) description.append(today.minusDays(DAYS - 1 - i)).append(": ").append(counts[i]).append(" items. ");
+            setContentDescription(description.toString());
+            setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         }
 
         @Override protected void onDraw(Canvas canvas) {
@@ -179,7 +190,7 @@ public class DashboardActivity extends Activity {
             for (int n : counts) max = Math.max(max, n);
             float label = ui.dp(20), top = ui.dp(20), slot = getWidth() / (float) DAYS, barW = slot * 0.5f;
             float base = getHeight() - label, room = base - top;
-            paint.setTextSize(ui.dp(11) * 1f);
+            paint.setTextSize(11 * getResources().getDisplayMetrics().scaledDensity);
             paint.setStrokeWidth(1);
             for (int g = 0; g <= 2; g++) { // grid at 0, half, max
                 paint.setColor(ui.line);
@@ -193,7 +204,7 @@ public class DashboardActivity extends Activity {
             for (int i = 0; i < DAYS; i++) {
                 float cx = slot * i + slot / 2;
                 float h = counts[i] == 0 ? 0 : Math.max(ui.dp(4), room * counts[i] / max * rise);
-                paint.setColor(i == DAYS - 1 ? ui.accent : (ui.ink & 0xFFFFFF) | 0x3D000000);
+                paint.setColor(i == DAYS - 1 ? ui.ink : (ui.ink & 0xFFFFFF) | 0x3D000000);
                 if (h > 0) canvas.drawRoundRect(cx - barW / 2, base - h, cx + barW / 2, base, ui.dp(2), ui.dp(2), paint);
                 paint.setColor(i == DAYS - 1 ? ui.ink : ui.muted);
                 canvas.drawText(letters[i], cx, getHeight() - ui.dp(4), paint);

@@ -16,7 +16,7 @@ public final class Capture {
     private static final Pattern META = Pattern.compile("<meta\\b[^>]*>", Pattern.CASE_INSENSITIVE);
     private static final Pattern META_NAME = Pattern.compile("(?:property|name)\\s*=\\s*[\"'](?:og|twitter):title[\"']", Pattern.CASE_INSENSITIVE);
     private static final Pattern META_CONTENT = Pattern.compile("content\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')", Pattern.CASE_INSENSITIVE);
-    private static final Pattern TRACKING = Pattern.compile("(?i)utm_.*|fbclid|gclid|igshid|mc_[ce]id|si|ref_src");
+    private static final Pattern TRACKING = Pattern.compile("(?i)utm_.*|fbclid|gclid|igshid|mc_[ce]id|ref_src");
     private static final Set<String> GENERIC = new HashSet<>(Arrays.asList(
         "youtube", "linkedin", "instagram", "x", "reddit", "facebook", "tiktok", "twitter", "x (formerly twitter)"));
 
@@ -24,6 +24,15 @@ public final class Capture {
         Matcher m = URL.matcher(text == null ? "" : text);
         if (!m.find()) throw new IllegalArgumentException("No webpage link was shared. Share the page or post link and try again.");
         String value = m.group();
+        // Remove prose punctuation and unmatched closing brackets; keep balanced URL brackets.
+        while (!value.isEmpty()) {
+            char end = value.charAt(value.length() - 1);
+            char open = end == ')' ? '(' : end == ']' ? '[' : end == '}' ? '{' : 0;
+            if (end == '.' || end == ',' || end == ';' || end == '!' || end == '\'' ||
+                    (open != 0 && value.chars().filter(c -> c == end).count() > value.chars().filter(c -> c == open).count()))
+                value = value.substring(0, value.length() - 1);
+            else break;
+        }
         URI uri = URI.create(value);
         if (uri.getHost() == null || uri.getUserInfo() != null) throw new IllegalArgumentException("This link is not supported.");
         return value;
@@ -35,9 +44,11 @@ public final class Capture {
         String fragment = hash < 0 ? "" : url.substring(hash), rest = hash < 0 ? url : url.substring(0, hash);
         int q = rest.indexOf('?');
         if (q < 0) return url;
+        String host = URI.create(url).getHost();
+        boolean youtube = host != null && (host.equalsIgnoreCase("youtu.be") || host.equalsIgnoreCase("youtube.com") || host.toLowerCase(Locale.ROOT).endsWith(".youtube.com"));
         StringBuilder kept = new StringBuilder();
         for (String param : rest.substring(q + 1).split("&")) {
-            if (param.isEmpty() || TRACKING.matcher(param.split("=", 2)[0]).matches()) continue;
+            if (param.isEmpty() || (TRACKING.matcher(param.split("=", 2)[0]).matches() || (youtube && param.split("=", 2)[0].equalsIgnoreCase("si")))) continue;
             kept.append(kept.length() == 0 ? '?' : '&').append(param);
         }
         return rest.substring(0, q) + kept + fragment;
@@ -93,20 +104,24 @@ public final class Capture {
         return "- 🔗 " + (label.isEmpty() ? url : label) + "\n  " + url + "\n  Captured: " + time + " · via Sparkbox\n";
     }
 
+    /** Full note text. Four-space continuation preserves blank lines and indentation. */
     public static String textEntry(String time, String text) {
-        String all = (text == null ? "" : text).replace("\r", "").trim();
-        if (all.length() > 2000) all = all.substring(0, 2000) + "…";
-        StringBuilder body = new StringBuilder();
-        String first = "";
-        for (String line : all.split("\n")) {
-            line = line.trim();
-            if (line.isEmpty()) continue; // a blank line would end the entry
-            if (first.isEmpty()) first = line;
-            body.append("  ").append(line).append('\n');
-        }
-        String head = first.length() > 80 ? first.substring(0, 80) + "…" : first;
-        boolean repeat = !head.equals(first) || body.length() > first.length() + 3;
-        return "- 📝 " + head + "\n" + (repeat ? body : "") + "  Captured: " + time + " · via Sparkbox\n";
+        String all = normalize(text);
+        String first = all.split("\n", -1)[0];
+        String head = clean(first);
+        if (head.length() > 80) head = head.substring(0, 80) + "…";
+        String body = all.equals(head) ? "" : block("Text", all);
+        return "- 📝 " + head + "\n" + body + "  Captured: " + time + " · via Sparkbox\n";
+    }
+
+    public static String normalize(String text) {
+        return (text == null ? "" : text).replace("\r\n", "\n").replace('\r', '\n');
+    }
+
+    public static String block(String label, String text) {
+        StringBuilder out = new StringBuilder("  " + label + ":\n");
+        for (String line : normalize(text).split("\n", -1)) out.append("    ").append(line).append('\n');
+        return out.toString();
     }
 
     /** Newlines to prepend so exactly one blank line separates entries. */

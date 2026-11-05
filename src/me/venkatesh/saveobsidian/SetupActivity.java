@@ -33,20 +33,53 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Home screen: setup checklist, captures that need attention, the inbox list. */
+/** Capture-first inbox; configuration and recovery live in Settings. */
 public class SetupActivity extends Activity {
     private LinearLayout page;
     private Ui ui;
     private boolean waiting;
+    private boolean settings;
+    private int inboxScroll, settingsScroll;
     private int filter; // 0 all, 1 links, 2 notes, 3 with your why or ideas
     private String lastText, lastError;
+    private int renderGeneration;
+    private ScrollView scroll;
+    private AlertDialog editor;
+    private EditText draftWhy, draftIdeas;
+    private InboxFile.Entry draftEntry;
+    private String draftSnapshot, draftDestination;
+    private boolean editing;
+    private boolean saving;
+    private final String draftId = java.util.UUID.randomUUID().toString();
+    private static final Object DRAFT_LOCK = new Object();
+    private int visibleLimit = 50;
+    private int restoredScroll;
+    private Bundle restoredDraft;
+    private boolean listening;
+    private final android.content.BroadcastReceiver inboxUpdates = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(android.content.Context context, Intent intent) { render(); }
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         ShareActivity.publishShortcut(this);
         ui = new Ui(this);
         waiting = getIntent().getBooleanExtra("waiting", false);
-        ScrollView scroll = new ScrollView(this);
+        if (state != null) { settings = state.getBoolean("settings"); inboxScroll = state.getInt("inboxScroll"); settingsScroll = state.getInt("settingsScroll"); restoredScroll = state.getInt("scroll"); filter = state.getInt("filter"); visibleLimit = state.getInt("visibleLimit", 50);  }
+        {
+            String savedDraft = "";
+            File draft = new File(getFilesDir(), "draft.json");
+            if (draft.exists()) try (InputStream input = new AtomicFile(draft).openRead()) {
+                savedDraft = new String(CaptureService.readAll(input), java.nio.charset.StandardCharsets.UTF_8);
+            } catch (Exception e) { toast("Draft could not be read. It remains in private storage."); }
+            if (!savedDraft.isEmpty()) try {
+                JSONObject d = new JSONObject(savedDraft);
+                restoredDraft = new Bundle();
+                for (String key : new String[]{"snapshot", "destination", "why", "ideas"}) restoredDraft.putString(key, d.getString(key));
+                restoredDraft.putInt("start", d.getInt("start"));
+            } catch (Exception ignored) { toast("Draft could not be opened. It remains in private storage."); }
+        }
+        scroll = new ScrollView(this);
         scroll.setFitsSystemWindows(true); // target 35 is edge-to-edge; keep content clear of the bars
         scroll.setBackgroundColor(ui.bg);
         page = new LinearLayout(this);
@@ -54,80 +87,162 @@ public class SetupActivity extends Activity {
         page.setPadding(ui.dp(24), ui.dp(16), ui.dp(24), ui.dp(32));
         scroll.addView(page);
         setContentView(scroll);
+        Ui.insets(scroll);
     }
-    @Override protected void onResume() { super.onResume(); render(); InboxWidget.refresh(this); }
+    @Override protected void onResume() {
+        super.onResume();
+        android.content.IntentFilter changed = new android.content.IntentFilter(CaptureService.CHANGED);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(inboxUpdates, changed, android.content.Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(inboxUpdates, changed);
+        listening = true;
+        render(); InboxWidget.refresh(this);
+    }
 
     private SharedPreferences prefs() { return getSharedPreferences("capture", 0); }
     private boolean notificationsOk() { return getSystemService(NotificationManager.class).areNotificationsEnabled(); }
 
     /** Re-read the inbox file (so deletions made in Obsidian show up) and redraw. */
     private void render() {
+        int generation = ++renderGeneration;
         new Thread(() -> {
             String text = null, error = null;
             if (!prefs().getString("inbox", "").isEmpty()) {
                 try { text = CaptureService.readText(this); } catch (Exception e) { error = "Cannot read the inbox. Choose the file again."; }
             }
             String t = text, err = error;
-            runOnUiThread(() -> { if (!isDestroyed()) draw(t, err); });
+            runOnUiThread(() -> { if (!isDestroyed() && generation == renderGeneration) draw(t, err); });
         }).start();
     }
 
     private void draw(String inboxText, String readError) {
         lastText = inboxText; lastError = readError;
+        int position = restoredScroll > 0 ? restoredScroll : scroll.getScrollY(); restoredScroll = 0;
         page.removeAllViews();
         String inbox = prefs().getString("inbox", ""), name = CaptureService.inboxName(this);
         boolean ready = !inbox.isEmpty(), notifications = notificationsOk();
         File[] jobs = CaptureService.pending(this);
 
-        header(ready, name, inboxText != null);
-        if (waiting && !ready && jobs.length > 0) {
-            LinearLayout card = ui.card("Waiting to save");
-            card.addView(ui.text(jobs.length + " capture" + (jobs.length > 1 ? "s are" : " is") + " safe in the queue. Choose your inbox file and it will be saved.", 14, Typeface.DEFAULT, ui.ink));
-            page.addView(card, ui.lp(24));
+        if (settings) {
+            settingsPage(ready, name, notifications, inbox, jobs);
+        } else {
+            header();
+            if (!ready) {
+                if (waiting && jobs.length > 0) page.addView(ui.text("Your capture is kept on this phone. Choose an inbox to finish saving.", 14, Typeface.DEFAULT, ui.sub), ui.lp(16));
+                setupCard(false, name, notifications);
+            }
+            int attention = attentionCount(jobs);
+            if (attention > 0 || CaptureService.recoveries(this).length > 0) {
+                TextView notice = settingsLink("Inbox needs attention · Review", v -> showSettings(true));
+                notice.setTextColor(ui.accent);
+                page.addView(notice, ui.lp(12));
+            }
+            inboxList(inboxText, readError);
         }
-        if (!ready || !notifications) setupCard(ready, name, notifications);
-        if (jobs.length > 0 && ready) attentionCard(jobs);
-        inboxList(inboxText, readError);
 
-        if (ready) {
-            LinearLayout actions = new LinearLayout(this);
-            actions.setGravity(Gravity.CENTER);
-            actions.addView(quietLink("Open in Obsidian", v -> openInObsidian(inbox)));
-            actions.addView(quietLink("Check access", v -> checkAccess(inbox)));
-            actions.addView(quietLink("Change file", v -> chooseInbox()));
-            if (Build.VERSION.SDK_INT >= 36)
-                actions.addView(quietLink("Live updates", v -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()))));
-            page.addView(actions, ui.lp(32));
+        scroll.post(() -> scroll.scrollTo(0, position));
+        if (!settings && restoredDraft != null && !editing) {
+            Bundle d = restoredDraft; restoredDraft = null;
+            String snapshot = d.getString("snapshot", "");
+            for (InboxFile.Entry e : InboxFile.parse(snapshot)) if (e.start == d.getInt("start")) {
+                showEntry(e, snapshot, d.getString("destination", ""), d.getString("why", ""), d.getString("ideas", "")); break;
+            }
         }
     }
 
     private TextView quietLink(String label, View.OnClickListener click) {
         TextView link = ui.text(label, 12, Typeface.DEFAULT, ui.sub);
-        link.setMinHeight(ui.dp(44));
+        link.setMinHeight(ui.dp(48));
+        link.setMinWidth(ui.dp(48));
         link.setGravity(Gravity.CENTER);
         link.setPadding(ui.dp(12), 0, ui.dp(12), 0);
         link.setOnClickListener(click);
+        Ui.buttonRole(link);
         return link;
     }
 
-    private void header(boolean ready, String name, boolean hasList) {
+    private void header() {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout words = new LinearLayout(this);
-        words.setOrientation(LinearLayout.VERTICAL);
-        words.addView(ui.text("Sparkbox", 20, Ui.MEDIUM, ui.ink));
-        words.addView(ui.text(ready ? name : "No inbox file", 12, Typeface.DEFAULT, ui.muted), ui.lp(4));
-        row.addView(words, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        if (hasList) row.addView(ui.button("Overview", false, v -> startActivity(new Intent(this, DashboardActivity.class))));
+        row.addView(ui.text("Sparkbox", 16, Ui.MEDIUM, ui.sub), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView settingsButton = quietLink("Settings", v -> showSettings(true));
+        settingsButton.setTextSize(14);
+        settingsButton.setTextColor(ui.sub);
+        row.addView(settingsButton);
         page.addView(row);
-        if (!ready) page.addView(ui.text("Choose your inbox file, then share a link or text from any app. It is added without opening Obsidian.", 14, Typeface.DEFAULT, ui.sub), ui.lp(16));
+    }
+
+    /** Reuse the native page and existing actions; no new navigation or storage layer. */
+    private void showSettings(boolean show) {
+        if (settings == show) return;
+        if (settings) settingsScroll = scroll.getScrollY(); else inboxScroll = scroll.getScrollY();
+        settings = show;
+        restoredScroll = show ? settingsScroll : inboxScroll;
+        scroll.scrollTo(0, restoredScroll);
+        draw(lastText, lastError);
+    }
+    @Override public void onBackPressed() {
+        if (settings) showSettings(false); else super.onBackPressed();
+    }
+    private TextView settingsLink(String label, View.OnClickListener click) {
+        TextView link = quietLink(label, click);
+        link.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        link.setTextSize(14);
+        link.setTextColor(ui.ink);
+        link.setPadding(0, ui.dp(8), 0, ui.dp(8));
+        link.setBackground(ui.ripple(null));
+        return link;
+    }
+    private int attentionCount(File[] jobs) {
+        int count = 0;
+        for (File file : jobs) {
+            try {
+                String phase = CaptureService.readJob(file).optString("phase");
+                if ("failed".equals(phase) || "uncertain".equals(phase) || System.currentTimeMillis() - file.lastModified() >= 120000) count++;
+            } catch (Exception unreadable) { count++; }
+        }
+        return count;
+    }
+    private void settingsPage(boolean ready, String name, boolean notifications, String inbox, File[] jobs) {
+        page.addView(settingsLink("Back to inbox", v -> showSettings(false)));
+        page.addView(ui.text("Settings", 28, Ui.MEDIUM, ui.ink), ui.lp(16));
+
+        LinearLayout destination = ui.card("Inbox file");
+        TextView location = ui.text(ready ? CaptureService.inboxLocation(this) : "No inbox chosen", 14, Typeface.DEFAULT, ui.ink);
+        location.setTextIsSelectable(true);
+        destination.addView(location);
+        destination.addView(ui.text("Saved on this phone. Your existing Obsidian sync handles other devices.", 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
+        destination.addView(settingsLink(ready ? "Change inbox file" : "Choose inbox file", v -> chooseInbox()), ui.lp(12));
+        if (ready) {
+            destination.addView(settingsLink("Check inbox access", v -> checkAccess(inbox)));
+            destination.addView(settingsLink("Open in Obsidian", v -> openInObsidian(inbox)));
+            destination.addView(settingsLink("Refresh inbox", v -> render()));
+        }
+        page.addView(destination, ui.lp(24));
+
+        LinearLayout feedback = ui.card("Notifications");
+        feedback.addView(ui.text(notifications ? "Save confirmations are enabled" : "Saving works without notifications", 14, Typeface.DEFAULT, ui.ink));
+        feedback.addView(settingsLink("Notification settings", v -> requestNotifications()), ui.lp(8));
+        if (Build.VERSION.SDK_INT >= 36) {
+            feedback.addView(settingsLink("Live updates", v -> startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()))));
+            feedback.addView(ui.text("On OnePlus, enable Live Alerts in notification settings to see the brief Added confirmation.", 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        }
+        page.addView(feedback, ui.lp(16));
+
+        page.addView(ui.text("Recovery", 18, Ui.MEDIUM, ui.ink), ui.lp(32));
+        page.addView(ui.text("Backups and captures that need checking stay here until you resolve them.", 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        if (attentionCount(jobs) > 0) attentionCard(jobs);
+        int before = page.getChildCount();
+        recoveryCards();
+        if (before == page.getChildCount() && attentionCount(jobs) == 0)
+            page.addView(ui.text("Nothing needs recovery", 14, Typeface.DEFAULT, ui.muted), ui.lp(16));
     }
 
     private void setupCard(boolean ready, String name, boolean notifications) {
-        LinearLayout card = ui.card("Set up");
+        LinearLayout card = ui.card(ready ? "Save notifications (optional)" : "Set up");
         card.addView(step(ready, ready ? "Inbox file: " + name : "Inbox file not chosen"));
-        card.addView(step(notifications, notifications ? "Notifications allowed" : "Notifications blocked"), ui.lp(12));
+        card.addView(step(notifications, notifications ? "Notifications allowed" : "Saving works without notifications"), ui.lp(12));
         card.addView(ui.button(!ready ? "Choose inbox file" : "Allow notifications", true, v -> { if (!ready) chooseInbox(); else requestNotifications(); }), ui.lp(20));
+        if (ready && !notifications) card.addView(quietLink("Dismiss", v -> { prefs().edit().putBoolean("hideNotifications", true).apply(); render(); }), ui.lp(8));
         page.addView(card, ui.lp(24));
     }
     private View step(boolean done, String label) {
@@ -144,9 +259,17 @@ public class SetupActivity extends Activity {
         LinearLayout card = null;
         for (File file : jobs) {
             JSONObject job;
-            try { job = CaptureService.readJob(file); } catch (Exception e) { continue; }
+            try { job = CaptureService.readJob(file); } catch (Exception e) {
+                LinearLayout unreadable = ui.card("Unreadable queued capture");
+                unreadable.addView(ui.button("Export recovery file", false, v -> exportFile(file)));
+                unreadable.addView(ui.button("Move to retained captures", false, v -> new AlertDialog.Builder(this)
+                    .setTitle("Remove unreadable capture from queue?").setMessage("A private recovery copy is retained. Export it before clearing app data.")
+                    .setPositiveButton("Retain and remove", (d, w) -> run("Private copy retained", () -> CaptureService.discard(this, file)))
+                    .setNegativeButton("Cancel", null).show()), ui.lp(8));
+                page.addView(unreadable, ui.lp(16)); continue;
+            }
             // A job still being saved is not a problem yet; show failed or stale (>2 min) ones.
-            if (!"failed".equals(job.optString("phase")) && System.currentTimeMillis() - file.lastModified() < 120000) continue;
+            if (!"failed".equals(job.optString("phase")) && !"uncertain".equals(job.optString("phase")) && System.currentTimeMillis() - file.lastModified() < 120000) continue;
             if (card == null) {
                 card = ui.card("Needs attention");
                 page.addView(card, ui.lp(24));
@@ -154,16 +277,22 @@ public class SetupActivity extends Activity {
             String kind = job.optString("kind", "link"), shown = job.optString("label");
             if (shown.isEmpty()) shown = "link".equals(kind) ? job.optString("url") : Capture.clean(job.optString("text"));
             String error = job.optString("error");
-            if (error.isEmpty()) error = "failed".equals(job.optString("phase")) ? "Not saved." : "Not saved yet. Retrying is safe: duplicates are skipped.";
+            if (error.isEmpty()) error = "failed".equals(job.optString("phase")) ? "Not saved." : "Queued or interrupted. Retry checks uncertain saves without appending again.";
             card.addView(ui.text(shown, 16, Ui.MEDIUM, ui.ink));
             card.addView(ui.text(error, 14, Typeface.DEFAULT, ui.sub), ui.lp(4));
-            String copy = job.optString("entry", shown);
+            String copy = job.optString("text");
+            if (copy.isEmpty()) copy = job.optString("entry", shown);
+            final String recoveryText = copy;
             LinearLayout row = new LinearLayout(this);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.addView(ui.button("Retry", true, v -> { CaptureService.start(this, file.getName()); render(); }));
-            row.addView(quietLink("Copy", v -> copy(copy)));
-            row.addView(quietLink("Discard", v -> { new AtomicFile(file).delete(); render(); }));
+            row.setOrientation(LinearLayout.VERTICAL);
+            row.addView(ui.button("Retry / check", true, v -> { CaptureService.start(this, file.getName()); render(); }));
+            row.addView(quietLink("Copy", v -> copy(recoveryText)));
+            row.addView(quietLink("Discard", v -> { new AlertDialog.Builder(this).setTitle("Discard this capture?")
+                .setMessage("It leaves the queue. A private recovery copy is kept until app data is cleared.")
+                .setPositiveButton("Discard", (d, w) -> run("Discarded; private copy kept", () -> CaptureService.discard(this, file)))
+                .setNegativeButton("Cancel", null).show(); }));
             card.addView(row, ui.lp(16));
+            card.addView(quietLink("Export full capture", v -> exportFile(file)), ui.lp(4));
         }
     }
 
@@ -185,44 +314,53 @@ public class SetupActivity extends Activity {
         int notes = 0, annotated = 0;
         for (InboxFile.Entry e : entries) { if (e.text) notes++; if (!e.why.isEmpty() || !e.ideas.isEmpty()) annotated++; }
 
-        page.addView(ui.label("Inbox"), ui.lp(32));
+        LinearLayout heading = new LinearLayout(this);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        heading.addView(ui.text("Inbox", 32, Ui.MEDIUM, ui.ink), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView overview = quietLink("Overview", v -> startActivity(new Intent(this, DashboardActivity.class)));
+        overview.setTextSize(14);
+        heading.addView(overview);
+        page.addView(heading, ui.lp(20));
+        page.addView(ui.text(entries.size() + (entries.size() == 1 ? " saved capture" : " saved captures"), 13, Typeface.DEFAULT, ui.muted), ui.lp(8));
         if (entries.isEmpty()) {
             page.addView(ui.text("The inbox is empty", 16, Ui.MEDIUM, ui.ink), ui.lp(16));
-            page.addView(ui.text("Share a link or text from any app and it is added here and to your Obsidian file.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
+            page.addView(ui.text("Share a link or text from any app. It is saved on this phone; your existing Obsidian sync handles other devices.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
             return;
         }
         HorizontalScrollView chipScroll = new HorizontalScrollView(this);
         chipScroll.setHorizontalScrollBarEnabled(false);
         LinearLayout chips = new LinearLayout(this);
-        String[] names = {"All", "Links", "Notes", "With why"};
+        String[] names = {"All", "Links", "Notes", "Annotated"};
         int[] counts = {entries.size(), entries.size() - notes, notes, annotated};
         for (int i = 0; i < names.length; i++) {
             int which = i;
             boolean on = filter == i;
             TextView chip = ui.text(names[i] + "  " + counts[i], 14, on ? Ui.MEDIUM : Typeface.DEFAULT, on ? ui.ink : ui.sub);
             chip.setGravity(Gravity.CENTER);
-            chip.setMinHeight(ui.dp(40));
+            chip.setMinHeight(ui.dp(48));
             chip.setPadding(ui.dp(12), 0, ui.dp(12), 0);
-            chip.setBackground(ui.ripple(ui.round(on ? ui.raised : 0, on ? ui.line : 0, 10)));
-            chip.setOnClickListener(v -> { filter = which; draw(lastText, lastError); });
+            chip.setBackground(ui.ripple(ui.round(on ? ui.raised : 0, 0, 8)));
+            chip.setSelected(on);
+            Ui.buttonRole(chip);
+            chip.setOnClickListener(v -> { filter = which; visibleLimit = 50; draw(lastText, lastError); });
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             p.rightMargin = ui.dp(4);
             chips.addView(chip, p);
         }
         chipScroll.addView(chips);
-        page.addView(chipScroll, ui.lp(8));
+        page.addView(chipScroll, ui.lp(20));
 
         int shown = 0, total = 0;
         for (int i = entries.size() - 1; i >= 0; i--) {
             InboxFile.Entry entry = entries.get(i);
             if (!matches(entry)) continue;
             total++;
-            if (shown >= 50) continue;
+            if (shown >= visibleLimit) continue;
             shown++;
             page.addView(row(entry), ui.lp(shown == 1 ? 8 : 0));
         }
         if (total == 0) page.addView(ui.text("Nothing matches this filter", 14, Typeface.DEFAULT, ui.sub), ui.lp(16));
-        if (total > 50) page.addView(ui.text((total - 50) + " older entries are in Obsidian", 12, Typeface.DEFAULT, ui.muted), ui.lp(16));
+        if (total > visibleLimit) page.addView(ui.button("Show older entries (" + (total - visibleLimit) + ")", false, v -> { visibleLimit += 50; draw(lastText, lastError); }), ui.lp(16));
     }
 
     /** One inbox entry. A thin accent rail marks entries that carry your own words. */
@@ -238,13 +376,13 @@ public class SetupActivity extends Activity {
         row.addView(rail, railParams);
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(ui.dp(12), ui.dp(12), 0, ui.dp(12));
-        TextView title = ui.text(entry.title, 16, Typeface.DEFAULT, ui.ink);
+        body.setPadding(ui.dp(12), ui.dp(16), 0, ui.dp(16));
+        TextView title = ui.text(entry.title, 17, Ui.MEDIUM, ui.ink);
         title.setMaxLines(2);
         title.setEllipsize(TextUtils.TruncateAt.END);
         body.addView(title);
         String source = entry.text || entry.url.isEmpty() ? "Note" : Ui.host(entry.url);
-        body.addView(ui.text(source + " · " + Ui.when(entry) + (entry.ideas.isEmpty() ? "" : " · Has ideas"), 12, Typeface.DEFAULT, ui.muted), ui.lp(4));
+        body.addView(ui.text(source + " · " + Ui.when(entry) + (mine ? " · Annotated" : ""), 12, Typeface.DEFAULT, ui.muted), ui.lp(4));
         if (!entry.why.isEmpty()) {
             TextView why = ui.text(entry.why.split("\n")[0], 14, Typeface.DEFAULT, ui.sub);
             why.setMaxLines(2);
@@ -253,8 +391,9 @@ public class SetupActivity extends Activity {
         }
         row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         row.setBackground(ui.ripple(null));
-        row.setOnClickListener(v -> showEntry(entry));
-        row.setOnLongClickListener(v -> { copy(entry.url.isEmpty() ? entry.title : entry.url); return true; });
+        row.setOnClickListener(v -> showEntry(entry, lastText, prefs().getString("inbox", ""), entry.why, entry.ideas));
+        Ui.buttonRole(row);
+        row.setOnLongClickListener(v -> { copy(entry.text ? entry.body : entry.url); return true; });
         box.addView(row);
         View rule = new View(this);
         rule.setBackgroundColor(ui.line);
@@ -262,32 +401,165 @@ public class SetupActivity extends Activity {
         return box;
     }
 
-    private void showEntry(InboxFile.Entry entry) {
+    private void showEntry(InboxFile.Entry entry, String snapshot, String destination, String whyValue, String ideasValue) {
+        if (editing) return;
+        editing = true; draftEntry = entry; draftSnapshot = snapshot; draftDestination = destination;
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(ui.dp(24), ui.dp(8), ui.dp(24), 0);
-        if (!entry.url.isEmpty()) {
-            TextView link = ui.text(entry.url, 12, Typeface.DEFAULT, ui.accent);
-            link.setOnClickListener(v -> open(entry.url));
-            form.addView(link);
+        if (!entry.url.isEmpty()) form.addView(ui.button("Open source", false, v -> open(entry.url)));
+        if (entry.text || !entry.sharedText.isEmpty()) {
+            TextView body = ui.text(entry.text ? entry.body : entry.sharedText, 16, Typeface.DEFAULT, ui.ink);
+            body.setTextIsSelectable(true); form.addView(body, ui.lp(16));
         }
-        form.addView(ui.label("Why I saved this"), ui.lp(20));
-        EditText why = field(entry.why, 2);
+        form.addView(quietLink(entry.text ? "Copy full note" : "Copy link", v -> copy(entry.text ? entry.body : entry.url)), ui.lp(8));
+        form.addView(ui.text(entry.time, 12, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        TextView whyLabel = ui.label("Why I saved this");
+        form.addView(whyLabel, ui.lp(20));
+        EditText why = field(whyValue, 2); draftWhy = why;
+        why.setId(View.generateViewId()); whyLabel.setLabelFor(why.getId());
         form.addView(why, ui.lp(8));
-        form.addView(ui.label("My ideas"), ui.lp(16));
-        EditText ideas = field(entry.ideas, 4);
+        TextView ideasLabel = ui.label("My ideas"); form.addView(ideasLabel, ui.lp(16));
+        EditText ideas = field(ideasValue, 4); draftIdeas = ideas;
+        ideas.setId(View.generateViewId()); ideasLabel.setLabelFor(ideas.getId());
         form.addView(ideas, ui.lp(8));
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(form);
-        new AlertDialog.Builder(this).setTitle(entry.title).setView(scroll)
-            .setPositiveButton("Save", (d, w) -> run("Saved to Obsidian", () -> CaptureService.edit(this,
-                t -> InboxFile.setNotes(t, entry.raw, why.getText().toString(), ideas.getText().toString()))))
-            .setNegativeButton("Cancel", null)
-            .setNeutralButton("Delete", (d, w) -> new AlertDialog.Builder(this).setTitle("Delete this entry?")
-                .setMessage(entry.title + "\n\nIt is removed from the inbox file.")
-                .setPositiveButton("Delete", (d2, w2) -> run("Deleted", () -> CaptureService.edit(this, t -> InboxFile.delete(t, entry.raw))))
-                .setNegativeButton("Cancel", null).show())
-            .show();
+        form.addView(quietLink("Copy draft annotations", v -> copy("Why: " + why.getText() + "\nIdeas: " + ideas.getText())), ui.lp(8));
+        ScrollView content = new ScrollView(this); content.addView(form);
+        editor = new AlertDialog.Builder(this).setTitle(entry.title).setView(content)
+            .setPositiveButton("Save", null).setNegativeButton("Close", null).setNeutralButton("Delete", null).create();
+        editor.setCanceledOnTouchOutside(false);
+        editor.setOnCancelListener(d -> keepDraft());
+        editor.setOnDismissListener(d -> { editing = false; editor = null; if (!isDestroyed()) render(); });
+        editor.setOnShowListener(d -> {
+            editor.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+                if (why.getText().toString().equals(entry.why) && ideas.getText().toString().equals(entry.ideas)) { clearDraft(); editor.dismiss(); }
+                else new AlertDialog.Builder(this).setTitle("Keep this draft?").setMessage("Keep it for next time, or discard your unsaved changes.")
+                    .setPositiveButton("Keep draft", (dialog, w) -> { keepDraft(); editor.dismiss(); })
+                    .setNegativeButton("Discard changes", (dialog, w) -> { clearDraft(); editor.dismiss(); }).show();
+            });
+            editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                String whyText = why.getText().toString(), ideasText = ideas.getText().toString();
+                keepDraft(); setEditorEnabled(false);
+                new Thread(() -> {
+                    try {
+                        CaptureService.edit(this, destination, snapshot, t -> InboxFile.setNotes(t, entry, whyText, ideasText));
+                        runOnUiThread(() -> { clearDraft(); if (isDestroyed()) return; if (editor != null) editor.dismiss(); toast("Saved to inbox on this phone"); render(); });
+                    } catch (Exception failure) {
+                        runOnUiThread(() -> { setEditorEnabled(true); if (!isDestroyed()) new AlertDialog.Builder(this)
+                            .setTitle("Draft kept; edit not confirmed").setMessage(failure.getMessage())
+                            .setPositiveButton("OK", null).show(); });
+                    }
+                }).start();
+            });
+            editor.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Delete this entry?")
+                .setMessage("It is removed from the inbox file. Unsaved annotation changes are not applied.")
+                .setPositiveButton("Delete", (dialog, w) -> {
+                    keepDraft(); setEditorEnabled(false);
+                    new Thread(() -> {
+                        try {
+                            CaptureService.edit(this, destination, snapshot, t -> InboxFile.delete(t, entry));
+                            runOnUiThread(() -> { clearDraft(); if (isDestroyed()) return; if (editor != null) editor.dismiss(); toast("Deleted"); render(); });
+                        } catch (Exception failure) { runOnUiThread(() -> { setEditorEnabled(true); if (!isDestroyed()) new AlertDialog.Builder(this)
+                            .setTitle("Delete not confirmed").setMessage(failure.getMessage()).setPositiveButton("OK", null).show(); }); }
+                    }).start();
+                }).setNegativeButton("Cancel", null).show());
+        });
+        editor.show();
+        keepDraft();
+    }
+    private void setEditorEnabled(boolean enabled) {
+        saving = !enabled;
+        if (editor == null) return;
+        draftWhy.setEnabled(enabled); draftIdeas.setEnabled(enabled);
+        for (int button : new int[]{AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL})
+            editor.getButton(button).setEnabled(enabled);
+        editor.setCancelable(enabled);
+    }
+    private void keepDraft() {
+        if (saving || draftEntry == null || draftWhy == null) return;
+        synchronized (DRAFT_LOCK) {
+        AtomicFile draft = new AtomicFile(new File(getFilesDir(), "draft.json"));
+        java.io.FileOutputStream out = null;
+        try {
+            byte[] bytes = new JSONObject().put("id", draftId).put("snapshot", draftSnapshot).put("destination", draftDestination)
+                .put("start", draftEntry.start).put("why", draftWhy.getText().toString()).put("ideas", draftIdeas.getText().toString()).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            out = draft.startWrite(); out.write(bytes); draft.finishWrite(out);
+        } catch (Exception e) { if (out != null) draft.failWrite(out); toast("Could not keep draft. Copy your text before leaving."); }
+        }
+    }
+
+    private void clearDraft() {
+        saving = false;
+        synchronized (DRAFT_LOCK) {
+            AtomicFile file = new AtomicFile(new File(getFilesDir(), "draft.json"));
+            try (InputStream input = file.openRead()) {
+                JSONObject saved = new JSONObject(new String(CaptureService.readAll(input), java.nio.charset.StandardCharsets.UTF_8));
+                if (draftId.equals(saved.optString("id"))) file.delete();
+            } catch (Exception ignored) { } // leave unreadable recovery intact
+        }
+        draftEntry = null; draftWhy = null; draftIdeas = null;
+    }
+    @Override protected void onPause() {
+        if (listening) { unregisterReceiver(inboxUpdates); listening = false; }
+        if (editing) keepDraft(); super.onPause();
+    }
+    @Override protected void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        state.putBoolean("settings", settings);
+        state.putInt("inboxScroll", settings ? inboxScroll : scroll.getScrollY());
+        state.putInt("settingsScroll", settings ? scroll.getScrollY() : settingsScroll);
+        state.putInt("scroll", scroll.getScrollY()); state.putInt("filter", filter); state.putInt("visibleLimit", visibleLimit);
+        if (editing) keepDraft();
+    }
+
+    private void export(String text, String name) { exportBytes(text.getBytes(java.nio.charset.StandardCharsets.UTF_8), name); }
+    private void exportBytes(byte[] bytes, String name) {
+        AtomicFile pending = new AtomicFile(new File(getFilesDir(), "export.txt"));
+        java.io.FileOutputStream out = null;
+        try { out = pending.startWrite(); out.write(bytes); pending.finishWrite(out); }
+        catch (Exception e) { if (out != null) pending.failWrite(out); toast("Cannot prepare export"); return; }
+        startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(name.endsWith(".json") ? "application/json" : "text/markdown").putExtra(Intent.EXTRA_TITLE, name), 3);
+    }
+    private void exportFile(File file) {
+        try (InputStream input = new AtomicFile(file).openRead()) { exportBytes(CaptureService.readAll(input), file.getName().endsWith(".bak") ? "Sparkbox-earlier-inbox.md" : "Sparkbox-recovery.json"); }
+        catch (Exception failure) { toast("Cannot read recovery file. It remains in private storage."); }
+    }
+    private String recoveryValue(JSONObject recovery, String key) {
+        return "base64".equals(recovery.optString("encoding"))
+            ? new String(android.util.Base64.decode(recovery.optString(key), android.util.Base64.DEFAULT), java.nio.charset.StandardCharsets.UTF_8)
+            : recovery.optString(key);
+    }
+    private void recoveryCards() {
+        for (File file : CaptureService.recoveries(this)) {
+            LinearLayout card = ui.card("Edit recovery");
+            try {
+                JSONObject recovery = CaptureService.readJob(file);
+                card.addView(ui.text(recovery.optString("name") + " · " + recovery.optString("time") + "\nAn edit was not confirmed. Export both copies, inspect the inbox, then resolve this recovery.", 14, Typeface.DEFAULT, ui.ink));
+                card.addView(ui.button("Export original", false, v -> export(recoveryValue(recovery, "before"), "Sparkbox-original.md")), ui.lp(12));
+                card.addView(ui.button("Export attempted edit", false, v -> export(recoveryValue(recovery, "after"), "Sparkbox-attempted.md")), ui.lp(8));
+            } catch (Exception failure) {
+                card.addView(ui.text("Recovery could not be read. Export the file before resolving it.", 14, Typeface.DEFAULT, ui.ink));
+                card.addView(ui.button("Export recovery file", false, v -> exportFile(file)), ui.lp(12));
+            }
+            card.addView(quietLink("I checked the inbox; resolve recovery", v -> new AlertDialog.Builder(this)
+                .setTitle("Resolve this recovery?").setMessage("Only do this after inspecting the inbox and exporting any copies you need. Private recovery copies will be removed.")
+                .setPositiveButton("Resolve", (d, w) -> { CaptureService.dismissRecovery(file); render(); })
+                .setNegativeButton("Cancel", null).show()), ui.lp(12));
+            page.addView(card, ui.lp(16));
+        }
+        File legacy = new File(getFilesDir(), "inbox.bak");
+        if (legacy.exists()) {
+            LinearLayout card = ui.card("Earlier edit backup");
+            card.addView(ui.button("Export earlier inbox backup", false, v -> exportFile(legacy)));
+            page.addView(card, ui.lp(16));
+        }
+        File[] discarded = new File(getFilesDir(), "discarded").listFiles((dir, name) -> name.endsWith(".json"));
+        if (discarded != null && discarded.length > 0) {
+            LinearLayout card = ui.card("Retained captures (discarded or duplicate)");
+            for (File file : discarded) card.addView(ui.button("Export retained capture", false, v -> exportFile(file)), ui.lp(8));
+            page.addView(card, ui.lp(16));
+        }
     }
     private EditText field(String value, int lines) {
         EditText edit = new EditText(this);
@@ -321,6 +593,22 @@ public class SetupActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == 3 && result == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                Uri target = data.getData();
+                if (target.toString().equals(prefs().getString("inbox", ""))) throw new java.io.IOException("Export must use a new file, not the inbox.");
+                byte[] bytes;
+                try (InputStream input = new AtomicFile(new File(getFilesDir(), "export.txt")).openRead()) { bytes = CaptureService.readAll(input); }
+                try (java.io.OutputStream out = getContentResolver().openOutputStream(target, "wt")) {
+                    if (out == null) throw new java.io.IOException("Export unavailable"); out.write(bytes); out.flush();
+                }
+                try (InputStream input = getContentResolver().openInputStream(target)) {
+                    if (!java.util.Arrays.equals(bytes, CaptureService.readAll(input))) throw new java.io.IOException("Export read-back differs");
+                }
+                toast("Recovery copy exported and verified");
+            } catch (Exception e) { toast("Export failed; private recovery copy is kept"); }
+            return;
+        }
         if (request != 1 || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         try {
@@ -346,13 +634,15 @@ public class SetupActivity extends Activity {
     @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) { render(); }
 
     private void checkAccess(String inbox) {
-        try {
+        run("Inbox is reachable and writable.", () -> {
             Uri uri = Uri.parse(inbox);
-            // Opening for append writes nothing; it proves the grant still works.
-            try (ParcelFileDescriptor d = getContentResolver().openFileDescriptor(uri, "wa")) { if (d == null) throw new java.io.IOException(); }
-            try (InputStream in = getContentResolver().openInputStream(uri)) { if (in == null) throw new java.io.IOException(); in.read(); }
-            toast("Inbox is reachable and writable.");
-        } catch (Exception e) { toast("Cannot reach the inbox. Choose the file again."); }
+            try (ParcelFileDescriptor d = getContentResolver().openFileDescriptor(uri, "wa")) {
+                if (d == null) throw new java.io.IOException("Cannot reach the inbox. Choose the file again.");
+            }
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new java.io.IOException("Cannot read the inbox. Choose the file again."); in.read();
+            }
+        });
     }
     /** Assumes Documents/Obsidian/<vault>/<path>.md, the standard layout; otherwise just opens Obsidian. */
     private void openInObsidian(String inbox) {
@@ -369,7 +659,10 @@ public class SetupActivity extends Activity {
                 return;
             }
         } catch (Exception ignored) { }
-        try { startActivity(getPackageManager().getLaunchIntentForPackage("md.obsidian")); }
+        try {
+            startActivity(getPackageManager().getLaunchIntentForPackage("md.obsidian"));
+            toast("Opened Obsidian. Automatic inbox navigation is unavailable for this file location.");
+        }
         catch (Exception e) { toast("Obsidian is not installed."); }
     }
     private void open(String url) {

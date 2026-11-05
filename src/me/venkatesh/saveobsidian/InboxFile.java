@@ -3,40 +3,47 @@ package me.venkatesh.saveobsidian;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Reads and edits the inbox text. An entry is a "- " line plus the indented lines under it.
- * Everything else (frontmatter, headings, blank lines) is left untouched.
- * ponytail: LF line endings only; Obsidian on Android writes LF.
- */
+/** Supported capture blocks only; unfamiliar Markdown stays untouched. */
 public final class InboxFile {
     public static final class Entry {
-        public final String raw, title, url, time, why, ideas;
+        public final String raw, title, url, time, why, ideas, body, sharedText;
         public final boolean text;
-        Entry(String raw, String title, String url, String time, String why, String ideas, boolean text) {
-            this.raw = raw; this.title = title; this.url = url; this.time = time; this.why = why; this.ideas = ideas; this.text = text;
+        public final int start;
+        Entry(int start, String raw, String title, String url, String time, String why, String ideas,
+                String body, String sharedText, boolean text) {
+            this.start = start; this.raw = raw; this.title = title; this.url = url; this.time = time;
+            this.why = why; this.ideas = ideas; this.body = body; this.sharedText = sharedText; this.text = text;
         }
     }
-
     private static final class Block { int start, end; String raw; }
 
     private static List<Block> blocks(String text) {
         List<Block> found = new ArrayList<>();
         int at = 0;
         Block open = null;
+        boolean yaml = text.startsWith("---\n") || text.startsWith("---\r\n") || text.startsWith("\uFEFF---\n") || text.startsWith("\uFEFF---\r\n");
+        boolean fence = false;
+        String fenceMarker = "";
         while (at <= text.length()) {
-            int nl = text.indexOf('\n', at);
-            int lineEnd = nl < 0 ? text.length() : nl;
-            String line = text.substring(at, lineEnd);
-            if (line.startsWith("- ")) {
-                if (open != null) close(open, text, found);
-                open = new Block();
-                open.start = at;
-                open.end = lineEnd;
-            } else if (open != null && line.startsWith("  ") && !line.trim().isEmpty()) {
-                open.end = lineEnd;
-            } else if (open != null) {
-                close(open, text, found);
-                open = null;
+            int nl = text.indexOf('\n', at), end = nl < 0 ? text.length() : nl;
+            String line = text.substring(at, end), trimmed = line.trim();
+            if (yaml) {
+                if (at > 0 && (trimmed.equals("---") || trimmed.equals("..."))) yaml = false;
+            } else if (!line.startsWith("  ") && (trimmed.startsWith("```") || trimmed.startsWith("~~~"))) {
+                if (open != null) { close(open, text, found); open = null; }
+                int run = 0;
+                while (run < trimmed.length() && trimmed.charAt(run) == trimmed.charAt(0)) run++;
+                String marker = trimmed.substring(0, run);
+                if (!fence) { fence = true; fenceMarker = marker; }
+                else if (marker.charAt(0) == fenceMarker.charAt(0) && marker.length() >= fenceMarker.length() && trimmed.substring(run).isEmpty()) fence = false;
+            } else if (!fence) {
+                boolean capture = line.startsWith("- 🔗 ") || line.startsWith("- 📝 ") ||
+                    line.matches("- \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d — .*");
+                if (capture) {
+                    if (open != null) close(open, text, found);
+                    open = new Block(); open.start = at; open.end = end;
+                } else if (open != null && line.startsWith("  ")) open.end = end;
+                else if (open != null) { close(open, text, found); open = null; }
             }
             if (nl < 0) break;
             at = nl + 1;
@@ -44,16 +51,15 @@ public final class InboxFile {
         if (open != null) close(open, text, found);
         return found;
     }
-    private static void close(Block b, String text, List<Block> into) { b.raw = text.substring(b.start, b.end); into.add(b); }
-
-    /** Entries in file order (oldest first). */
-    public static List<Entry> parse(String text) {
-        List<Entry> entries = new ArrayList<>();
-        for (Block b : blocks(text)) entries.add(entry(b.raw));
-        return entries;
+    private static void close(Block b, String text, List<Block> found) {
+        b.raw = text.substring(b.start, b.end);
+        found.add(b);
     }
-
-    /** Calendar day of a capture stamp: "2026-11-04 23:13 · via Sparkbox" or Telegram's "18/10/26, 7:36 AM". Null if unreadable. */
+    public static List<Entry> parse(String text) {
+        List<Entry> result = new ArrayList<>();
+        for (Block b : blocks(text)) result.add(entry(b));
+        return result;
+    }
     public static java.time.LocalDate day(String time) {
         try {
             java.util.regex.Matcher iso = java.util.regex.Pattern.compile("^(\\d{4})-(\\d\\d)-(\\d\\d)").matcher(time);
@@ -63,55 +69,70 @@ public final class InboxFile {
         } catch (java.time.DateTimeException | NumberFormatException ignored) { }
         return null;
     }
-
-    private static Entry entry(String raw) {
-        String[] lines = raw.split("\n");
+    private static Entry entry(Block block) {
+        String[] lines = block.raw.split("\n", -1);
         String head = lines[0].substring(2).trim();
         boolean note = head.startsWith("📝");
-        String title = head.replaceFirst("^(🔗|📝)\\s*", "");
-        String url = "", time = "";
-        // Sparkbox 1.1 wrote "- 2026-11-04 22:24 — Title"; show the date as the date.
+        String title = head.replaceFirst("^(🔗|📝)\\s*", ""), url = "", time = "";
         java.util.regex.Matcher old = java.util.regex.Pattern.compile("^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d) — (.*)$").matcher(title);
         if (old.matches()) { time = old.group(1); title = old.group(2); }
-        StringBuilder why = new StringBuilder(), ideas = new StringBuilder(), current = null;
+        StringBuilder why = new StringBuilder(), ideas = new StringBuilder(), body = new StringBuilder(), shared = new StringBuilder();
+        StringBuilder current = null;
+        boolean bodyPresent = false, continuation = false;
         for (int i = 1; i < lines.length; i++) {
             String line = lines[i];
-            if (line.startsWith("  Why:")) { current = why; current.append(line.substring(6).trim()); }
-            else if (line.startsWith("  Ideas:")) { current = ideas; current.append(line.substring(8).trim()); }
-            else if (line.startsWith("    ") && current != null) current.append('\n').append(line.trim());
+            if (line.startsWith("    ") && current != null) {
+                if (continuation) current.append('\n');
+                current.append(line.substring(4));
+                continuation = true;
+                continue;
+            }
+            current = null; continuation = false;
+            if (line.startsWith("  Why:")) { current = why; current.append(inline(line.substring(6))); continuation = true; }
+            else if (line.startsWith("  Ideas:")) { current = ideas; current.append(inline(line.substring(8))); continuation = true; }
+            else if (line.equals("  Text:")) { current = body; bodyPresent = true; }
+            else if (line.equals("  Shared text:")) current = shared;
+            else if (line.startsWith("  Captured:")) time = line.substring(11).trim();
             else {
-                current = null;
                 String t = line.trim();
                 if (t.startsWith("<") && t.endsWith(">")) t = t.substring(1, t.length() - 1);
-                if (url.isEmpty() && t.matches("(?i)https?://\\S+")) url = t;
-                else if (t.startsWith("Captured:")) time = t.substring(9).trim();
+                if (!note && url.isEmpty() && t.matches("(?i)https?://\\S+")) url = t;
+                else if (note && line.startsWith("  ")) {
+                    if (bodyPresent) body.append('\n');
+                    body.append(line.substring(2)); bodyPresent = true;
+                }
             }
         }
-        return new Entry(raw, title, url, time, why.toString(), ideas.toString(), note);
+        return new Entry(block.start, block.raw, title, url, time, why.toString(), ideas.toString(),
+            bodyPresent ? body.toString() : note ? title : "", shared.toString(), note);
     }
-
     private static Block find(String text, String raw) {
-        for (Block b : blocks(text)) if (b.raw.equals(raw)) return b;
-        throw new IllegalStateException("That entry changed in Obsidian. Refresh and try again.");
+        Block found = null;
+        for (Block b : blocks(text)) if (b.raw.equals(raw)) {
+            if (found != null) throw new IllegalStateException("Identical entries are ambiguous. Refresh and select the entry again.");
+            found = b;
+        }
+        if (found == null) throw new IllegalStateException("That entry changed. Refresh and try again.");
+        return found;
     }
-
-    /** Remove the entry and one following blank line, so entries stay one blank line apart. */
-    public static String delete(String text, String raw) {
-        Block b = find(text, raw);
+    private static Block find(String text, Entry entry) {
+        for (Block b : blocks(text)) if (b.start == entry.start && b.raw.equals(entry.raw)) return b;
+        throw new IllegalStateException("That entry changed. Refresh and try again.");
+    }
+    public static String delete(String text, String raw) { return delete(text, find(text, raw)); }
+    public static String delete(String text, Entry entry) { return delete(text, find(text, entry)); }
+    private static String delete(String text, Block b) {
         int end = b.end;
         for (int i = 0; i < 2 && end < text.length() && text.charAt(end) == '\n'; i++) end++;
         return text.substring(0, b.start) + text.substring(end);
     }
-
-    /** Replace the entry's Why and Ideas lines. Empty text removes the line. */
-    public static String setNotes(String text, String raw, String why, String ideas) {
-        Block b = find(text, raw);
+    public static String setNotes(String text, String raw, String why, String ideas) { return setNotes(text, find(text, raw), why, ideas); }
+    public static String setNotes(String text, Entry entry, String why, String ideas) { return setNotes(text, find(text, entry), why, ideas); }
+    private static String setNotes(String text, Block b, String why, String ideas) {
         StringBuilder out = new StringBuilder();
         boolean skipping = false;
-        String[] lines = raw.split("\n");
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-            if (i > 0 && (line.startsWith("  Why:") || line.startsWith("  Ideas:"))) { skipping = true; continue; }
+        for (String line : b.raw.split("\n", -1)) {
+            if (line.startsWith("  Why:") || line.startsWith("  Ideas:")) { skipping = true; continue; }
             if (skipping && line.startsWith("    ")) continue;
             skipping = false;
             if (out.length() > 0) out.append('\n');
@@ -120,16 +141,18 @@ public final class InboxFile {
         out.append(note("Why", why)).append(note("Ideas", ideas));
         return text.substring(0, b.start) + out + text.substring(b.end);
     }
-
+    private static String inline(String value) { return value.startsWith(" ") ? value.substring(1) : value; }
     private static String note(String label, String value) {
-        StringBuilder out = new StringBuilder();
-        boolean first = true;
-        for (String line : (value == null ? "" : value.replace("\r", "")).split("\n")) {
-            String t = line.trim();
-            if (t.isEmpty()) continue; // a blank line would end the entry
-            out.append(first ? "\n  " + label + ": " : "\n    ").append(t);
-            first = false;
-        }
+        if (value == null || value.isEmpty()) return "";
+        String[] lines = Capture.normalize(value).split("\n", -1);
+        StringBuilder out = new StringBuilder("\n  " + label + ": " + lines[0]);
+        for (int i = 1; i < lines.length; i++) out.append("\n    ").append(lines[i]);
         return out.toString();
+    }
+    /** Recovery requires the whole rendered entry at a supported block boundary. */
+    public static boolean containsEntry(String text, String rendered) {
+        String raw = rendered.endsWith("\n") ? rendered.substring(0, rendered.length() - 1) : rendered;
+        for (Block b : blocks(text)) if (b.raw.equals(raw)) return true;
+        return false;
     }
 }
