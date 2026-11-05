@@ -47,3 +47,8 @@ Keep the graphite palette (#141415 / #19191B / #232325, text #EDEDED, accent #4C
 A Settings page inside the existing Activity reuses the original file, notification and recovery actions. It keeps separate scroll positions for Settings and Inbox. Back and state restoration preserve the current screen and selected filter. A compact inbox notice links to Settings when unresolved jobs or edit journals exist; historical backups alone produce no notice. First-time file setup stays on the inbox because it is required to begin capturing.
 
 Design process reference: [unslop by Damir Sokolovsky (@heydamir)](https://heydamir.design/unslop), CC BY 4.0. No skill text or assets are bundled with the app.
+
+
+## 1.3.0: smart tags, search, tag filters (2026-11-05)
+
+Opt-in enrichment: with an OpenRouter key saved in Settings (sealed by an Android Keystore key, never in backups), each visit tags up to 40 untagged links, newest first, refreshing the list after each. The page text (capped ~3k tokens), title and URL go to the chosen model, which returns type, tags and a one-line summary. Output is forced into a whitelisted type, slug tags and one clean line (`Enrich.clean`), so page content cannot inject entries. Results are written as `Type:`, `Tags:`, `TL;DR:` lines through the same verified edit as annotations; the `Type:` line marks an entry as done. Capture is untouched and never waits on the model. No in-app spend cap: each visit is limited to 40 calls, and a credit limit on the OpenRouter key is the real stop. Provider errors stop the run quietly and the next visit retries. Search is an in-memory word match over title, link, notes, summary and tags; tag chips filter by tag. Not built: tagging right after a share, per-model pricing, notes enrichment.

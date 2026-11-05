@@ -1,6 +1,7 @@
 import me.venkatesh.saveobsidian.Capture;
 import me.venkatesh.saveobsidian.AppendCheck;
 import me.venkatesh.saveobsidian.InboxFile;
+import me.venkatesh.saveobsidian.Enrich;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
 import java.io.IOException;
@@ -156,6 +157,27 @@ public class CaptureTest {
         catch (IOException expected) { check(writes[0] == 0 && Arrays.equals(disk[0], original)); }
         VerifiedEdit.apply(original, original, () -> disk[0], b -> { throw new AssertionError(); }, (b, a) -> { throw new AssertionError(); });
         check(Arrays.equals(disk[0], original));
+        enrichChecks();
+    }
+    private static void enrichChecks() {
+        String inbox = "- 🔗 SQLite internals\n  https://a.com/x\n  Captured: 2026-11-05 10:00 · via Sparkbox\n  Why: for the db talk\n\n- 🔗 Other\n  https://b.com\n  Captured: 2026-11-05 10:01 · via Sparkbox\n";
+        String raw = InboxFile.parse(inbox).get(0).raw;
+        String tagged = InboxFile.setEnrich(inbox, raw, "article", "sqlite, db", "How SQLite stores pages.");
+        InboxFile.Entry e = InboxFile.parse(tagged).get(0);
+        check(e.type.equals("article") && e.tags.equals("sqlite, db") && e.tldr.equals("How SQLite stores pages.") && e.why.equals("for the db talk"));
+        check(InboxFile.parse(tagged).get(1).type.isEmpty() && InboxFile.parse(tagged).size() == 2);
+        String again = InboxFile.setEnrich(tagged, e.raw, "tool", "", "");
+        InboxFile.Entry f = InboxFile.parse(again).get(0);
+        check(f.type.equals("tool") && f.tags.isEmpty() && f.tldr.isEmpty() && f.why.equals("for the db talk") && !again.contains("sqlite, db"));
+        String notes = InboxFile.setNotes(tagged, InboxFile.parse(tagged).get(0), "new why", "");
+        check(InboxFile.parse(notes).get(0).tags.equals("sqlite, db") && InboxFile.parse(notes).get(0).why.equals("new why"));
+        check(e.hasTag("db") && !e.hasTag("d") && e.contains("") && e.contains("SQLITE stores") && !e.contains("postgres"));
+        String[] c = Enrich.clean(" ARTICLE ", Arrays.asList("#SQL Lite!", "sql-lite", "", "a", "b", "c", "d", "e"), "line one\nline two");
+        check(c[0].equals("article") && c[1].equals("sql-lite, a, b, c, d") && c[2].equals("line one line two"));
+        String longLine = Enrich.clean("article", Arrays.asList(), "word ".repeat(60))[2];
+        check(longLine.length() <= 200 && longLine.endsWith("word…"));
+        check(Enrich.clean("hack\n- 🔗 x", Arrays.asList(), "x")[0].equals("other"));
+        check(Enrich.pageText("<style>p{}</style><p>Hi&nbsp;<b>there</b></p><script>evil()</script>").equals("Hi&nbsp; there"));
     }
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("check #" + count); }
 }

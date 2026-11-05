@@ -69,11 +69,13 @@ public class DashboardActivity extends Activity {
         int notes = 0, mine = 0, week = 0, before = 0, busiest = 0, busiestAt = -1;
         int[] perDay = new int[DAYS];
         LocalDate oldest = null;
-        Map<String, Integer> hosts = new HashMap<>();
+        Map<String, Integer> hosts = new HashMap<>(), types = new HashMap<>(), tags = new HashMap<>();
         for (InboxFile.Entry e : entries) {
             if (e.text) notes++;
             if (!e.why.isEmpty() || !e.ideas.isEmpty()) mine++;
             if (!e.text && !e.url.isEmpty()) hosts.merge(Ui.host(e.url), 1, Integer::sum);
+            if (!e.type.isEmpty()) types.merge(e.type, 1, Integer::sum);
+            for (String t : e.tags.split(", ")) if (!t.isEmpty()) tags.merge("#" + t, 1, Integer::sum);
             LocalDate d = InboxFile.day(e.time);
             if (d == null) continue;
             if (oldest == null || d.isBefore(oldest)) oldest = d;
@@ -107,14 +109,20 @@ public class DashboardActivity extends Activity {
         mix.addView(meter("With your why or ideas", mine, total, ui.accent), ui.lp(16));
         page.addView(mix, ui.lp(16));
 
-        if (!hosts.isEmpty()) {
-            List<Map.Entry<String, Integer>> top = new ArrayList<>(hosts.entrySet());
-            top.sort((a, b) -> b.getValue() != a.getValue().intValue() ? b.getValue() - a.getValue() : a.getKey().compareTo(b.getKey()));
-            LinearLayout sources = ui.card("Top sources");
-            for (int i = 0; i < Math.min(6, top.size()); i++)
-                sources.addView(meter(top.get(i).getKey(), top.get(i).getValue(), top.get(0).getValue(), ui.muted), ui.lp(i == 0 ? 0 : 16));
-            page.addView(sources, ui.lp(16));
-        }
+        distribution("Types", types, 7);
+        distribution("Top tags", tags, 10);
+        distribution("Top sources", hosts, 6);
+    }
+
+    /** Biggest counts first, bars relative to the largest. Skipped when empty (nothing tagged yet). */
+    private void distribution(String heading, Map<String, Integer> counts, int limit) {
+        if (counts.isEmpty()) return;
+        List<Map.Entry<String, Integer>> top = new ArrayList<>(counts.entrySet());
+        top.sort((a, b) -> b.getValue() != a.getValue().intValue() ? b.getValue() - a.getValue() : a.getKey().compareTo(b.getKey()));
+        LinearLayout card = ui.card(heading);
+        for (int i = 0; i < Math.min(limit, top.size()); i++)
+            card.addView(meter(top.get(i).getKey(), top.get(i).getValue(), top.get(0).getValue(), ui.muted), ui.lp(i == 0 ? 0 : 16));
+        page.addView(card, ui.lp(16));
     }
 
     private LinearLayout.LayoutParams cell(boolean gap, boolean stacked) {

@@ -48,7 +48,9 @@ public class SetupActivity extends Activity {
     private EditText draftWhy, draftIdeas;
     private InboxFile.Entry draftEntry;
     private String draftSnapshot, draftDestination;
-    private boolean editing;
+    private volatile boolean editing;
+    private String query = "", tag = "";
+    private static final java.util.concurrent.atomic.AtomicBoolean ENRICHING = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean saving;
     private final String draftId = java.util.UUID.randomUUID().toString();
     private static final Object DRAFT_LOCK = new Object();
@@ -65,7 +67,7 @@ public class SetupActivity extends Activity {
         ShareActivity.publishShortcut(this);
         ui = new Ui(this);
         waiting = getIntent().getBooleanExtra("waiting", false);
-        if (state != null) { settings = state.getBoolean("settings"); inboxScroll = state.getInt("inboxScroll"); settingsScroll = state.getInt("settingsScroll"); restoredScroll = state.getInt("scroll"); filter = state.getInt("filter"); visibleLimit = state.getInt("visibleLimit", 50);  }
+        if (state != null) { settings = state.getBoolean("settings"); inboxScroll = state.getInt("inboxScroll"); settingsScroll = state.getInt("settingsScroll"); restoredScroll = state.getInt("scroll"); filter = state.getInt("filter"); query = state.getString("query", ""); tag = state.getString("tag", ""); visibleLimit = state.getInt("visibleLimit", 50);  }
         {
             String savedDraft = "";
             File draft = new File(getFilesDir(), "draft.json");
@@ -96,6 +98,7 @@ public class SetupActivity extends Activity {
         else registerReceiver(inboxUpdates, changed);
         listening = true;
         render(); InboxWidget.refresh(this);
+        enrichPending();
     }
 
     private SharedPreferences prefs() { return getSharedPreferences("capture", 0); }
@@ -228,6 +231,24 @@ public class SetupActivity extends Activity {
         }
         page.addView(feedback, ui.lp(16));
 
+        LinearLayout smart = ui.card("Smart tags (optional)");
+        smart.addView(ui.text("Adds a type, tags and a one-line summary to new links with your OpenRouter key. The link, title and page text are sent to OpenRouter. Off until you save a key.", 13, Typeface.DEFAULT, ui.sub));
+        boolean keySaved = !Model.key(this).isEmpty();
+        EditText key = field("", 1), model = field(prefs().getString("aiModel", Model.DEFAULT), 1);
+        key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        key.setHint(keySaved ? "Key saved. Paste a new one to replace it." : "OpenRouter API key");
+        model.setInputType(InputType.TYPE_CLASS_TEXT);
+        smart.addView(key, ui.lp(12));
+        smart.addView(model, ui.lp(8));
+        smart.addView(ui.button("Save", true, v -> saveSmart(key.getText().toString().trim(), model.getText().toString().trim())), ui.lp(12));
+        if (keySaved) {
+            int links = 0, tagged = 0;
+            if (lastText != null) for (InboxFile.Entry e : InboxFile.parse(lastText)) { links++; if (!e.type.isEmpty()) tagged++; }
+            smart.addView(ui.text(tagged + " of " + links + " captures tagged", 13, Typeface.DEFAULT, ui.muted), ui.lp(8));
+            smart.addView(settingsLink("Remove key", v -> { Model.clear(this); render(); }), ui.lp(8));
+        }
+        page.addView(smart, ui.lp(16));
+
         page.addView(ui.text("Recovery", 18, Ui.MEDIUM, ui.ink), ui.lp(32));
         page.addView(ui.text("Backups and captures that need checking stay here until you resolve them.", 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (attentionCount(jobs) > 0) attentionCard(jobs);
@@ -299,12 +320,35 @@ public class SetupActivity extends Activity {
     private interface Task { void run() throws Exception; }
 
     private boolean matches(InboxFile.Entry e) {
+        if (!tag.isEmpty() && !e.hasTag(tag)) return false;
+        if (!e.contains(query)) return false;
         switch (filter) {
             case 1: return !e.text;
             case 2: return e.text;
             case 3: return !e.why.isEmpty() || !e.ideas.isEmpty();
             default: return true;
         }
+    }
+
+    private HorizontalScrollView chipRow(LinearLayout chips) {
+        HorizontalScrollView row = new HorizontalScrollView(this);
+        row.setHorizontalScrollBarEnabled(false);
+        row.addView(chips);
+        return row;
+    }
+
+    private void addChip(LinearLayout chips, String label, boolean on, Runnable select) {
+        TextView chip = ui.text(label, 14, on ? Ui.MEDIUM : Typeface.DEFAULT, on ? ui.ink : ui.sub);
+        chip.setGravity(Gravity.CENTER);
+        chip.setMinHeight(ui.dp(48));
+        chip.setPadding(ui.dp(12), 0, ui.dp(12), 0);
+        chip.setBackground(ui.ripple(ui.round(on ? ui.raised : 0, 0, 8)));
+        chip.setSelected(on);
+        Ui.buttonRole(chip);
+        chip.setOnClickListener(v -> { select.run(); visibleLimit = 50; draw(lastText, lastError); });
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.rightMargin = ui.dp(4);
+        chips.addView(chip, p);
     }
 
     private void inboxList(String text, String error) {
@@ -327,28 +371,41 @@ public class SetupActivity extends Activity {
             page.addView(ui.text("Share a link or text from any app. It is saved on this phone; your existing Obsidian sync handles other devices.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
             return;
         }
-        HorizontalScrollView chipScroll = new HorizontalScrollView(this);
-        chipScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout chips = new LinearLayout(this);
+        EditText search = new EditText(this);
+        search.setSingleLine();
+        search.setHint("Search");
+        search.setText(query);
+        search.setTextColor(ui.ink);
+        search.setHintTextColor(ui.muted);
+        search.setTextSize(15);
+        search.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+        search.setBackground(ui.round(0, ui.line, 8));
+        search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        search.setOnEditorActionListener((v, action, event) -> { query = v.getText().toString().trim(); visibleLimit = 50; draw(lastText, lastError); return true; });
+        page.addView(search, ui.lp(16));
+
         String[] names = {"All", "Links", "Notes", "Annotated"};
         int[] counts = {entries.size(), entries.size() - notes, notes, annotated};
+        LinearLayout chips = new LinearLayout(this);
         for (int i = 0; i < names.length; i++) {
             int which = i;
-            boolean on = filter == i;
-            TextView chip = ui.text(names[i] + "  " + counts[i], 14, on ? Ui.MEDIUM : Typeface.DEFAULT, on ? ui.ink : ui.sub);
-            chip.setGravity(Gravity.CENTER);
-            chip.setMinHeight(ui.dp(48));
-            chip.setPadding(ui.dp(12), 0, ui.dp(12), 0);
-            chip.setBackground(ui.ripple(ui.round(on ? ui.raised : 0, 0, 8)));
-            chip.setSelected(on);
-            Ui.buttonRole(chip);
-            chip.setOnClickListener(v -> { filter = which; visibleLimit = 50; draw(lastText, lastError); });
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            p.rightMargin = ui.dp(4);
-            chips.addView(chip, p);
+            addChip(chips, names[i] + "  " + counts[i], filter == i, () -> { filter = which; });
         }
-        chipScroll.addView(chips);
-        page.addView(chipScroll, ui.lp(20));
+        page.addView(chipRow(chips), ui.lp(8));
+
+        java.util.Map<String, Integer> tagCounts = new java.util.HashMap<>();
+        for (InboxFile.Entry e : entries) for (String t : e.tags.split(", ")) if (!t.isEmpty()) tagCounts.merge(t, 1, Integer::sum);
+        if (!tag.isEmpty() && !tagCounts.containsKey(tag)) tag = ""; // its last entry is gone; do not strand the filter
+        if (!tagCounts.isEmpty()) {
+            List<java.util.Map.Entry<String, Integer>> top = new java.util.ArrayList<>(tagCounts.entrySet());
+            top.sort((a, b) -> b.getValue() != a.getValue().intValue() ? b.getValue() - a.getValue() : a.getKey().compareTo(b.getKey()));
+            LinearLayout tagChips = new LinearLayout(this);
+            for (java.util.Map.Entry<String, Integer> t : top.subList(0, Math.min(top.size(), 20))) {
+                String name = t.getKey();
+                addChip(tagChips, "#" + name + "  " + t.getValue(), tag.equals(name), () -> { tag = tag.equals(name) ? "" : name; });
+            }
+            page.addView(chipRow(tagChips), ui.lp(0));
+        }
 
         int shown = 0, total = 0;
         for (int i = entries.size() - 1; i >= 0; i--) {
@@ -383,6 +440,13 @@ public class SetupActivity extends Activity {
         body.addView(title);
         String source = entry.text || entry.url.isEmpty() ? "Note" : Ui.host(entry.url);
         body.addView(ui.text(source + " · " + Ui.when(entry) + (mine ? " · Annotated" : ""), 12, Typeface.DEFAULT, ui.muted), ui.lp(4));
+        if (!entry.tldr.isEmpty()) {
+            TextView tldr = ui.text(entry.tldr, 14, Typeface.DEFAULT, ui.sub);
+            tldr.setMaxLines(2);
+            tldr.setEllipsize(TextUtils.TruncateAt.END);
+            body.addView(tldr, ui.lp(8));
+        }
+        if (!entry.tags.isEmpty()) body.addView(ui.text("#" + entry.tags.replace(", ", "  #"), 12, Typeface.DEFAULT, ui.muted), ui.lp(6));
         if (!entry.why.isEmpty()) {
             TextView why = ui.text(entry.why.split("\n")[0], 14, Typeface.DEFAULT, ui.sub);
             why.setMaxLines(2);
@@ -508,7 +572,7 @@ public class SetupActivity extends Activity {
         state.putBoolean("settings", settings);
         state.putInt("inboxScroll", settings ? inboxScroll : scroll.getScrollY());
         state.putInt("settingsScroll", settings ? scroll.getScrollY() : settingsScroll);
-        state.putInt("scroll", scroll.getScrollY()); state.putInt("filter", filter); state.putInt("visibleLimit", visibleLimit);
+        state.putInt("scroll", scroll.getScrollY()); state.putInt("filter", filter); state.putString("query", query); state.putString("tag", tag); state.putInt("visibleLimit", visibleLimit);
         if (editing) keepDraft();
     }
 
@@ -561,6 +625,50 @@ public class SetupActivity extends Activity {
             page.addView(card, ui.lp(16));
         }
     }
+    private void saveSmart(String key, String model) {
+        try {
+            if (!key.isEmpty()) Model.saveKey(this, key);
+            prefs().edit().putString("aiModel", model.isEmpty() ? Model.DEFAULT : model).apply();
+            toast("Saved");
+            render();
+            enrichPending();
+        } catch (Exception e) { toast("Could not save the key"); }
+    }
+
+    /** Tags up to 40 untagged links per visit, refreshing the list after each. Any provider or inbox error ends the run quietly; the next visit retries. */
+    private void enrichPending() {
+        String key = Model.key(this), model = prefs().getString("aiModel", Model.DEFAULT);
+        if (key.isEmpty() || prefs().getString("inbox", "").isEmpty() || !ENRICHING.compareAndSet(false, true)) return;
+        new Thread(() -> {
+            String problem = null;
+            boolean changed = false;
+            try {
+                java.util.Set<String> skipped = new java.util.HashSet<>();
+                for (int calls = 0; calls < 40 && !editing; ) {
+                    String destination = prefs().getString("inbox", "");
+                    InboxFile.Entry next = null;
+                    List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(this));
+                    for (int i = all.size() - 1; i >= 0 && next == null; i--) {
+                        InboxFile.Entry e = all.get(i);
+                        if (!e.text && !e.url.isEmpty() && e.type.isEmpty() && !skipped.contains(e.raw)) next = e;
+                    }
+                    if (next == null) break;
+                    String[] result = Model.enrich(key, model, next.title, next.url);
+                    calls++;
+                    if (result == null) { skipped.add(next.raw); continue; }
+                    String raw = next.raw;
+                    CaptureService.edit(this, destination, CaptureService.readText(this), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2]));
+                    changed = true;
+                    runOnUiThread(this::render);
+                }
+            } catch (Exception stop) { problem = stop.getMessage(); }
+            finally { ENRICHING.set(false); }
+            String shown = problem != null && problem.startsWith("Smart tags") ? problem : null;
+            boolean refresh = changed;
+            runOnUiThread(() -> { if (isDestroyed()) return; if (shown != null) toast(shown); if (refresh) render(); });
+        }).start();
+    }
+
     private EditText field(String value, int lines) {
         EditText edit = new EditText(this);
         edit.setText(value);

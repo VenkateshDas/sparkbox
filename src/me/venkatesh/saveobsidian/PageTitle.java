@@ -23,7 +23,7 @@ final class PageTitle {
                 if (!title.isEmpty()) return title;
             } catch (Exception ignored) { } // fall back to the page itself
         }
-        return page(original);
+        return Capture.pageTitle(html(original, false));
     }
 
     /** YouTube's public oEmbed endpoint: real title without scraping a consent page. */
@@ -45,7 +45,8 @@ final class PageTitle {
         } finally { connection.disconnect(); }
     }
 
-    private static String page(String original) throws Exception {
+    /** Bounded HTTPS fetch. whole=false stops after &lt;head&gt;, enough for titles; true reads the body too. */
+    static String html(String original, boolean whole) throws Exception {
         URL current = new URL(original);
         long deadline = System.currentTimeMillis() + 8000;
         for (int redirects = 0; redirects <= 4; redirects++) {
@@ -81,10 +82,10 @@ final class PageTitle {
                         bytes.write(buffer, 0, size);
                         html = new String(bytes.toByteArray(), charset);
                         // og:title may follow <title>, so read the whole <head>.
-                        if (System.currentTimeMillis() > deadline || html.toLowerCase(Locale.ROOT).contains("</head")) break;
+                        if (System.currentTimeMillis() > deadline || (!whole && html.toLowerCase(Locale.ROOT).contains("</head"))) break;
                     }
                 }
-                return Capture.pageTitle(html);
+                return html;
             } finally { connection.disconnect(); }
         }
         return "";
