@@ -21,7 +21,7 @@ def run(*args):
 
 run(java / 'bin/javac', '-encoding', 'UTF-8', '-d', classes,
     root / 'src/me/venkatesh/saveobsidian/Capture.java', root / 'src/me/venkatesh/saveobsidian/AppendCheck.java',
-    root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'tests/CaptureTest.java')
+    root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'src/me/venkatesh/saveobsidian/Index.java', root / 'tests/CaptureTest.java')
 run(java / 'bin/java', '-cp', classes, 'CaptureTest')
 run(tools / 'aapt2', 'compile', '--dir', root / 'res', '-o', build / 'resources.zip')
 run(tools / 'aapt2', 'link', '-o', build / 'unsigned.apk', '-I', platform / 'android.jar',

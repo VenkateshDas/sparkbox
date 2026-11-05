@@ -2,6 +2,7 @@ import me.venkatesh.saveobsidian.Capture;
 import me.venkatesh.saveobsidian.AppendCheck;
 import me.venkatesh.saveobsidian.InboxFile;
 import me.venkatesh.saveobsidian.Enrich;
+import me.venkatesh.saveobsidian.Index;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
 import java.io.IOException;
@@ -158,6 +159,7 @@ public class CaptureTest {
         VerifiedEdit.apply(original, original, () -> disk[0], b -> { throw new AssertionError(); }, (b, a) -> { throw new AssertionError(); });
         check(Arrays.equals(disk[0], original));
         enrichChecks();
+        indexChecks();
     }
     private static void enrichChecks() {
         String inbox = "- 🔗 SQLite internals\n  https://a.com/x\n  Captured: 2026-11-05 10:00 · via Sparkbox\n  Why: for the db talk\n\n- 🔗 Other\n  https://b.com\n  Captured: 2026-11-05 10:01 · via Sparkbox\n";
@@ -178,6 +180,30 @@ public class CaptureTest {
         check(longLine.length() <= 200 && longLine.endsWith("word…"));
         check(Enrich.clean("hack\n- 🔗 x", Arrays.asList(), "x")[0].equals("other"));
         check(Enrich.pageText("<style>p{}</style><p>Hi&nbsp;<b>there</b></p><script>evil()</script>").equals("Hi&nbsp; there"));
+    }
+    private static float[] vec(float... lead) { float[] v = new float[Index.DIMS]; System.arraycopy(lead, 0, v, 0, lead.length); return v; }
+    private static void indexChecks() throws Exception {
+        String inbox = "- 🔗 Caching\n  https://a.com\n  Captured: 2026-11-05 10:00 · via Sparkbox\n  TL;DR: Cut token costs.\n\n- 🔗 Scraper\n  https://b.com\n  Captured: 2026-11-05 10:01 · via Sparkbox\n\n- 🔗 Moats\n  https://c.com\n  Captured: 2026-11-05 10:02 · via Sparkbox\n";
+        List<InboxFile.Entry> es = InboxFile.parse(inbox);
+        Index index = new Index();
+        check(index.missing(es).size() == 3 && Index.text(es.get(0)).contains("Cut token costs"));
+        index.put(Index.text(es.get(0)), vec(1, 0));
+        index.put(Index.text(es.get(1)), vec(0, 1));
+        check(index.missing(es).size() == 1 && index.missing(es).get(0).equals(Index.text(es.get(2)))); // Moats has no vector yet
+        index.put(Index.text(es.get(2)), vec(5, 5));                                                     // scaled: ranking must use unit vectors
+        List<InboxFile.Entry> hits = index.rank(vec(1, 0.1f), es, 5, 0.28f, 0);
+        check(hits.size() == 2 && hits.get(0).title.equals("Caching") && hits.get(1).title.equals("Moats")); // Scraper is orthogonal: cut by min
+        check(index.rank(vec(1, 0), es, 1, 0f, 0).size() == 1);
+        check(index.related(es.get(0), es, 3).size() == 0 || index.related(es.get(0), es, 3).get(0) != es.get(0)); // never itself
+        java.io.File file = java.io.File.createTempFile("index", ".bin");
+        index.save(file);
+        Index again = Index.load(file);
+        check(again.size() == 3 && again.missing(es).isEmpty() && again.rank(vec(1, 0.1f), es, 5, 0.28f, 0).get(0).title.equals("Caching"));
+        again.retain(es.subList(0, 1));
+        check(again.size() == 1);
+        java.nio.file.Files.write(file.toPath(), new byte[]{1, 2, 3}); // damaged file: start empty, never crash
+        check(Index.load(file).size() == 0 && Index.load(new java.io.File(file.getPath() + ".none")).size() == 0);
+        file.delete();
     }
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("check #" + count); }
 }

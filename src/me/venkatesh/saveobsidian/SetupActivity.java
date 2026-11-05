@@ -48,9 +48,9 @@ public class SetupActivity extends Activity {
     private EditText draftWhy, draftIdeas;
     private InboxFile.Entry draftEntry;
     private String draftSnapshot, draftDestination;
-    private volatile boolean editing;
+    static volatile boolean editing; // read by Tagger so background edits wait while the editor is open
+    private List<String> semanticRaw; // raw text of the closest matches, best first; null = plain word match
     private String query = "", tag = "";
-    private static final java.util.concurrent.atomic.AtomicBoolean ENRICHING = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean saving;
     private final String draftId = java.util.UUID.randomUUID().toString();
     private static final Object DRAFT_LOCK = new Object();
@@ -98,7 +98,7 @@ public class SetupActivity extends Activity {
         else registerReceiver(inboxUpdates, changed);
         listening = true;
         render(); InboxWidget.refresh(this);
-        enrichPending();
+        BackgroundJob.schedule(this);
     }
 
     private SharedPreferences prefs() { return getSharedPreferences("capture", 0); }
@@ -241,6 +241,8 @@ public class SetupActivity extends Activity {
         smart.addView(key, ui.lp(12));
         smart.addView(model, ui.lp(8));
         smart.addView(ui.button("Save", true, v -> saveSmart(key.getText().toString().trim(), model.getText().toString().trim())), ui.lp(12));
+        String problem = prefs().getString("aiProblem", "");
+        if (keySaved && !problem.isEmpty()) smart.addView(ui.text(problem, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (keySaved) {
             int links = 0, tagged = 0;
             if (lastText != null) for (InboxFile.Entry e : InboxFile.parse(lastText)) { links++; if (!e.type.isEmpty()) tagged++; }
@@ -321,7 +323,7 @@ public class SetupActivity extends Activity {
 
     private boolean matches(InboxFile.Entry e) {
         if (!tag.isEmpty() && !e.hasTag(tag)) return false;
-        if (!e.contains(query)) return false;
+        if (semanticRaw == null && !e.contains(query)) return false;
         switch (filter) {
             case 1: return !e.text;
             case 2: return e.text;
@@ -381,7 +383,7 @@ public class SetupActivity extends Activity {
         search.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
         search.setBackground(ui.round(0, ui.line, 8));
         search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
-        search.setOnEditorActionListener((v, action, event) -> { query = v.getText().toString().trim(); visibleLimit = 50; draw(lastText, lastError); return true; });
+        search.setOnEditorActionListener((v, action, event) -> { query = v.getText().toString().trim(); visibleLimit = 50; semanticSearch(); return true; });
         page.addView(search, ui.lp(16));
 
         String[] names = {"All", "Links", "Notes", "Annotated"};
@@ -407,9 +409,13 @@ public class SetupActivity extends Activity {
             page.addView(chipRow(tagChips), ui.lp(0));
         }
 
+        List<InboxFile.Entry> ordered = new java.util.ArrayList<>();
+        if (semanticRaw != null) {
+            for (String raw : semanticRaw) for (InboxFile.Entry e : entries) if (e.raw.equals(raw)) { ordered.add(e); break; }
+            page.addView(ui.text("Closest matches", 12, Typeface.DEFAULT, ui.muted), ui.lp(12));
+        } else for (int i = entries.size() - 1; i >= 0; i--) ordered.add(entries.get(i));
         int shown = 0, total = 0;
-        for (int i = entries.size() - 1; i >= 0; i--) {
-            InboxFile.Entry entry = entries.get(i);
+        for (InboxFile.Entry entry : ordered) {
             if (!matches(entry)) continue;
             total++;
             if (shown >= visibleLimit) continue;
@@ -488,6 +494,7 @@ public class SetupActivity extends Activity {
         ideas.setId(View.generateViewId()); ideasLabel.setLabelFor(ideas.getId());
         form.addView(ideas, ui.lp(8));
         form.addView(quietLink("Copy draft annotations", v -> copy("Why: " + why.getText() + "\nIdeas: " + ideas.getText())), ui.lp(8));
+        relatedSection(form, entry, snapshot, why, ideas);
         ScrollView content = new ScrollView(this); content.addView(form);
         editor = new AlertDialog.Builder(this).setTitle(entry.title).setView(content)
             .setPositiveButton("Save", null).setNegativeButton("Close", null).setNeutralButton("Delete", null).create();
@@ -631,41 +638,49 @@ public class SetupActivity extends Activity {
             prefs().edit().putString("aiModel", model.isEmpty() ? Model.DEFAULT : model).apply();
             toast("Saved");
             render();
-            enrichPending();
+            BackgroundJob.schedule(this);
         } catch (Exception e) { toast("Could not save the key"); }
     }
 
-    /** Tags up to 40 untagged links per visit, refreshing the list after each. Any provider or inbox error ends the run quietly; the next visit retries. */
-    private void enrichPending() {
-        String key = Model.key(this), model = prefs().getString("aiModel", Model.DEFAULT);
-        if (key.isEmpty() || prefs().getString("inbox", "").isEmpty() || !ENRICHING.compareAndSet(false, true)) return;
+    /** Word match shows at once; closest-meaning results replace it when the query embedding returns. */
+    private void semanticSearch() {
+        semanticRaw = null;
+        draw(lastText, lastError);
+        String key = Model.key(this), q = query, snapshot = lastText;
+        if (q.isEmpty() || key.isEmpty() || snapshot == null) return;
         new Thread(() -> {
-            String problem = null;
-            boolean changed = false;
+            List<String> hits = new java.util.ArrayList<>();
             try {
-                java.util.Set<String> skipped = new java.util.HashSet<>();
-                for (int calls = 0; calls < 40 && !editing; ) {
-                    String destination = prefs().getString("inbox", "");
-                    InboxFile.Entry next = null;
-                    List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(this));
-                    for (int i = all.size() - 1; i >= 0 && next == null; i--) {
-                        InboxFile.Entry e = all.get(i);
-                        if (!e.text && !e.url.isEmpty() && e.type.isEmpty() && !skipped.contains(e.raw)) next = e;
-                    }
-                    if (next == null) break;
-                    String[] result = Model.enrich(key, model, next.title, next.url);
-                    calls++;
-                    if (result == null) { skipped.add(next.raw); continue; }
-                    String raw = next.raw;
-                    CaptureService.edit(this, destination, CaptureService.readText(this), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2]));
-                    changed = true;
-                    runOnUiThread(this::render);
+                Index index = Index.load(new File(getFilesDir(), "index.bin"));
+                float[] vector = Model.embed(key, java.util.Collections.singletonList(q)).get(0);
+                for (InboxFile.Entry e : index.rank(vector, InboxFile.parse(snapshot), 15, Index.MIN_QUERY, 0)) hits.add(e.raw);
+            } catch (Exception offline) { hits.clear(); } // no key, no network, no index: the word match stays
+            runOnUiThread(() -> { if (!isDestroyed() && q.equals(query) && !hits.isEmpty()) { semanticRaw = hits; draw(lastText, lastError); } });
+        }).start();
+    }
+
+    /** Up to three closest captures, offline from the stored vectors; tapping one opens it. */
+    private void relatedSection(LinearLayout form, InboxFile.Entry entry, String snapshot, EditText why, EditText ideas) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        form.addView(box, ui.lp(16));
+        new Thread(() -> {
+            List<InboxFile.Entry> near = Index.load(new File(getFilesDir(), "index.bin")).related(entry, InboxFile.parse(snapshot), 3);
+            runOnUiThread(() -> {
+                if (isDestroyed() || editor == null || near.isEmpty()) return;
+                box.addView(ui.label("Related"));
+                for (InboxFile.Entry other : near) {
+                    TextView row = quietLink(other.title, v -> {
+                        if (!why.getText().toString().equals(entry.why) || !ideas.getText().toString().equals(entry.ideas)) { toast("Save or close this entry first"); return; }
+                        clearDraft(); editor.dismiss(); showEntry(other, snapshot, prefs().getString("inbox", ""), other.why, other.ideas);
+                    });
+                    row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+                    row.setTextSize(14);
+                    row.setMaxLines(2);
+                    row.setEllipsize(TextUtils.TruncateAt.END);
+                    box.addView(row);
                 }
-            } catch (Exception stop) { problem = stop.getMessage(); }
-            finally { ENRICHING.set(false); }
-            String shown = problem != null && problem.startsWith("Smart tags") ? problem : null;
-            boolean refresh = changed;
-            runOnUiThread(() -> { if (isDestroyed()) return; if (shown != null) toast(shown); if (refresh) render(); });
+            });
         }).start();
     }
 

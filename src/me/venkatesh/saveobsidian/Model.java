@@ -37,20 +37,7 @@ final class Model {
             .put("messages", new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", Enrich.SYSTEM))
                 .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + url + "\nPage text:\n" + page)));
-        HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(30000);
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Authorization", "Bearer " + key);
-        connection.setRequestProperty("Content-Type", "application/json");
-        String reply;
-        try {
-            try (OutputStream out = connection.getOutputStream()) { out.write(request.toString().getBytes(StandardCharsets.UTF_8)); }
-            int code = connection.getResponseCode();
-            if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
-            try (InputStream in = connection.getInputStream()) { reply = new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
-        } finally { connection.disconnect(); }
+        String reply = post("chat/completions", key, request);
         try {
             String content = new JSONObject(reply).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
             JSONObject out = new JSONObject(content.substring(content.indexOf('{'), content.lastIndexOf('}') + 1));
@@ -59,6 +46,38 @@ final class Model {
             for (int i = 0; array != null && i < array.length(); i++) tags.add(array.optString(i));
             return Enrich.clean(out.optString("type"), tags, out.optString("tldr"));
         } catch (Exception unusable) { return null; }
+    }
+
+    /** One float[] per input text, in order. IOException (network, key, quota) means stop for now. */
+    static List<float[]> embed(String key, List<String> texts) throws Exception {
+        String reply = post("embeddings", key, new JSONObject().put("model", Index.MODEL).put("dimensions", Index.DIMS).put("input", new JSONArray(texts)));
+        JSONArray data = new JSONObject(reply).getJSONArray("data");
+        float[][] out = new float[texts.size()][];
+        for (int i = 0; i < data.length(); i++) {
+            JSONObject item = data.getJSONObject(i);
+            JSONArray numbers = item.getJSONArray("embedding");
+            float[] v = new float[numbers.length()];
+            for (int j = 0; j < v.length; j++) v[j] = (float) numbers.getDouble(j);
+            out[item.optInt("index", i)] = v;
+        }
+        for (float[] v : out) if (v == null || v.length != Index.DIMS) throw new IOException("Smart tags paused: the embedding reply was incomplete");
+        return java.util.Arrays.asList(out);
+    }
+
+    private static String post(String path, String key, JSONObject request) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(10000);
+        connection.setReadTimeout(30000);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Authorization", "Bearer " + key);
+        connection.setRequestProperty("Content-Type", "application/json");
+        try {
+            try (OutputStream out = connection.getOutputStream()) { out.write(request.toString().getBytes(StandardCharsets.UTF_8)); }
+            int code = connection.getResponseCode();
+            if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
+            try (InputStream in = connection.getInputStream()) { return new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
+        } finally { connection.disconnect(); }
     }
 
     // --- key ---

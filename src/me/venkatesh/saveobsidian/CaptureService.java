@@ -289,6 +289,7 @@ public class CaptureService extends Service {
             getSystemService(NotificationManager.class).cancel(file.getName().hashCode());
             InboxWidget.refresh(this);
             sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
+            if (!duplicate) BackgroundJob.schedule(this);
             if (duplicate) stage("Already in inbox", label.isEmpty() ? "This is already in " + name : label, "Seen", 100);
             else stage("Source added", label.isEmpty() ? "Saved to " + name : label + " → " + name, "Added", 100);
         } catch (Exception e) {
