@@ -64,6 +64,7 @@ public class SetupActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false); // the app switcher must not show inbox contents
         ShareActivity.publishShortcut(this);
         ui = new Ui(this);
         waiting = getIntent().getBooleanExtra("waiting", false);
@@ -99,6 +100,7 @@ public class SetupActivity extends Activity {
         listening = true;
         render(); InboxWidget.refresh(this);
         BackgroundJob.schedule(this);
+        InboxWidget.refresh(this);
     }
 
     private SharedPreferences prefs() { return getSharedPreferences("capture", 0); }
@@ -231,8 +233,22 @@ public class SetupActivity extends Activity {
         }
         page.addView(feedback, ui.lp(16));
 
+        android.appwidget.AppWidgetManager widgets = android.appwidget.AppWidgetManager.getInstance(this);
+        if (widgets.isRequestPinAppWidgetSupported()) {
+            LinearLayout home = ui.card("Home screen");
+            home.addView(ui.text("One widget with your inbox, the last 14 days, the latest captures, and Write and Speak. Resize it to show more or less.", 13, Typeface.DEFAULT, ui.sub));
+            home.addView(settingsLink("Add the Sparkbox widget", v -> widgets.requestPinAppWidget(new android.content.ComponentName(this, InboxWidget.class), null, null)), ui.lp(12));
+            page.addView(home, ui.lp(16));
+        }
+
+        LinearLayout files = ui.card("Photos and documents");
+        files.addView(ui.text("Shared photos, PDFs and documents are copied into one folder of your vault and linked from the inbox. Pick the folder once.", 13, Typeface.DEFAULT, ui.sub));
+        files.addView(ui.text(Attach.ready(this) ? Attach.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        files.addView(settingsLink(Attach.ready(this) ? "Change folder" : "Choose folder", v -> chooseAttach()), ui.lp(8));
+        page.addView(files, ui.lp(16));
+
         LinearLayout smart = ui.card("Smart tags (optional)");
-        smart.addView(ui.text("Adds a type, tags and a one-line summary to new links with your OpenRouter key. The link, title and page text are sent to OpenRouter. Off until you save a key.", 13, Typeface.DEFAULT, ui.sub));
+        smart.addView(ui.text("Adds a type, tags and a one-line summary to new links with your OpenRouter key. Sent to OpenRouter: link titles and page text (not the part of a link after ?), the text of longer notes, and a short digest of every capture for search. Off until you save a key.", 13, Typeface.DEFAULT, ui.sub));
         boolean keySaved = !Model.key(this).isEmpty();
         EditText key = field("", 1), model = field(prefs().getString("aiModel", Model.DEFAULT), 1);
         key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -244,9 +260,12 @@ public class SetupActivity extends Activity {
         String problem = prefs().getString("aiProblem", "");
         if (keySaved && !problem.isEmpty()) smart.addView(ui.text(problem, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (keySaved) {
-            int links = 0, tagged = 0;
-            if (lastText != null) for (InboxFile.Entry e : InboxFile.parse(lastText)) { links++; if (!e.type.isEmpty()) tagged++; }
-            smart.addView(ui.text(tagged + " of " + links + " captures tagged", 13, Typeface.DEFAULT, ui.muted), ui.lp(8));
+            int counted = 0, tagged = 0;
+            if (lastText != null) for (InboxFile.Entry e : InboxFile.parse(lastText)) if (e.file.isEmpty() && (!e.text || e.body.length() >= 40)) { counted++; if (!e.type.isEmpty()) tagged++; }
+            smart.addView(ui.text(tagged + " of " + counted + " links and notes tagged", 13, Typeface.DEFAULT, ui.muted), ui.lp(8));
+            boolean describe = prefs().getBoolean("describe", false);
+            smart.addView(ui.text("Voice notes are transcribed with this key. Photos and PDFs are only described if you turn this on, and then they are sent to OpenRouter.", 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
+            smart.addView(settingsLink("Describe photos and PDFs: " + (describe ? "On" : "Off"), v -> { prefs().edit().putBoolean("describe", !describe).apply(); render(); BackgroundJob.schedule(this); }), ui.lp(4));
             smart.addView(settingsLink("Remove key", v -> { Model.clear(this); render(); }), ui.lp(8));
         }
         page.addView(smart, ui.lp(16));
@@ -300,7 +319,8 @@ public class SetupActivity extends Activity {
             String kind = job.optString("kind", "link"), shown = job.optString("label");
             if (shown.isEmpty()) shown = "link".equals(kind) ? job.optString("url") : Capture.clean(job.optString("text"));
             String error = job.optString("error");
-            if (error.isEmpty()) error = "failed".equals(job.optString("phase")) ? "Not saved." : "Queued or interrupted. Retry checks uncertain saves without appending again.";
+            if (error.isEmpty() && "voice".equals(kind)) error = "Waiting to be transcribed. This needs a network connection and your OpenRouter key in Settings.";
+            else if (error.isEmpty()) error = "failed".equals(job.optString("phase")) ? "Not saved." : "Queued or interrupted. Retry checks uncertain saves without appending again.";
             card.addView(ui.text(shown, 16, Ui.MEDIUM, ui.ink));
             card.addView(ui.text(error, 14, Typeface.DEFAULT, ui.sub), ui.lp(4));
             String copy = job.optString("text");
@@ -308,7 +328,10 @@ public class SetupActivity extends Activity {
             final String recoveryText = copy;
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);
-            row.addView(ui.button("Retry / check", true, v -> { CaptureService.start(this, file.getName()); render(); }));
+            row.addView(ui.button("Retry / check", true, v -> {
+                if ("voice".equals(kind)) { try { JSONObject j = CaptureService.readJob(file); j.remove("error"); CaptureService.writeJob(file, j); } catch (Exception ignored) { } BackgroundJob.schedule(this); }
+                else CaptureService.start(this, file.getName());
+                render(); }));
             row.addView(quietLink("Copy", v -> copy(recoveryText)));
             row.addView(quietLink("Discard", v -> { new AlertDialog.Builder(this).setTitle("Discard this capture?")
                 .setMessage("It leaves the queue. A private recovery copy is kept until app data is cleared.")
@@ -325,9 +348,10 @@ public class SetupActivity extends Activity {
         if (!tag.isEmpty() && !e.hasTag(tag)) return false;
         if (semanticRaw == null && !e.contains(query)) return false;
         switch (filter) {
-            case 1: return !e.text;
+            case 1: return !e.text && e.file.isEmpty();
             case 2: return e.text;
-            case 3: return !e.why.isEmpty() || !e.ideas.isEmpty();
+            case 3: return !e.file.isEmpty();
+            case 4: return !e.why.isEmpty() || !e.ideas.isEmpty();
             default: return true;
         }
     }
@@ -357,8 +381,8 @@ public class SetupActivity extends Activity {
         if (text == null && error == null) return; // no inbox chosen yet
         if (error != null) { page.addView(ui.text(error, 14, Typeface.DEFAULT, ui.sub), ui.lp(32)); return; }
         List<InboxFile.Entry> entries = InboxFile.parse(text);
-        int notes = 0, annotated = 0;
-        for (InboxFile.Entry e : entries) { if (e.text) notes++; if (!e.why.isEmpty() || !e.ideas.isEmpty()) annotated++; }
+        int notes = 0, annotated = 0, files = 0;
+        for (InboxFile.Entry e : entries) { if (e.text) notes++; if (!e.file.isEmpty()) files++; if (!e.why.isEmpty() || !e.ideas.isEmpty()) annotated++; }
 
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
@@ -386,8 +410,8 @@ public class SetupActivity extends Activity {
         search.setOnEditorActionListener((v, action, event) -> { query = v.getText().toString().trim(); visibleLimit = 50; semanticSearch(); return true; });
         page.addView(search, ui.lp(16));
 
-        String[] names = {"All", "Links", "Notes", "Annotated"};
-        int[] counts = {entries.size(), entries.size() - notes, notes, annotated};
+        String[] names = {"All", "Links", "Notes", "Files", "Annotated"};
+        int[] counts = {entries.size(), entries.size() - notes - files, notes, files, annotated};
         LinearLayout chips = new LinearLayout(this);
         for (int i = 0; i < names.length; i++) {
             int which = i;
@@ -444,7 +468,7 @@ public class SetupActivity extends Activity {
         title.setMaxLines(2);
         title.setEllipsize(TextUtils.TruncateAt.END);
         body.addView(title);
-        String source = entry.text || entry.url.isEmpty() ? "Note" : Ui.host(entry.url);
+        String source = !entry.file.isEmpty() ? "File" : entry.text || entry.url.isEmpty() ? "Note" : Ui.host(entry.url);
         body.addView(ui.text(source + " · " + Ui.when(entry) + (mine ? " · Annotated" : ""), 12, Typeface.DEFAULT, ui.muted), ui.lp(4));
         if (!entry.tldr.isEmpty()) {
             TextView tldr = ui.text(entry.tldr, 14, Typeface.DEFAULT, ui.sub);
@@ -463,7 +487,7 @@ public class SetupActivity extends Activity {
         row.setBackground(ui.ripple(null));
         row.setOnClickListener(v -> showEntry(entry, lastText, prefs().getString("inbox", ""), entry.why, entry.ideas));
         Ui.buttonRole(row);
-        row.setOnLongClickListener(v -> { copy(entry.text ? entry.body : entry.url); return true; });
+        row.setOnLongClickListener(v -> { copy(entry.text ? entry.body : entry.file.isEmpty() ? entry.url : entry.file); return true; });
         box.addView(row);
         View rule = new View(this);
         rule.setBackgroundColor(ui.line);
@@ -478,11 +502,12 @@ public class SetupActivity extends Activity {
         form.setOrientation(LinearLayout.VERTICAL);
         form.setPadding(ui.dp(24), ui.dp(8), ui.dp(24), 0);
         if (!entry.url.isEmpty()) form.addView(ui.button("Open source", false, v -> open(entry.url)));
+        if (!entry.file.isEmpty()) form.addView(ui.button("Open file", false, v -> openFile(entry.file)));
         if (entry.text || !entry.sharedText.isEmpty()) {
             TextView body = ui.text(entry.text ? entry.body : entry.sharedText, 16, Typeface.DEFAULT, ui.ink);
             body.setTextIsSelectable(true); form.addView(body, ui.lp(16));
         }
-        form.addView(quietLink(entry.text ? "Copy full note" : "Copy link", v -> copy(entry.text ? entry.body : entry.url)), ui.lp(8));
+        if (entry.file.isEmpty()) form.addView(quietLink(entry.text ? "Copy full note" : "Copy link", v -> copy(entry.text ? entry.body : entry.url)), ui.lp(8));
         form.addView(ui.text(entry.time, 12, Typeface.DEFAULT, ui.sub), ui.lp(8));
         TextView whyLabel = ui.label("Why I saved this");
         form.addView(whyLabel, ui.lp(20));
@@ -707,6 +732,18 @@ public class SetupActivity extends Activity {
     }
 
     // --- actions ---
+    private void chooseAttach() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Obsidian"));
+        startActivityForResult(pick, 4);
+    }
+    private void openFile(String name) {
+        Uri uri = Attach.find(this, name);
+        if (uri == null) { toast("That file is not in the attachments folder"); return; }
+        try { startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, Attach.mime(name)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)); }
+        catch (Exception noViewer) { toast("No app can open this file"); }
+    }
     private void chooseInbox() {
         Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
@@ -730,6 +767,16 @@ public class SetupActivity extends Activity {
                 }
                 toast("Recovery copy exported and verified");
             } catch (Exception e) { toast("Export failed; private recovery copy is kept"); }
+            return;
+        }
+        if (request == 4 && result == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                Uri tree = data.getData();
+                getContentResolver().takePersistableUriPermission(tree, data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+                prefs().edit().putString("attach", tree.toString()).commit();
+                if (CaptureService.pending(this).length > 0) CaptureService.start(this, null);
+                render();
+            } catch (Exception e) { toast("Could not get write access to that folder."); }
             return;
         }
         if (request != 1 || result != RESULT_OK || data == null || data.getData() == null) return;
@@ -792,7 +839,9 @@ public class SetupActivity extends Activity {
         try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (Exception e) { toast("No app can open this link."); }
     }
     private void copy(String value) {
-        getSystemService(ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Sparkbox", value));
+        ClipData clip = ClipData.newPlainText("Sparkbox", value);
+        if (Build.VERSION.SDK_INT >= 33) { android.os.PersistableBundle flag = new android.os.PersistableBundle(); flag.putBoolean("android.content.extra.IS_SENSITIVE", true); clip.getDescription().setExtras(flag); } // keeps notes out of the keyboard's clipboard preview
+        getSystemService(ClipboardManager.class).setPrimaryClip(clip);
         toast("Copied");
     }
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_SHORT).show(); }

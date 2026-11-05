@@ -1,0 +1,11 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/widget_card" android:gravity="center" android:orientation="horizontal">
+    <LinearLayout android:id="@+id/w_write" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:contentDescription="Write a note" android:gravity="center" android:orientation="horizontal">
+        <ImageView android:layout_width="34dp" android:layout_height="34dp" android:importantForAccessibility="no" android:src="@drawable/ic_note_plus" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:fontFamily="sans-serif-medium" android:includeFontPadding="false" android:text="Write" android:textColor="@color/w_ink" android:textSize="15dp" />
+    </LinearLayout>
+    <ImageView android:layout_width="1dp" android:layout_height="34dp" android:background="@color/w_line" />
+    <LinearLayout android:id="@+id/w_speak" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:contentDescription="Speak a note" android:gravity="center" android:orientation="horizontal">
+        <ImageView android:layout_width="34dp" android:layout_height="34dp" android:importantForAccessibility="no" android:src="@drawable/ic_mic_text" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:fontFamily="sans-serif-medium" android:includeFontPadding="false" android:text="Speak" android:textColor="@color/w_ink" android:textSize="15dp" />
+    </LinearLayout>
+</LinearLayout>

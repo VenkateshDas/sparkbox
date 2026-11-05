@@ -31,11 +31,15 @@ public class CaptureService extends Service {
     /** Queue one capture privately before any work. kind is "link" or "text". */
     static void enqueue(Context context, String kind, String url, String title, String text) throws Exception {
         if (text.getBytes(StandardCharsets.UTF_8).length > 1024 * 1024) throw new IOException("Shared text exceeds 1 MiB. Nothing was shortened; save it directly to your vault.");
+        enqueue(context, new JSONObject().put("kind", kind).put("url", url).put("title", title).put("text", text));
+    }
+    /** Queue any job: link, text, file (copied into the vault) or voice (transcribed first by Tagger). */
+    static void enqueue(Context context, JSONObject job) throws Exception {
         File directory = new File(context.getFilesDir(), "pending");
         if (!directory.exists() && !directory.mkdirs()) throw new IOException("Cannot create capture queue");
-        File file = new File(directory, UUID.randomUUID().toString() + ".json");
-        writeJob(file, new JSONObject().put("kind", kind).put("url", url).put("title", title).put("text", text)
-            .put("time", Capture.timestamp()).put("created", System.currentTimeMillis()).put("writeAttempted", false).put("phase", "queued"));
+        if (!job.has("time")) job.put("time", Capture.timestamp());
+        writeJob(new File(directory, UUID.randomUUID().toString() + ".json"), job
+            .put("created", System.currentTimeMillis()).put("writeAttempted", false).put("phase", "queued"));
     }
     /** Chosen inbox file name; older installs did not store it, so fall back to the document id. */
     static String inboxName(Context context) {
@@ -80,6 +84,23 @@ public class CaptureService extends Service {
             new AtomicFile(recovery).delete();
             InboxWidget.refresh(context);
         }
+    }
+    /** Deletes private copies (shared files, recordings) that no queued or retained job points to and that are over a day old. */
+    static void sweep(Context context) {
+        try {
+            java.util.Set<String> used = new java.util.HashSet<>();
+            File[] queued = pending(context), kept = new File(context.getFilesDir(), "discarded").listFiles((dir, name) -> name.endsWith(".json"));
+            java.util.List<File> jobs = new java.util.ArrayList<>(java.util.Arrays.asList(queued));
+            if (kept != null) jobs.addAll(java.util.Arrays.asList(kept));
+            for (File job : jobs) {
+                try { JSONObject j = readJob(job); used.add(j.optString("path")); used.add(j.optString("audio")); }
+                catch (Exception unreadable) { return; } // cannot tell what is in use, so delete nothing
+            }
+            for (String folder : new String[]{"files", "voice"}) {
+                File[] stray = new File(context.getFilesDir(), folder).listFiles();
+                if (stray != null) for (File f : stray) if (!used.contains(f.getPath()) && System.currentTimeMillis() - f.lastModified() > 86400000L) f.delete();
+            }
+        } catch (RuntimeException ignored) { }
     }
     static File[] recoveries(Context context) {
         File[] files = new File(context.getFilesDir(), "edit-recovery").listFiles((dir, name) -> name.endsWith(".json"));
@@ -148,7 +169,7 @@ public class CaptureService extends Service {
             return new JSONObject(new String(readAll(input), StandardCharsets.UTF_8));
         }
     }
-    private static void writeJob(File file, JSONObject job) throws Exception {
+    static void writeJob(File file, JSONObject job) throws Exception {
         AtomicFile atomic = new AtomicFile(file);
         FileOutputStream output = atomic.startWrite();
         try { output.write(job.toString().getBytes(StandardCharsets.UTF_8)); atomic.finishWrite(output); }
@@ -223,9 +244,10 @@ public class CaptureService extends Service {
         JSONObject job = null;
         try {
             job = readJob(file);
+            if ("voice".equals(job.optString("kind"))) return; // Tagger transcribes it, then files it itself
             String phase = job.optString("phase");
             if ("failed".equals(phase)) return; // waits for an explicit Retry or Discard
-            boolean link = "link".equals(job.optString("kind", "link"));
+            boolean link = "link".equals(job.optString("kind", "link")), attachment = "file".equals(job.optString("kind"));
             String url = job.optString("url"), entry = job.optString("entry"), time = job.getString("time");
             boolean uncertain = job.optBoolean("writeAttempted") || "writing".equals(phase) || "uncertain".equals(phase);
             if (uncertain && entry.isEmpty()) throw new IOException("Capture state is uncertain. Export it and inspect the inbox.");
@@ -242,6 +264,13 @@ public class CaptureService extends Service {
                     }
                     entry = Capture.entry(time, label, url);
                     if (!job.optString("text").isEmpty()) entry += Capture.block("Shared text", job.optString("text"));
+                } else if (attachment) {
+                    stage("Sparkbox", "Copying to your vault…", "Copying", 40);
+                    String stored = Attach.store(this, new File(job.getString("path")), job.optString("stored", job.getString("name")), job.optString("mime"));
+                    job.put("stored", stored);
+                    label = Capture.clean(job.optString("title"));
+                    if (label.isEmpty()) label = Capture.clean(job.optString("original"));
+                    entry = Capture.fileEntry(time, label, stored, job.optString("mime").startsWith("image/"));
                 } else {
                     entry = Capture.textEntry(time, job.optString("text"));
                     label = Capture.clean(job.optString("text"));
@@ -286,6 +315,7 @@ public class CaptureService extends Service {
             }
             if (duplicate && !complete && !job.optString("text").isEmpty()) discard(this, file);
             new AtomicFile(file).delete();
+            if (attachment) new File(job.optString("path")).delete(); // the vault copy is verified; drop the private one
             getSystemService(NotificationManager.class).cancel(file.getName().hashCode());
             InboxWidget.refresh(this);
             sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));

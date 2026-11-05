@@ -1,8 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="me.venkatesh.saveobsidian" android:versionCode="7" android:versionName="1.4.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="me.venkatesh.saveobsidian" android:versionCode="8" android:versionName="1.5.0">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- required for jobs that wait for a network -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <application android:label="Sparkbox" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@style/AppTheme" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
@@ -14,7 +16,28 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/*" />
             </intent-filter>
+            <intent-filter> <!-- photos, documents and audio; no catch-all so Sparkbox stays out of unrelated share sheets -->
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/msword" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/epub+zip" />
+            </intent-filter>
         </activity>
+        <service android:name=".RecordService" android:exported="false" android:foregroundServiceType="microphone|shortService" />
+        <activity android:name=".QuickActivity" android:taskAffinity="" android:theme="@style/QuickTheme" android:exported="false" android:excludeFromRecents="true" android:windowSoftInputMode="adjustResize" android:launchMode="singleTop" />
+        <service android:name=".QuickTile$Note" android:label="Quick note" android:icon="@drawable/ic_tile_pen" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".QuickTile$Voice" android:label="Voice note" android:icon="@drawable/ic_tile_mic" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
         <activity android:name=".SetupActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

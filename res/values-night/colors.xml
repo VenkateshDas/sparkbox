@@ -6,4 +6,7 @@
     <color name="w_muted">#85858B</color>
     <color name="w_line">#14EDEDED</color>
     <color name="w_accent">#4CC38A</color>
+    <color name="w_raised">#2A2A2D</color>
+    <color name="w_card_top">#212124</color>
+    <color name="w_card_bot">#18181A</color>
 </resources>

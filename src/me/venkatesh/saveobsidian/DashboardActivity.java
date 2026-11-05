@@ -30,6 +30,7 @@ public class DashboardActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false); // the app switcher must not show inbox contents
         ui = new Ui(this);
         ScrollView scroll = new ScrollView(this);
         scroll.setFitsSystemWindows(true);

@@ -1,4 +1,10 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="note" android:enabled="true" android:icon="@drawable/ic_shortcut_pen" android:shortcutShortLabel="@string/note_short" android:shortcutLongLabel="@string/note_long">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="me.venkatesh.saveobsidian" android:targetClass="me.venkatesh.saveobsidian.QuickActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="voice" android:enabled="true" android:icon="@drawable/ic_shortcut_mic" android:shortcutShortLabel="@string/voice_short" android:shortcutLongLabel="@string/voice_long">
+        <intent android:action="me.venkatesh.saveobsidian.VOICE" android:targetPackage="me.venkatesh.saveobsidian" android:targetClass="me.venkatesh.saveobsidian.QuickActivity" />
+    </shortcut>
     <share-target android:targetClass="me.venkatesh.saveobsidian.ShareActivity">
         <data android:mimeType="text/plain" />
         <category android:name="me.venkatesh.saveobsidian.SAVE" />

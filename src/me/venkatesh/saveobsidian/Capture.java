@@ -105,13 +105,33 @@ public final class Capture {
     }
 
     /** Full note text. Four-space continuation preserves blank lines and indentation. */
-    public static String textEntry(String time, String text) {
+    public static String textEntry(String time, String text) { return textEntry(time, text, "Sparkbox"); }
+
+    /** via is "Sparkbox" for typed notes and "Sparkbox voice" for transcribed ones. */
+    public static String textEntry(String time, String text, String via) {
         String all = normalize(text);
         String first = all.split("\n", -1)[0];
         String head = clean(first);
         if (head.length() > 80) head = head.substring(0, 80) + "…";
         String body = all.equals(head) ? "" : block("Text", all);
-        return "- 📝 " + head + "\n" + body + "  Captured: " + time + " · via Sparkbox\n";
+        return "- 📝 " + head + "\n" + body + "  Captured: " + time + " · via " + via + "\n";
+    }
+
+    /** Photo or document stored in the vault: an Obsidian embed on its own line. */
+    public static String fileEntry(String time, String title, String stored, boolean image) {
+        String label = clean(title);
+        return "- " + (image ? "🖼" : "📎") + " " + (label.isEmpty() ? stored : label) + "\n  ![[" + stored + "]]\n  Captured: " + time + " · via Sparkbox\n";
+    }
+
+    /** Vault-safe file name: Obsidian links break on [ ] # ^ | and path separators. */
+    public static String fileName(String time, String original, String id) {
+        String name = original == null || original.isEmpty() ? "file" : original;
+        int dot = name.lastIndexOf('.');
+        String ext = dot > 0 && name.length() - dot <= 8 ? name.substring(dot).replaceAll("[^A-Za-z0-9.]", "") : "";
+        String base = (dot > 0 && !ext.isEmpty() ? name.substring(0, dot) : name).replaceAll("[\\[\\]#^|/\\\\:*?\"<>\\p{Cntrl}]+", " ").trim().replaceAll("\\s+", " ");
+        if (base.length() > 60) base = base.substring(0, 60).trim();
+        if (base.isEmpty()) base = "file";
+        return time.replace(":", "") + " " + base + "-" + id + ext;
     }
 
     public static String normalize(String text) {

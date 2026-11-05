@@ -1,3 +1,7 @@
 <resources>
-    <string name="inbox_widget_description">Items in the inbox, added this week, and the oldest</string>
+    <string name="inbox_widget_description">Write, speak and see your inbox in one card</string>
+    <string name="note_short">Quick note</string>
+    <string name="note_long">Type a thought into the inbox</string>
+    <string name="voice_short">Voice note</string>
+    <string name="voice_long">Record a thought into the inbox</string>
 </resources>

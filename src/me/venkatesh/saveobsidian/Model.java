@@ -24,6 +24,7 @@ import org.json.JSONObject;
 /** OpenRouter call plus the API key, sealed with an Android Keystore key. Verified on device, not in JVM checks. */
 final class Model {
     static final String DEFAULT = "scaledown/summarize"; // no JSON mode: the prompt asks for JSON and Enrich.clean enforces the shape
+    static final String VISION = "google/gemini-2.5-flash-lite", TRANSCRIBE = "openai/whisper-large-v3";
     private static final String ALIAS = "sparkbox-ai-key";
 
     /** {type, tags, tldr}, or null when the reply is unusable. IOException (network, key, quota) means stop for now. */
@@ -36,8 +37,39 @@ final class Model {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", 300)
             .put("messages", new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", Enrich.SYSTEM))
-                .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + url + "\nPage text:\n" + page)));
-        String reply = post("chat/completions", key, request);
+                .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + url.replaceFirst("[?#].*$", "") + "\nPage text:\n" + page))); // query strings often carry tokens
+        return parse(post("chat/completions", key, request));
+    }
+
+    /** {type, tags, tldr} for a typed or spoken note. */
+    static String[] enrichNote(String key, String model, String text) throws Exception {
+        return parse(post("chat/completions", key, new JSONObject().put("model", model).put("max_tokens", 300).put("messages", new JSONArray()
+            .put(new JSONObject().put("role", "system").put("content", Enrich.NOTE))
+            .put(new JSONObject().put("role", "user").put("content", text.length() > 4000 ? text.substring(0, 4000) : text)))));
+    }
+
+    /** Photo or PDF description. PDFs are read by OpenRouter's free parser first, so any model can summarise them. */
+    static String[] describe(String key, String name, boolean pdf, byte[] data) throws Exception {
+        String base64 = Base64.encodeToString(data, Base64.NO_WRAP);
+        JSONObject part = pdf
+            ? new JSONObject().put("type", "file").put("file", new JSONObject().put("filename", name).put("file_data", "data:application/pdf;base64," + base64))
+            : new JSONObject().put("type", "image_url").put("image_url", new JSONObject().put("url", "data:image/jpeg;base64," + base64));
+        JSONObject request = new JSONObject().put("model", VISION).put("max_tokens", 300).put("messages", new JSONArray()
+            .put(new JSONObject().put("role", "system").put("content", Enrich.PICTURE))
+            .put(new JSONObject().put("role", "user").put("content", new JSONArray()
+                .put(new JSONObject().put("type", "text").put("text", "File name: " + name)).put(part))));
+        if (pdf) request.put("plugins", new JSONArray().put(new JSONObject().put("id", "file-parser").put("pdf", new JSONObject().put("engine", "cloudflare-ai"))));
+        return parse(post("chat/completions", key, request));
+    }
+
+    /** Plain text of a spoken clip. format is the file extension OpenRouter accepts (m4a, mp3, ogg...). */
+    static String transcribe(String key, byte[] audio, String format) throws Exception {
+        return new JSONObject(post("audio/transcriptions", key, new JSONObject().put("model", TRANSCRIBE)
+            .put("input_audio", new JSONObject().put("data", Base64.encodeToString(audio, Base64.NO_WRAP)).put("format", format)))).optString("text").trim();
+    }
+
+    /** The model's JSON reply forced into the safe shape, or null when unusable. */
+    private static String[] parse(String reply) {
         try {
             String content = new JSONObject(reply).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
             JSONObject out = new JSONObject(content.substring(content.indexOf('{'), content.lastIndexOf('}') + 1));
@@ -47,6 +79,9 @@ final class Model {
             return Enrich.clean(out.optString("type"), tags, out.optString("tldr"));
         } catch (Exception unusable) { return null; }
     }
+
+    /** The provider refused this particular input; retrying the same bytes will not help. */
+    static final class Rejected extends IOException { Rejected(String m) { super(m); } }
 
     /** One float[] per input text, in order. IOException (network, key, quota) means stop for now. */
     static List<float[]> embed(String key, List<String> texts) throws Exception {
@@ -68,13 +103,14 @@ final class Model {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(10000);
-        connection.setReadTimeout(30000);
+        connection.setReadTimeout(90000);
         connection.setDoOutput(true);
         connection.setRequestProperty("Authorization", "Bearer " + key);
         connection.setRequestProperty("Content-Type", "application/json");
         try {
             try (OutputStream out = connection.getOutputStream()) { out.write(request.toString().getBytes(StandardCharsets.UTF_8)); }
             int code = connection.getResponseCode();
+            if (code == 400 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this file (" + code + ")");
             if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
             try (InputStream in = connection.getInputStream()) { return new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
         } finally { connection.disconnect(); }

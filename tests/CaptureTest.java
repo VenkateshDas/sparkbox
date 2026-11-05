@@ -160,6 +160,35 @@ public class CaptureTest {
         check(Arrays.equals(disk[0], original));
         enrichChecks();
         indexChecks();
+        captureKindChecks();
+    }
+    private static void captureKindChecks() {
+        // voice notes are ordinary notes that say where they came from
+        String voice = Capture.textEntry("2026-11-05 14:32", "Idea: transcribe voice", "Sparkbox voice");
+        check(voice.equals("- 📝 Idea: transcribe voice\n  Captured: 2026-11-05 14:32 · via Sparkbox voice\n"));
+        check(InboxFile.parse(voice).get(0).text && InboxFile.parse(voice).get(0).time.equals("2026-11-05 14:32 · via Sparkbox voice"));
+        // file entries: embed on its own line, parsed back without becoming a link or note
+        String photo = Capture.fileEntry("2026-11-05 14:32", "Whiteboard", "20261105 1432 IMG-ab12.jpg", true);
+        check(photo.equals("- 🖼 Whiteboard\n  ![[20261105 1432 IMG-ab12.jpg]]\n  Captured: 2026-11-05 14:32 · via Sparkbox\n"));
+        InboxFile.Entry e = InboxFile.parse(photo).get(0);
+        check(e.file.equals("20261105 1432 IMG-ab12.jpg") && !e.text && e.url.isEmpty() && e.title.equals("Whiteboard"));
+        check(InboxFile.parse(Capture.fileEntry("T", "", "a.pdf", false)).get(0).title.equals("a.pdf"));
+        check(Capture.fileEntry("T", "Doc", "a.pdf", false).startsWith("- 📎 Doc"));
+        // enrichment lines go on a file entry and the embed survives
+        String tagged = InboxFile.setEnrich(photo, photo.trim(), "image", "whiteboard, plan", "A whiteboard sketch.");
+        InboxFile.Entry t = InboxFile.parse(tagged).get(0);
+        check(t.file.equals(e.file) && t.type.equals("image") && t.tldr.equals("A whiteboard sketch.") && t.contains("whiteboard"));
+        // a file entry between two links keeps the neighbours intact
+        String mixed = Capture.entry("T", "A", "https://a.example") + "\n" + photo + "\n" + Capture.textEntry("T", "note");
+        check(InboxFile.parse(mixed).size() == 3 && InboxFile.parse(mixed).get(1).file.length() > 0);
+        // names are safe for Obsidian links and unique per share
+        String name = Capture.fileName("2026-11-05 14:32", "Q3 [draft] #1 | plan^2.PDF", "ab12");
+        check(name.equals("2026-11-05 1432 Q3 draft 1 plan 2-ab12.PDF"));
+        check(Capture.fileName("T 1:2", "../../etc/passwd", "x").indexOf('/') < 0);
+        check(Capture.fileName("T", "", "x").startsWith("T file-x"));
+        // model labels now cover notes and pictures
+        check(Enrich.clean("question", java.util.Arrays.asList("a"), "x")[0].equals("question") && Enrich.clean("image", java.util.Arrays.asList("a"), "x")[0].equals("image"));
+        check(Enrich.AUDIO.get("opus").equals("ogg") && Enrich.AUDIO.get("m4a").equals("m4a") && Enrich.AUDIO.get("amr") == null);
     }
     private static void enrichChecks() {
         String inbox = "- 🔗 SQLite internals\n  https://a.com/x\n  Captured: 2026-11-05 10:00 · via Sparkbox\n  Why: for the db talk\n\n- 🔗 Other\n  https://b.com\n  Captured: 2026-11-05 10:01 · via Sparkbox\n";

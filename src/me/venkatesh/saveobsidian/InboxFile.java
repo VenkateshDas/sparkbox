@@ -6,19 +6,19 @@ import java.util.List;
 /** Supported capture blocks only; unfamiliar Markdown stays untouched. */
 public final class InboxFile {
     public static final class Entry {
-        public final String raw, title, url, time, why, ideas, body, sharedText, type, tags, tldr;
+        public final String raw, title, url, time, why, ideas, body, sharedText, type, tags, tldr, file;
         public final boolean text;
         public final int start;
         Entry(int start, String raw, String title, String url, String time, String why, String ideas,
-                String body, String sharedText, boolean text, String type, String tags, String tldr) {
+                String body, String sharedText, boolean text, String type, String tags, String tldr, String file) {
             this.start = start; this.raw = raw; this.title = title; this.url = url; this.time = time;
             this.why = why; this.ideas = ideas; this.body = body; this.sharedText = sharedText; this.text = text;
-            this.type = type; this.tags = tags; this.tldr = tldr;
+            this.type = type; this.tags = tags; this.tldr = tldr; this.file = file;
         }
         public boolean hasTag(String tag) { return (", " + tags + ", ").contains(", " + tag + ", "); }
         /** Every word of the query appears somewhere in the entry (case-insensitive). */
         public boolean contains(String query) {
-            String hay = (title + "\n" + url + "\n" + why + "\n" + ideas + "\n" + body + "\n" + tldr + "\n" + tags).toLowerCase(java.util.Locale.ROOT);
+            String hay = (title + "\n" + file + "\n" + url + "\n" + why + "\n" + ideas + "\n" + body + "\n" + tldr + "\n" + tags).toLowerCase(java.util.Locale.ROOT);
             for (String word : query.toLowerCase(java.util.Locale.ROOT).split("\\s+")) if (!hay.contains(word)) return false;
             return true;
         }
@@ -45,7 +45,7 @@ public final class InboxFile {
                 if (!fence) { fence = true; fenceMarker = marker; }
                 else if (marker.charAt(0) == fenceMarker.charAt(0) && marker.length() >= fenceMarker.length() && trimmed.substring(run).isEmpty()) fence = false;
             } else if (!fence) {
-                boolean capture = line.startsWith("- 🔗 ") || line.startsWith("- 📝 ") ||
+                boolean capture = line.startsWith("- 🔗 ") || line.startsWith("- 📝 ") || line.startsWith("- 🖼 ") || line.startsWith("- 📎 ") ||
                     line.matches("- \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d — .*");
                 if (capture) {
                     if (open != null) close(open, text, found);
@@ -81,7 +81,7 @@ public final class InboxFile {
         String[] lines = block.raw.split("\n", -1);
         String head = lines[0].substring(2).trim();
         boolean note = head.startsWith("📝");
-        String title = head.replaceFirst("^(🔗|📝)\\s*", ""), url = "", time = "", type = "", tags = "", tldr = "";
+        String title = head.replaceFirst("^(🔗|📝|🖼|📎)\\s*", ""), url = "", time = "", type = "", tags = "", tldr = "", file = "";
         java.util.regex.Matcher old = java.util.regex.Pattern.compile("^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d) — (.*)$").matcher(title);
         if (old.matches()) { time = old.group(1); title = old.group(2); }
         StringBuilder why = new StringBuilder(), ideas = new StringBuilder(), body = new StringBuilder(), shared = new StringBuilder();
@@ -107,7 +107,9 @@ public final class InboxFile {
             else {
                 String t = line.trim();
                 if (t.startsWith("<") && t.endsWith(">")) t = t.substring(1, t.length() - 1);
-                if (!note && url.isEmpty() && t.matches("(?i)https?://\\S+")) url = t;
+                java.util.regex.Matcher embed = java.util.regex.Pattern.compile("^!\\[\\[([^\\]]+)\\]\\]$").matcher(t);
+                if (!note && file.isEmpty() && embed.matches()) file = embed.group(1);
+                else if (!note && url.isEmpty() && t.matches("(?i)https?://\\S+")) url = t;
                 else if (note && line.startsWith("  ")) {
                     if (bodyPresent) body.append('\n');
                     body.append(line.substring(2)); bodyPresent = true;
@@ -115,7 +117,7 @@ public final class InboxFile {
             }
         }
         return new Entry(block.start, block.raw, title, url, time, why.toString(), ideas.toString(),
-            bodyPresent ? body.toString() : note ? title : "", shared.toString(), note, type, tags, tldr);
+            bodyPresent ? body.toString() : note ? title : "", shared.toString(), note, type, tags, tldr, file);
     }
     private static Block find(String text, String raw) {
         Block found = null;

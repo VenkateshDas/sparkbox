@@ -22,10 +22,10 @@ public class BackgroundJob extends JobService {
     @Override public boolean onStartJob(JobParameters params) {
         new Thread(() -> {
             Tagger.run(this);
-            jobFinished(params, false); // errors wait for the next open or capture instead of hammering the provider
+            jobFinished(params, Tagger.waiting(this)); // only an unsent voice clip asks for a retry (with backoff); other errors wait for the next open
         }).start();
         return true;
     }
 
-    @Override public boolean onStopJob(JobParameters params) { return true; } // system stopped us early: run again later
+    @Override public boolean onStopJob(JobParameters params) { Tagger.halt = true; return true; } // system stopped us early: run again later
 }

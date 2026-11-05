@@ -1,0 +1,10 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/widget_card" android:gravity="center" android:orientation="horizontal" android:padding="6dp">
+    <LinearLayout android:id="@+id/w_rec" android:layout_width="match_parent" android:layout_height="match_parent" android:background="@drawable/tile_raised" android:gravity="center_vertical" android:orientation="horizontal" android:paddingEnd="4dp">
+        <ViewFlipper android:layout_width="8dp" android:layout_height="8dp" android:layout_marginStart="9dp" android:autoStart="true" android:flipInterval="600">
+            <ImageView android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/dot_on" />
+            <ImageView android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/dot_off" />
+        </ViewFlipper>
+        <Chronometer android:id="@+id/w_clock" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:fontFamily="sans-serif-medium" android:fontFeatureSettings="tnum" android:includeFontPadding="false" android:singleLine="true" android:textColor="@color/w_ink" android:textSize="14dp" />
+        <ImageView android:id="@+id/w_stop" android:layout_width="30dp" android:layout_height="30dp" android:background="@drawable/stop_disc" android:contentDescription="Stop and save" android:padding="8dp" android:src="@drawable/ic_stop_on_ink" />
+    </LinearLayout>
+</LinearLayout>

@@ -17,6 +17,7 @@ final class PageTitle {
 
     static String fetchTitle(String original) throws Exception {
         String host = new URL(original).getHost().toLowerCase(Locale.ROOT);
+        if (!publicHost(host)) return "";
         if (host.equals("youtu.be") || host.equals("youtube.com") || host.endsWith(".youtube.com")) {
             try {
                 String title = youtube(original);
@@ -45,13 +46,24 @@ final class PageTitle {
         } finally { connection.disconnect(); }
     }
 
+    /** A shared link must not make the phone probe its own network: loopback, LAN and link-local hosts are never fetched (also after redirects). */
+    // ponytail: resolves twice, so DNS rebinding could still slip past; pin the resolved address if that ever matters
+    static boolean publicHost(String host) {
+        try {
+            for (java.net.InetAddress a : java.net.InetAddress.getAllByName(host))
+                if (a.isAnyLocalAddress() || a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress() || a.isMulticastAddress()
+                    || (a.getAddress().length == 16 && (a.getAddress()[0] & 0xfe) == 0xfc)) return false; // fc00::/7 unique-local
+            return true;
+        } catch (java.net.UnknownHostException | RuntimeException unknown) { return false; }
+    }
+
     /** Bounded HTTPS fetch. whole=false stops after &lt;head&gt;, enough for titles; true reads the body too. */
     static String html(String original, boolean whole) throws Exception {
         URL current = new URL(original);
         long deadline = System.currentTimeMillis() + 8000;
         for (int redirects = 0; redirects <= 4; redirects++) {
             // HTTPS only for title fetching. HTTP links are still saved unchanged.
-            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null) return "";
+            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null || !publicHost(current.getHost())) return "";
             HttpURLConnection connection = (HttpURLConnection) current.openConnection();
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(2500);
