@@ -95,6 +95,24 @@ public class CaptureTest {
         check(g.out(t).contains(src) && g.in(src).contains(t));
         check(g.ambiguous == 1 && g.unresolved >= 3 && g.orphans().contains(bare) && !g.orphans().contains(index));
         check(Vault.target("X\\").equals("X") && Vault.target("a/b.md#h").equals("a/b") && Vault.label("a/b|Shown").equals("Shown") && Vault.label("a/b").equals("b"));
+        // search: every word first, rarer and title words weigh more; fusion favours notes both lists like
+        Vault.Note mem = Vault.parse("Knowledge/Topics/LLM Memory Systems.md", 1, "# LLM Memory Systems\nHow an agent keeps memory between sessions in files.");
+        List<Vault.Note> pile = new java.util.ArrayList<>(Arrays.asList(mem));
+        for (int i = 0; i < 8; i++) pile.add(Vault.parse("Sources/A/2026/Agent " + i + ".md", 10 + i, "# Agent " + i + "\nAn agent does tool calls and planning " + i));
+        pile.add(Vault.parse("Knowledge/Topics/Memory Palace.md", 3, "# Memory Palace\nA mnemonic technique for people."));
+        List<Vault.Note> found = Vault.search(pile, "agent memory", 5);
+        check(found.get(0) == mem); // the only note with both words leads the many that mention agents
+        check(Vault.search(pile, "palace", 5).size() == 1 && Vault.search(pile, "zebra", 5).isEmpty() && Vault.search(pile, "  ", 5).isEmpty());
+        check(Vault.search(pile, "memory", 5).get(0).title.equals("Memory Palace") || Vault.search(pile, "memory", 5).get(0) == mem); // title word beats body word
+        check(Vault.search(Arrays.asList(index), "knowledge", 5).isEmpty()); // index and log files are never ranked
+        List<Vault.Note> fused = Vault.fuse(Arrays.asList(pile.get(1), mem), Arrays.asList(mem, pile.get(2)), 1, 3);
+        check(fused.get(0) == mem && fused.size() == 3);
+        // a short query trusts the word match and meaning only adds what it missed; a question fuses both
+        List<Vault.Note> words = new java.util.ArrayList<>(Arrays.asList(mem));
+        words.addAll(pile.subList(1, 6));
+        List<Vault.Note> shortQuery = Vault.blend(Arrays.asList(pile.get(8), pile.get(1)), words, "agent memory", 20);
+        check(shortQuery.get(0) == mem && shortQuery.contains(pile.get(8)) && shortQuery.size() == 7);
+        check(Vault.blend(Arrays.asList(pile.get(8), pile.get(1)), words, "how do agents keep memory between sessions", 20).get(0) == pile.get(1)); // in both lists
         check(t.contains("memory core") && !t.contains("memory zebra") && src.contains("harness job"));
     }
     static void inboxFileChecks() {

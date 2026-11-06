@@ -46,8 +46,8 @@
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
         <activity android:name=".DashboardActivity" android:exported="false" />
-        <activity android:name=".VaultActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".AskActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".VaultActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".AskActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <receiver android:name=".InboxWidget" android:label="Sparkbox" android:exported="false">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_inbox_info" />

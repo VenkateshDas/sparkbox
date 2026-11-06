@@ -35,6 +35,7 @@ import java.util.List;
 
 /** Capture-first inbox; configuration and recovery live in Settings. */
 public class SetupActivity extends Activity {
+    static final String FIND = "find";
     private LinearLayout page;
     private Ui ui;
     private boolean waiting;
@@ -44,7 +45,7 @@ public class SetupActivity extends Activity {
     private String lastText, lastError;
     private int renderGeneration;
     private ScrollView scroll;
-    private View fab, scrim;
+    private View fab, scrim, askPill;
     private LinearLayout dial;
     private boolean dialOpen;
     private AlertDialog editor;
@@ -117,6 +118,19 @@ public class SetupActivity extends Activity {
         FrameLayout.LayoutParams above = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
         above.setMargins(0, 0, ui.dp(24), ui.dp(92));
         frame.addView(dial, above);
+        // Ask sits beside the capture button: capture adds to the inbox, Ask reads everything in it and in the vault.
+        TextView ask = ui.text("Ask", 15, Ui.MEDIUM, ui.ink);
+        ask.setGravity(Gravity.CENTER);
+        ask.setBackground(ui.ripple(ui.round(ui.raised, ui.line, 26)));
+        ask.setElevation(ui.dp(6));
+        ask.setPadding(ui.dp(24), 0, ui.dp(24), 0);
+        ask.setContentDescription("Ask your notes");
+        ask.setOnClickListener(v -> startActivity(new Intent(this, AskActivity.class)));
+        Ui.buttonRole(ask);
+        askPill = ask;
+        FrameLayout.LayoutParams beside = new FrameLayout.LayoutParams(-2, ui.dp(52), Gravity.BOTTOM | Gravity.END);
+        beside.setMargins(0, 0, ui.dp(84), ui.dp(20));
+        frame.addView(ask, beside);
         frame.addView(fab, at);
         setContentView(frame);
         Ui.insets(frame); // target 35 is edge-to-edge; keep content clear of the bars
@@ -126,6 +140,8 @@ public class SetupActivity extends Activity {
     private void toggleDial() {
         dialOpen = !dialOpen;
         fab.animate().rotation(dialOpen ? 45 : 0).setDuration(180);
+        askPill.animate().alpha(dialOpen ? 0 : 1).setDuration(150); // the dial owns the corner while open
+        askPill.setClickable(!dialOpen);
         if (dialOpen) {
             scrim.setAlpha(0); scrim.setVisibility(View.VISIBLE); scrim.animate().alpha(1).setDuration(180);
             dial.setVisibility(View.VISIBLE);
@@ -199,6 +215,7 @@ public class SetupActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(inboxUpdates, changed, android.content.Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(inboxUpdates, changed);
         listening = true;
+        if (VaultStore.ready(this) && VaultStore.last == null) new Thread(() -> VaultStore.cached(this)).start(); // warm the Knowledge screen while the inbox draws
         render(); InboxWidget.refresh(this);
         BackgroundJob.schedule(this);
         InboxWidget.refresh(this);
@@ -223,6 +240,7 @@ public class SetupActivity extends Activity {
     private void draw(String inboxText, String readError) {
         lastText = inboxText; lastError = readError;
         fab.setVisibility(settings ? View.GONE : View.VISIBLE);
+        askPill.setVisibility(settings ? View.GONE : View.VISIBLE);
         if (settings && dialOpen) toggleDial();
         int position = restoredScroll > 0 ? restoredScroll : scroll.getScrollY(); restoredScroll = 0;
         page.removeAllViews();
@@ -266,6 +284,17 @@ public class SetupActivity extends Activity {
         link.setOnClickListener(click);
         Ui.buttonRole(link);
         return link;
+    }
+
+    /** Opened from an Ask citation: show the inbox filtered to that capture. */
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String find = intent.getStringExtra(FIND);
+        if (find == null) return;
+        intent.removeExtra(FIND);
+        query = find; filter = 0; tag = ""; semanticRaw = null; visibleLimit = 50;
+        if (settings) showSettings(false); else draw(lastText, lastError);
     }
 
     private void header() {

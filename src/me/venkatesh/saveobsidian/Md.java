@@ -15,7 +15,11 @@ import java.util.regex.Pattern;
 
 /** Just enough Markdown to read a note on a phone: headings, lists, tables as rows, bold, code, [[links]] and web links. */
 final class Md {
-    interface Open { void open(String rawTarget); }
+    interface Open {
+        void open(String rawTarget);
+        /** False for a link whose note does not exist yet; it is shown muted instead of as a link. */
+        default boolean exists(String rawTarget) { return true; }
+    }
 
     private static final Pattern INLINE = Pattern.compile("(\\*\\*[^*\\n]+\\*\\*)|(`[^`\\n]+`)|(!?\\[\\[[^\\]\\n]+\\]\\])|(\\[[^\\]\\n]+\\]\\((https?://[^)\\s]+)\\))|(?<![*\\w])\\*([^*\\s][^*\\n]*)\\*(?![*\\w])");
     private static final Pattern RULE = Pattern.compile("^\\|?[\\s:|-]+\\|?$");
@@ -75,11 +79,7 @@ final class Md {
             inline(out, t, ui, open);
             out.append('\n');
         }
-        Matcher m = URL.matcher(out.toString());
-        while (m.find()) {
-            if (out.getSpans(m.start(), m.end(), ClickableSpan.class).length > 0 || out.getSpans(m.start(), m.end(), URLSpan.class).length > 0) continue;
-            out.setSpan(new Link(ui.accent, null, m.group()), m.start(), m.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        }
+        autolink(out, ui);
         return out;
     }
 
@@ -92,9 +92,19 @@ final class Md {
             out.append('\n');
         }
         while (out.length() > 0 && out.charAt(out.length() - 1) == '\n') out.delete(out.length() - 1, out.length());
-        Matcher m = URL.matcher(out.toString());
-        while (m.find()) if (out.getSpans(m.start(), m.end(), ClickableSpan.class).length == 0) out.setSpan(new Link(ui.accent, null, m.group()), m.start(), m.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        autolink(out, ui);
         return out;
+    }
+
+    /** Bare web addresses become links, without the full stop or comma that ends the sentence. */
+    private static void autolink(SpannableStringBuilder out, Ui ui) {
+        Matcher m = URL.matcher(out.toString());
+        while (m.find()) {
+            int end = m.end();
+            while (end > m.start() && ".,;:!?'\"".indexOf(out.charAt(end - 1)) >= 0) end--;
+            if (out.getSpans(m.start(), end, ClickableSpan.class).length > 0) continue;
+            out.setSpan(new Link(ui.accent, null, out.subSequence(m.start(), end).toString()), m.start(), end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
     }
 
     private static void paragraph(SpannableStringBuilder out, String s, int color, float size) {
@@ -129,7 +139,7 @@ final class Md {
             } else if (m.group(3) != null) {
                 String all = m.group(3), inner = all.substring(all.indexOf("[[") + 2, all.length() - 2);
                 if (all.startsWith("!")) { out.append("[").append(Vault.label(inner)).append("]"); out.setSpan(new ForegroundColorSpan(ui.muted), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); }
-                else { out.append(Vault.label(inner)); out.setSpan(new Link(ui.accent, open, inner), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); }
+                else { out.append(Vault.label(inner)); out.setSpan(new Link(open == null || open.exists(inner) ? ui.accent : ui.muted, open, inner), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); }
             } else if (m.group(6) != null) {
                 out.append(m.group(6));
                 out.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);

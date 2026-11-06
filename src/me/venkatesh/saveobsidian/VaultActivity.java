@@ -50,6 +50,8 @@ public class VaultActivity extends Activity {
     private List<Vault.Note> semanticHits, similar;
     private String similarFor = "";
     private int shown = PAGE;
+    private final Map<Vault.Note, String> days = new java.util.HashMap<>();
+    private int[] indexed; // {have, total}, counted off the main thread because it reads the whole vector file
     private Runnable pendingSearch;
 
     @Override public void onCreate(Bundle state) {
@@ -81,6 +83,7 @@ public class VaultActivity extends Activity {
         super.onResume();
         if (snap == null) snap = VaultStore.cached(this);
         draw(false);
+        countIndex();
         scan();
     }
 
@@ -99,7 +102,7 @@ public class VaultActivity extends Activity {
                 boolean changed = done != null && (snap == null || done.graph.notes.size() != snap.graph.notes.size() || newest(done) != newest(snap));
                 if (done != null) snap = done;
                 problem = why;
-                if (changed || !why.isEmpty() || snap == null) draw(false); else status();
+                if (changed || !why.isEmpty() || snap == null) { draw(false); countIndex(); } else { status(); countIndex(); }
             });
         }).start();
     }
@@ -184,13 +187,22 @@ public class VaultActivity extends Activity {
 
     private void status() {
         if (status == null) return;
-        int[] idx = Model.key(this).isEmpty() ? null : VaultStore.indexed(this, snap);
         Vault.Graph g = snap.graph;
-        StringBuilder s = new StringBuilder(count(g.notes.size()) + " notes · " + count(g.links - g.unresolved) + " links");
-        if (idx != null && idx[1] > 0) s.append(idx[0] == idx[1] ? " · search ready" : " · indexing " + idx[0] + " of " + idx[1]);
-        if (scanning) s.append(" · checking for changes");
-        if (!problem.isEmpty()) s.append(" · ").append(problem);
+        StringBuilder s = new StringBuilder(count(g.notes.size()) + " notes \u00b7 " + count(g.links - g.unresolved) + " links");
+        if (indexed != null && indexed[1] > 0) s.append(indexed[0] == indexed[1] ? " \u00b7 search ready" : " \u00b7 indexing " + indexed[0] + " of " + indexed[1]);
+        if (scanning) s.append(" \u00b7 checking for changes");
+        if (!problem.isEmpty()) s.append(" \u00b7 ").append(problem);
         status.setText(s.toString());
+    }
+
+    /** Counts searchable notes in the background, then refreshes the status line. */
+    private void countIndex() {
+        if (Model.key(this).isEmpty() || snap == null) return;
+        VaultStore.Snap s = snap;
+        new Thread(() -> {
+            int[] counted = VaultStore.indexed(this, s);
+            runOnUiThread(() -> { if (!isDestroyed() && snap == s) { indexed = counted; status(); } });
+        }).start();
     }
 
     private static String count(int n) { return String.format(Locale.US, "%,d", n); }
@@ -249,11 +261,11 @@ public class VaultActivity extends Activity {
         if (body == null) return;
         body.removeAllViews();
         if (!query.isEmpty()) {
-            List<Vault.Note> hits = new ArrayList<>();
-            if (semanticHits != null) hits.addAll(semanticHits);
-            for (Vault.Note n : VaultStore.keyword(snap, query, 100)) if (!hits.contains(n)) hits.add(n);
+            List<Vault.Note> words = VaultStore.keyword(snap, query, 100);
+            List<Vault.Note> hits = semanticHits == null ? words : Vault.blend(semanticHits, words, query, 100);
             if (hits.isEmpty()) { body.addView(ui.text("No notes match “" + query + "”", 14, Typeface.DEFAULT, ui.sub), ui.lp(16)); return; }
-            body.addView(ui.label(hits.size() + (hits.size() == 1 ? " note" : " notes")), ui.lp(8));
+            body.addView(askRow(), ui.lp(8));
+            body.addView(ui.label(hits.size() + (hits.size() == 1 ? " note" : " notes")), ui.lp(16));
             list(body, hits, true);
             return;
         }
@@ -264,7 +276,7 @@ public class VaultActivity extends Activity {
 
         List<Vault.Note> recent = new ArrayList<>();
         for (Vault.Note n : snap.graph.notes) if (!n.catalog) recent.add(n);
-        recent.sort((a, b) -> day(b).compareTo(day(a)));
+        recent.sort((a, b) -> dayOf(b).compareTo(dayOf(a)));
         body.addView(ui.label("Recently updated"), ui.lp(24));
         list(body, recent.subList(0, Math.min(8, recent.size())), false);
 
@@ -278,6 +290,19 @@ public class VaultActivity extends Activity {
             Ui.buttonRole(o);
             body.addView(o, ui.lp(16));
         }
+    }
+
+    /** Turns the current search into a question for Ask. */
+    private View askRow() {
+        TextView row = ui.text("Ask your notes: \u201c" + query + "\u201d", 14, Ui.MEDIUM, ui.ink);
+        row.setMinHeight(ui.dp(48));
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(ui.dp(16), 0, ui.dp(16), 0);
+        row.setMaxLines(2);
+        row.setBackground(ui.ripple(ui.round(ui.raised, ui.line, 12)));
+        row.setOnClickListener(v -> startActivity(new Intent(this, AskActivity.class).putExtra(AskActivity.QUESTION, query)));
+        Ui.buttonRole(row);
+        return row;
     }
 
     private void orphans() {
@@ -307,7 +332,7 @@ public class VaultActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         page.addView(box, ui.lp(16));
         for (Map.Entry<String, Integer> f : folders.entrySet()) box.addView(folderRow(f.getKey(), prefix + f.getKey(), f.getValue()));
-        if (path.startsWith("Sources")) notes.sort((a, b) -> { int c = day(b).compareTo(day(a)); return c != 0 ? c : a.title.compareToIgnoreCase(b.title); });
+        if (path.startsWith("Sources")) notes.sort((a, b) -> { int c = dayOf(b).compareTo(dayOf(a)); return c != 0 ? c : a.title.compareToIgnoreCase(b.title); });
         else notes.sort((a, b) -> a.title.compareToIgnoreCase(b.title));
         list(box, notes, false);
     }
@@ -393,6 +418,13 @@ public class VaultActivity extends Activity {
         meta.append(meta.length() == 0 ? "" : " · ").append("updated ").append(when(day(n)).toLowerCase(Locale.ROOT));
         page.addView(ui.text(meta.toString(), 12, Typeface.MONOSPACE, ui.muted), ui.lp(4));
 
+        TextView obsidian = ui.text("Open in Obsidian", 12, Ui.MEDIUM, ui.accent);
+        obsidian.setMinHeight(ui.dp(48));
+        obsidian.setGravity(Gravity.CENTER_VERTICAL);
+        obsidian.setOnClickListener(v -> openInObsidian(n));
+        Ui.buttonRole(obsidian);
+        page.addView(obsidian, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         if (!n.topics.isEmpty()) {
             HorizontalScrollView strip = new HorizontalScrollView(this);
             strip.setHorizontalScrollBarEnabled(false);
@@ -460,10 +492,19 @@ public class VaultActivity extends Activity {
     private void renderText(Vault.Note n) {
         TextView t = ui.text("", 15, Typeface.DEFAULT, ui.ink);
         t.setLineSpacing(0, 1.35f);
-        t.setText(Md.render(ui, noteText, this::openLink));
+        t.setText(Md.render(ui, noteText, new Md.Open() {
+            @Override public void open(String raw) { openLink(raw); }
+            @Override public boolean exists(String raw) { return snap.graph.resolve(Vault.target(raw)) != null; }
+        }));
         t.setMovementMethod(LinkMovementMethod.getInstance());
         t.setHighlightColor(0x33000000 | (ui.accent & 0xFFFFFF));
         body.addView(t);
+    }
+
+    private void openInObsidian(Vault.Note n) {
+        String label = VaultStore.label(this), vault = label.substring(label.lastIndexOf('/') + 1);
+        try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("obsidian://open?vault=" + android.net.Uri.encode(vault) + "&file=" + android.net.Uri.encode(Vault.stripMd(n.path))))); }
+        catch (RuntimeException none) { Toast.makeText(this, "Obsidian is not installed", Toast.LENGTH_SHORT).show(); }
     }
 
     private void openLink(String raw) {
@@ -514,18 +555,24 @@ public class VaultActivity extends Activity {
         list(body, similar, true);
     }
 
+    private String dayOf(Vault.Note n) {
+        String d = days.get(n);
+        if (d == null) days.put(n, d = day(n));
+        return d;
+    }
+
     // ---- dates ----
 
-    private static final Pattern DMY = Pattern.compile("^(\\d{2})/(\\d{2})/(\\d{2})");
+    private static final Pattern DMY = Pattern.compile("^(\\d{2})/(\\d{2})/(\\d{2})"), ISO = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
 
     /** yyyy-MM-dd from the note's own date, else its file name, else the file's modified time. */
     static String day(Vault.Note n) {
         String u = n.updated;
-        if (u.length() >= 10 && u.substring(0, 10).matches("\\d{4}-\\d{2}-\\d{2}")) return u.substring(0, 10);
+        if (u.length() >= 10 && ISO.matcher(u).region(0, 10).matches()) return u.substring(0, 10);
         Matcher m = DMY.matcher(u);
         if (m.find()) return "20" + m.group(3) + "-" + m.group(2) + "-" + m.group(1);
         String file = n.path.substring(n.path.lastIndexOf('/') + 1);
-        if (file.length() >= 10 && file.substring(0, 10).matches("\\d{4}-\\d{2}-\\d{2}")) return file.substring(0, 10);
+        if (file.length() >= 10 && ISO.matcher(file).region(0, 10).matches()) return file.substring(0, 10);
         return new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new java.util.Date(n.mtime));
     }
 

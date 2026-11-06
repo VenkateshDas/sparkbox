@@ -2,6 +2,7 @@ package me.venkatesh.saveobsidian;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -158,6 +159,80 @@ public final class Vault {
         while (m.find()) m.appendReplacement(out, Matcher.quoteReplacement(label(m.group(2))));
         m.appendTail(out);
         return out.toString().replaceAll("[*`]", "").replace("\\|", " ");
+    }
+
+    /**
+     * Search results from the word match and the meaning match. A short query is keywords, and a two-word embedding is a weak
+     * signal, so the word match leads and meaning only adds notes it missed. A longer query is a question: both lists are
+     * fused so notes both like come first.
+     */
+    public static List<Note> blend(List<Note> meaning, List<Note> words, String query, int limit) {
+        if (query.trim().split("\\s+").length > 3) return fuse(meaning, words, 1, limit);
+        List<Note> out = new ArrayList<>(words);
+        for (Note n : meaning) if (!out.contains(n)) out.add(n);
+        return new ArrayList<>(out.subList(0, Math.min(limit, out.size())));
+    }
+
+    /**
+     * Word search over title, path, topics and digest. Rarer words count for more and a word in the title counts triple, so
+     * "agent memory" puts notes about memory ahead of the many notes that merely mention agents. Notes with every word come
+     * first; when fewer than five have them, notes with some of the words follow.
+     */
+    public static List<Note> search(Collection<Note> notes, String query, int limit) {
+        List<String> words = new ArrayList<>();
+        for (String w : query.toLowerCase(Locale.ROOT).split("\\s+")) if (!w.isEmpty() && !words.contains(w)) words.add(w);
+        List<Note> out = new ArrayList<>();
+        if (words.isEmpty()) return out;
+        final Map<Note, String> title = new HashMap<>(), hay = new HashMap<>();
+        int[] df = new int[words.size()];
+        int total = 0;
+        for (Note n : notes) {
+            if (n.catalog) continue;
+            total++;
+            String t = n.title.toLowerCase(Locale.ROOT), h = t + "\n" + (n.path + "\n" + n.type + "\n" + n.topics + "\n" + n.digest).toLowerCase(Locale.ROOT);
+            title.put(n, t); hay.put(n, h);
+            for (int i = 0; i < df.length; i++) if (h.contains(words.get(i))) df[i]++;
+        }
+        final Map<Note, Double> score = new HashMap<>();
+        List<Note> all = new ArrayList<>();
+        for (Map.Entry<Note, String> e : hay.entrySet()) {
+            int matched = 0;
+            double sum = 0;
+            for (int i = 0; i < df.length; i++) {
+                if (!e.getValue().contains(words.get(i))) continue;
+                matched++;
+                sum += Math.log(1 + (double) total / (1 + df[i])) * (title.get(e.getKey()).contains(words.get(i)) ? 3 : 1);
+            }
+            if (matched == 0) continue;
+            double share = (double) matched / words.size();
+            score.put(e.getKey(), sum * share * share);
+            if (matched == words.size()) all.add(e.getKey());
+        }
+        out.addAll(all.size() >= 5 ? all : score.keySet());
+        Collections.sort(out, new java.util.Comparator<Note>() {
+            @Override public int compare(Note a, Note b) {
+                int c = Double.compare(score.get(b), score.get(a));
+                return c != 0 ? c : Long.compare(b.mtime, a.mtime);
+            }
+        });
+        return new ArrayList<>(out.subList(0, Math.min(limit, out.size())));
+    }
+
+    /** Reciprocal rank fusion: notes that rank well in both lists come first. wb scales how much the second list counts. */
+    public static List<Note> fuse(List<Note> a, List<Note> b, double wb, int limit) {
+        final Map<Note, Double> score = new HashMap<>();
+        for (int which = 0; which < 2; which++) {
+            List<Note> list = which == 0 ? a : b;
+            for (int i = 0; i < list.size(); i++) {
+                Double old = score.get(list.get(i));
+                score.put(list.get(i), (old == null ? 0 : old) + (which == 0 ? 1 : wb) / (60 + i));
+            }
+        }
+        List<Note> out = new ArrayList<>(score.keySet());
+        Collections.sort(out, new java.util.Comparator<Note>() {
+            @Override public int compare(Note x, Note y) { return Double.compare(score.get(y), score.get(x)); }
+        });
+        return new ArrayList<>(out.subList(0, Math.min(limit, out.size())));
     }
 
     public static Graph build(Collection<Note> notes) { return new Graph(notes); }

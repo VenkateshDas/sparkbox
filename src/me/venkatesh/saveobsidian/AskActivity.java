@@ -19,11 +19,12 @@ import org.json.JSONObject;
 
 /** Ask your notes. Answers cite notes as [[path|Title]]; tapping a citation opens the note. */
 public class AskActivity extends Activity {
+    static final String QUESTION = "q";
     private Ui ui;
     private ScrollView scroll;
     private LinearLayout thread;
     private EditText input;
-    private TextView send, status;
+    private TextView send, status, clear;
     private final JSONArray history = new JSONArray(); // user questions and final answers only
     private boolean busy;
 
@@ -44,7 +45,15 @@ public class AskActivity extends Activity {
         back.setGravity(Gravity.CENTER_VERTICAL);
         back.setOnClickListener(v -> finish());
         Ui.buttonRole(back);
-        top.addView(back);
+        top.addView(back, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        clear = ui.text("New chat", 14, Ui.MEDIUM, ui.sub);
+        clear.setMinHeight(ui.dp(48));
+        clear.setMinWidth(ui.dp(48));
+        clear.setGravity(Gravity.CENTER);
+        clear.setVisibility(android.view.View.GONE);
+        clear.setOnClickListener(v -> { if (!busy) { while (history.length() > 0) history.remove(0); intro(); clear.setVisibility(android.view.View.GONE); } });
+        Ui.buttonRole(clear);
+        top.addView(clear);
         root.addView(top);
 
         scroll = new ScrollView(this);
@@ -63,7 +72,9 @@ public class AskActivity extends Activity {
         input.setTextColor(ui.ink);
         input.setTextSize(15);
         input.setMaxLines(4);
-        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setRawInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); // wraps like a multi-line field, and the keyboard's action key sends
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEND);
+        input.setOnEditorActionListener((v, action, event) -> { ask(input.getText().toString().trim()); return true; });
         input.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
         input.setBackground(ui.round(0, ui.line, 8));
         bottom.addView(input, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -75,6 +86,12 @@ public class AskActivity extends Activity {
         setContentView(root);
         Ui.insets(root);
         intro();
+        String q = getIntent().getStringExtra(QUESTION);
+        if (q != null && !q.trim().isEmpty()) { getIntent().removeExtra(QUESTION); root.post(() -> ask(q.trim())); }
+        else if (VaultStore.ready(this) && !Model.key(this).isEmpty()) input.postDelayed(() -> {
+            input.requestFocus();
+            ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input, 0);
+        }, 150);
     }
 
     private VaultStore.Snap snap() { return VaultStore.cached(this); }
@@ -87,7 +104,7 @@ public class AskActivity extends Activity {
             thread.addView(ui.text("Ask needs an OpenRouter key. Add one in Settings under Smart tags.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
             return;
         }
-        thread.addView(ui.text("Answers come only from your notes and cite each one. Searches and the notes it reads are sent to OpenRouter.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        thread.addView(ui.text("Answers come only from your notes, learnings, sources and inbox, and cite each one. Searches and the text it reads are sent to OpenRouter.", 14, Typeface.DEFAULT, ui.sub), ui.lp(8));
         // Starter questions from the notes with the most links, so they are about this vault and nothing else.
         List<Vault.Note> hubs = new ArrayList<>();
         for (Vault.Note n : snap().graph.notes) if (!n.catalog && n.path.startsWith("Knowledge/Topics/")) hubs.add(n);
@@ -113,6 +130,7 @@ public class AskActivity extends Activity {
         if (snap == null || key.isEmpty()) { intro(); return; }
         if (history.length() == 0) thread.removeAllViews();
         input.setText("");
+        ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(input.getWindowToken(), 0); // leave room to read the answer
         busy = true;
         send.setAlpha(0.4f);
         TextView q = ui.text(question, 15, Ui.MEDIUM, ui.ink);
@@ -152,9 +170,15 @@ public class AskActivity extends Activity {
             history.put(new JSONObject().put("role", "user").put("content", question));
             history.put(new JSONObject().put("role", "assistant").put("content", answer));
         } catch (Exception ignored) { }
+        clear.setVisibility(android.view.View.VISIBLE);
         TextView t = ui.text("", 15, Typeface.DEFAULT, ui.ink);
         t.setLineSpacing(0, 1.35f);
         t.setText(Md.inlineOnly(ui, answer, raw -> open(raw)));
+        t.setOnLongClickListener(v -> {
+            ((android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(android.content.ClipData.newPlainText("Answer", t.getText()));
+            Toast.makeText(this, "Answer copied", Toast.LENGTH_SHORT).show();
+            return true;
+        });
         t.setMovementMethod(LinkMovementMethod.getInstance());
         t.setHighlightColor(0x33000000 | (ui.accent & 0xFFFFFF));
         thread.addView(t, ui.lp(12));
@@ -162,6 +186,10 @@ public class AskActivity extends Activity {
     }
 
     private void open(String raw) {
+        if (Vault.target(raw).equalsIgnoreCase(Ask.INBOX)) { // an inbox capture: show it in the inbox list
+            startActivity(new Intent(this, SetupActivity.class).putExtra(SetupActivity.FIND, Vault.label(raw)).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+            return;
+        }
         VaultStore.Snap snap = snap();
         Vault.Note n = snap == null ? null : snap.graph.resolve(Vault.target(raw));
         if (n == null) { Toast.makeText(this, "That note is not in your vault", Toast.LENGTH_SHORT).show(); return; }

@@ -62,6 +62,7 @@ final class VaultStore {
         long started = System.currentTimeMillis();
         Uri tree = Uri.parse(tree(c));
         Map<String, Cached> old = readCache(c), fresh = new HashMap<>();
+        long cacheMs = System.currentTimeMillis() - started;
         int[] counts = new int[2]; // re-read, kept
         String rootId = DocumentsContract.getTreeDocumentId(tree);
         for (Row top : children(c, tree, rootId)) {
@@ -203,30 +204,19 @@ final class VaultStore {
         return new int[]{have, total};
     }
 
-    /** Every word in the title, path, topics or digest. Title matches first, then newest. */
-    static List<Vault.Note> keyword(Snap snap, String query, int limit) {
-        String q = query.trim().toLowerCase(java.util.Locale.ROOT);
-        List<Vault.Note> hits = new ArrayList<>();
-        if (q.isEmpty()) return hits;
-        for (Vault.Note n : snap.graph.notes) if (!n.catalog && n.contains(q)) hits.add(n);
-        hits.sort((a, b) -> {
-            int ra = rank(a, q), rb = rank(b, q);
-            return ra != rb ? ra - rb : Long.compare(b.mtime, a.mtime);
-        });
-        return hits.subList(0, Math.min(limit, hits.size()));
-    }
+    /** Word match, rare words and title words first. See Vault.search. */
+    static List<Vault.Note> keyword(Snap snap, String query, int limit) { return Vault.search(snap.graph.notes, query, limit); }
 
-    private static int rank(Vault.Note n, String q) {
-        String t = n.title.toLowerCase(java.util.Locale.ROOT);
-        return t.contains(q) ? 0 : 1;
+    /** Unit vector of the query, or null without a key. Throws when the network or provider fails. */
+    static float[] vector(Context c, String query) throws Exception {
+        String key = Model.key(c);
+        return key.isEmpty() ? null : Index.normalized(Model.embed(key, java.util.Collections.singletonList(query)).get(0));
     }
 
     /** Closest in meaning to the query. Needs a key and network for the query vector; throws when it cannot get one. */
     static List<Vault.Note> semantic(Context c, Snap snap, String query, int limit) throws Exception {
-        String key = Model.key(c);
-        if (key.isEmpty()) return new ArrayList<>();
-        float[] q = Index.normalized(Model.embed(key, java.util.Collections.singletonList(query)).get(0));
-        return nearest(c, snap, q, limit, Index.MIN_QUERY, null);
+        float[] q = vector(c, query);
+        return q == null ? new ArrayList<Vault.Note>() : nearest(c, snap, q, limit, Index.MIN_QUERY, null);
     }
 
     /** Notes closest in meaning to this one, offline from stored vectors. */
@@ -235,7 +225,7 @@ final class VaultStore {
         return v == null ? new ArrayList<Vault.Note>() : nearest(c, snap, v, limit, Index.MIN_RELATED, note);
     }
 
-    private static List<Vault.Note> nearest(Context c, Snap snap, float[] q, int limit, float min, Vault.Note self) {
+    static List<Vault.Note> nearest(Context c, Snap snap, float[] q, int limit, float min, Vault.Note self) {
         Index index = Index.load(indexFile(c));
         final Map<Vault.Note, Float> score = new HashMap<>();
         for (Vault.Note n : snap.graph.notes) {
