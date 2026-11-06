@@ -3,6 +3,7 @@ import me.venkatesh.saveobsidian.AppendCheck;
 import me.venkatesh.saveobsidian.InboxFile;
 import me.venkatesh.saveobsidian.Enrich;
 import me.venkatesh.saveobsidian.Index;
+import me.venkatesh.saveobsidian.Vault;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
 import java.io.IOException;
@@ -60,11 +61,39 @@ public class CaptureTest {
         inboxFileChecks();
         regressionChecks();
         editFailureChecks();
+        vaultChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3,3}));
         System.out.println("Capture and append checks passed (" + count + ").");
+    }
+    static void vaultChecks() {
+        String topic = "---\ntype: topic\nlast-updated: 2026-11-06\nrelated-topics: ['[[AI Agent Architecture]]', '[[RAG]]']\ndescription: LLM Memory Systems\n---\n\n## Core Mechanism\nPlain.\n"
+            + "| Claim | Source |\n|---|---|\n| Memory | [[Sources/AI Systems/2026/2026-04-12 - Harness\\|Harness]] |\n";
+        Vault.Note t = Vault.parse("Knowledge/Topics/LLM Memory Systems.md", 5, "\uFEFF" + topic.replace("\n", "\r\n"));
+        check(t.title.equals("LLM Memory Systems") && t.type.equals("topic") && t.updated.equals("2026-11-06") && t.description.equals("LLM Memory Systems"));
+        check(t.topics.equals(Arrays.asList("AI Agent Architecture", "RAG")));
+        check(t.links.equals(Arrays.asList("AI Agent Architecture", "RAG", "Sources/AI Systems/2026/2026-04-12 - Harness")));
+        check(t.cite().equals("[[Knowledge/Topics/LLM Memory Systems|LLM Memory Systems]]") && t.folder().equals("Knowledge/Topics") && !t.catalog);
+        Vault.Note src = Vault.parse("Sources/AI Systems/2026/2026-04-12 - Harness.md", 1,
+            "---\ntype: \"source\"\ntopics: [\"[[LLM Memory Systems]]\"]\ncaptured: \"06/10/26, 8:20 AM\"\n---\n\n# Harness\n\n## Raw Content\n\nOriginal capture: https://example.org/a-long-link-here-for-sure\n\n### Key claims\n\n- Memory is a harness job, not the model's.\n- Second.\n![[pic.png]] [[Knowledge/Topics/Missing#Heading|alias]]\n");
+        check(src.title.equals("Harness") && src.description.equals("Memory is a harness job, not the model's.") && src.updated.equals("06/10/26, 8:20 AM"));
+        check(src.links.equals(Arrays.asList("LLM Memory Systems", "Knowledge/Topics/Missing")) && src.topics.equals(Arrays.asList("LLM Memory Systems")));
+        Vault.Note bare = Vault.parse("Knowledge/People/Ada.md", 1, "no frontmatter\n---\nnot yaml\n");
+        check(bare.title.equals("Ada") && bare.type.isEmpty() && bare.digest.startsWith("Ada."));
+        check(Vault.parse("x.md", 1, "---\ntype: broken\nnever closed\n").type.isEmpty()); // unclosed frontmatter is body
+        Vault.Note index = Vault.parse("Knowledge/index.md", 1, "# Knowledge Index\n");
+        Vault.Note dup1 = Vault.parse("A/Same.md", 1, "x"), dup2 = Vault.parse("B/Same.md", 1, "x");
+        Vault.Note a = Vault.parse("A/Linker.md", 1, "[[Same]] [[LLM Memory Systems]] [[Linker]] [[Knowledge/Topics/llm memory systems.md#h]] [[Nothing]]");
+        Vault.Graph g = Vault.build(Arrays.asList(t, src, bare, index, dup1, dup2, a));
+        check(index.catalog && g.resolve("llm memory systems") == t && g.resolve("Knowledge/Topics/LLM Memory Systems.md") == t);
+        check(g.resolve("Same") == null && g.resolve("A/Same") == dup1 && g.resolve("Nothing") == null); // ambiguous name is never guessed
+        check(g.out(a).equals(Arrays.asList(t)) && g.in(t).contains(a) && g.in(t).contains(src) && !g.in(a).contains(a));
+        check(g.out(t).contains(src) && g.in(src).contains(t));
+        check(g.ambiguous == 1 && g.unresolved >= 3 && g.orphans().contains(bare) && !g.orphans().contains(index));
+        check(Vault.target("X\\").equals("X") && Vault.target("a/b.md#h").equals("a/b") && Vault.label("a/b|Shown").equals("Shown") && Vault.label("a/b").equals("b"));
+        check(t.contains("memory core") && !t.contains("memory zebra") && src.contains("harness job"));
     }
     static void inboxFileChecks() {
         String head = "---\ntype: inbox\n---\n# Sources Inbox\n\n*Landing pad.*\n\n";
