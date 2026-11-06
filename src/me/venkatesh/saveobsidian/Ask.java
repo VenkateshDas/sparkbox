@@ -9,7 +9,7 @@ import org.json.JSONObject;
 
 /**
  * Ask your notes: a small tool loop over OpenRouter chat completions (no agent SDK). The model searches, reads and follows
- * links across Knowledge, Learnings, Sources and the inbox, then answers with citations. Read-only.
+ * links across Knowledge, Sources and the inbox, then answers with citations. Read-only.
  */
 final class Ask {
     static final String DEFAULT = "anthropic/claude-haiku-5.5"; // cheap, 1M context, reliable tool calls on OpenRouter
@@ -20,7 +20,7 @@ final class Ask {
 
     static String model(Context c) { return c.getSharedPreferences("capture", 0).getString("askModel", DEFAULT); }
 
-    private static final String SYSTEM = "You answer questions from the user's personal knowledge base: Markdown notes in the folders Knowledge, Learnings and Sources, "
+    private static final String SYSTEM = "You answer questions from the user's personal knowledge base: Markdown notes in the folders Knowledge (which includes Knowledge/Learnings, the user's curiosity notes and frameworks) and Sources, "
         + "plus the inbox, a file of recent captures (links and thoughts) not yet filed into notes. Lines the user wrote in the inbox under why and ideas are their own words. "
         + "Look things up before you answer. Search first, read the notes that matter, follow links when a note points to another, and check the inbox for recent captures. "
         + "Answer only from what the notes and captures say, in short plain prose. After each claim cite where it came from, written exactly as [[path|Title]] in the form the tools return. "

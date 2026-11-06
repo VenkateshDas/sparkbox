@@ -430,7 +430,7 @@ public class SetupActivity extends Activity {
         page.addView(files, ui.lp(16));
 
         LinearLayout vault = ui.card("Knowledge base");
-        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge, Learnings and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search and Ask can find them.", 13, Typeface.DEFAULT, ui.sub));
+        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search and Ask can find them.", 13, Typeface.DEFAULT, ui.sub));
         vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
         vault.addView(settingsLink(VaultStore.ready(this) ? "Change folder" : "Choose vault folder", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK, true))), ui.lp(8));
         page.addView(vault, ui.lp(16));

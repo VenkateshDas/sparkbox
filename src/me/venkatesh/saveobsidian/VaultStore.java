@@ -18,11 +18,11 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * The vault folder the user picked, read through the Storage Access Framework. Only Knowledge, Learnings and Sources are
+ * The vault folder the user picked, read through the Storage Access Framework. Only Knowledge (which holds Learnings) and Sources are
  * read: journals and health notes in the same vault never leave the phone. Read-only; a cache keeps reopening instant.
  */
 final class VaultStore {
-    static final String[] ROOTS = {"Knowledge", "Learnings", "Sources"};
+    static final String[] ROOTS = {"Knowledge", "Sources"}; // Knowledge holds Learnings too
     private static final String[] COLUMNS = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
         DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_SIZE};
     private static final long MAX_NOTE = 2L * 1024 * 1024;
@@ -70,7 +70,7 @@ final class VaultStore {
             for (String r : ROOTS) wanted |= r.equals(top.name);
             if (top.dir && wanted) walk(c, tree, top, top.name, old, fresh, counts);
         }
-        if (fresh.isEmpty()) throw new java.io.IOException("No Knowledge, Learnings or Sources folder in this folder. Choose your vault folder.");
+        if (fresh.isEmpty()) throw new java.io.IOException("No Knowledge or Sources folder in this folder. Choose your vault folder.");
         if (counts[0] > 0 || fresh.size() != old.size()) writeCache(c, fresh.values());
         Snap snap = build(c, fresh.values());
         last = snap;

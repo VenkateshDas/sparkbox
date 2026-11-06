@@ -172,7 +172,7 @@ public class VaultActivity extends Activity {
     private void empty() {
         bar("Inbox");
         page.addView(ui.text("Knowledge", 20, Ui.MEDIUM, ui.ink), ui.lp(8));
-        page.addView(ui.text("Choose your vault folder to browse Knowledge, Learnings and Sources. Sparkbox only reads them and never changes a note.", 14, Typeface.DEFAULT, ui.sub), ui.lp(12));
+        page.addView(ui.text("Choose your vault folder to browse Knowledge and Sources. Sparkbox only reads them and never changes a note.", 14, Typeface.DEFAULT, ui.sub), ui.lp(12));
         page.addView(ui.button("Choose vault folder", true, v -> pick()), ui.lp(24));
     }
 
