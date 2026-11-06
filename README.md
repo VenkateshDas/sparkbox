@@ -69,6 +69,11 @@ The old Automate flow is no longer required.
 | `src/me/venkatesh/saveobsidian/PageTitle.java` | Bounded HTTPS HTML title retrieval |
 | `src/me/venkatesh/saveobsidian/Capture.java` | URL extraction, title cleanup, local timestamp, Markdown formatting |
 | `src/me/venkatesh/saveobsidian/AppendCheck.java` | Exact byte comparison of original content plus appended entry |
+| `src/me/venkatesh/saveobsidian/Vault.java` | Pure Java: frontmatter and `[[link]]` parsing, link resolution, backlinks, citations |
+| `src/me/venkatesh/saveobsidian/VaultStore.java` | Read-only vault folder scan over SAF with a modified-time cache, embeddings and search |
+| `src/me/venkatesh/saveobsidian/VaultActivity.java` | Knowledge screen: folders, notes, Read/Links/Similar tabs, search |
+| `src/me/venkatesh/saveobsidian/Ask.java`, `AskActivity.java` | Ask your notes: OpenRouter tool loop (search, read, list, links) with tappable citations |
+| `src/me/venkatesh/saveobsidian/Md.java` | Minimal Markdown renderer for notes and answers |
 | `tests/CaptureTest.java` | Runnable JVM checks; no test framework required |
 | `res/drawable/` | App and notification vector icons |
 | `build.py` | Compile, test, package, sign, and verify without Gradle |
@@ -201,3 +206,17 @@ See [stabilization validation](docs/stabilization-validation.md) for executed ch
 The front page now contains the Sparkbox wordmark, Settings, the inbox title/count, Overview, filters and captures. Stronger capture titles, consistent row spacing and the existing annotation rail give the list a clearer hierarchy. The full file path, file picker, access check, Obsidian link, refresh, notification preferences, Live Updates, edit recovery, earlier backup and retained captures are grouped in Settings. Historical backups no longer take space above the inbox. Unresolved captures or edit recovery still produce a small Review notice on the inbox.
 
 Settings reuses the native Activity and existing recovery actions. System Back and Back to inbox return to the list; filters and page position are kept, including across Activity recreation. No new dependencies, storage format changes or capture-service changes are introduced by this UI release.
+
+## 1.7.0: knowledge base
+
+Sparkbox now reads the whole vault, not only the inbox. Open **Knowledge** from the menu and choose the vault folder once (Android's folder picker, read-only).
+
+- **Scope.** Only `Knowledge/`, `Learnings/` and `Sources/` are read (not `Sources/Inbox.md`). Dot-folders, Daily, Health and every other folder are never read, indexed or sent anywhere.
+- **Browse.** Folders, notes, a topic and people chip row from frontmatter, and per note: **Read** (links are tappable), **Links** (links to, linked from, concepts with no page yet) and **Similar** (nearest by meaning). Notes with no links have their own list.
+- **Links.** `[[Path/To/Note]]`, `[[Note]]`, `[[Note|alias]]` and `[[Path\|alias]]` in tables resolve by exact path first, then by a name only one note has. An ambiguous name stays unresolved instead of being guessed.
+- **Search.** Word match shows at once. With an OpenRouter key, closest-meaning results are added. Note vectors live in `vault.bin`, separate from the inbox `index.bin`. The first index pass embeds 640 notes per background run.
+- **Ask.** Needs the OpenRouter key and a model that supports tool calls (default `anthropic/claude-haiku-5.5`, changeable in Settings). The model searches, reads notes and follows links, up to 8 steps, and answers only from the notes. Each claim is cited as `[[path|Title]]` and tapping a citation opens the note. The searches and the notes it reads are sent to OpenRouter.
+- **Read-only.** Nothing in this feature writes to the vault. The inbox keeps its own guarded append and edit path.
+- **Cache.** `vault.json` keeps parsed notes keyed by size and modified time. Bump `VaultStore.CACHE` whenever `Vault.parse` changes what it extracts.
+
+Measured on the OnePlus with the 426-note vault: first scan 2.6 s, cached scan about 0.4 s, search index complete after a few background runs. The JVM checks cover parsing and link resolution (131 checks). Browse, search, Similar and one Ask question with a citation tap were checked on the phone by hand.

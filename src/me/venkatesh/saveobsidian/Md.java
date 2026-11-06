@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
 final class Md {
     interface Open { void open(String rawTarget); }
 
-    private static final Pattern INLINE = Pattern.compile("(\\*\\*[^*\\n]+\\*\\*)|(`[^`\\n]+`)|(!?\\[\\[[^\\]\\n]+\\]\\])|(\\[[^\\]\\n]+\\]\\((https?://[^)\\s]+)\\))");
+    private static final Pattern INLINE = Pattern.compile("(\\*\\*[^*\\n]+\\*\\*)|(`[^`\\n]+`)|(!?\\[\\[[^\\]\\n]+\\]\\])|(\\[[^\\]\\n]+\\]\\((https?://[^)\\s]+)\\))|(?<![*\\w])\\*([^*\\s][^*\\n]*)\\*(?![*\\w])");
     private static final Pattern RULE = Pattern.compile("^\\|?[\\s:|-]+\\|?$");
     private static final Pattern URL = Pattern.compile("https?://[^\\s<>)\\]]+");
 
@@ -29,8 +29,9 @@ final class Md {
         Vault.frontmatter(text, at);
         SpannableStringBuilder out = new SpannableStringBuilder();
         boolean fence = false, diagram = false;
-        for (String line : text.substring(at[0]).split("\n", -1)) {
-            String t = line.trim();
+        String[] lines = text.substring(at[0]).split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i], t = line.trim();
             if (t.startsWith("```")) {
                 if (!fence) { fence = true; diagram = t.toLowerCase(java.util.Locale.ROOT).contains("mermaid"); if (diagram) paragraph(out, "Diagram (open in Obsidian to see it)", ui.muted, 0.9f); }
                 else fence = diagram = false;
@@ -41,10 +42,21 @@ final class Md {
             if (t.startsWith("|")) {
                 if (RULE.matcher(t).matches()) continue;
                 String[] cells = t.replaceAll("^\\||\\|$", "").split("(?<!\\\\)\\|");
-                StringBuilder row = new StringBuilder();
-                for (String cell : cells) row.append(row.length() == 0 ? "" : "  ·  ").append(cell.replace("\\|", "|").trim());
-                inline(out, row.toString(), ui, open);
+                boolean header = i + 1 < lines.length && RULE.matcher(lines[i + 1].trim()).matches();
+                String first = cells[0].replace("\\|", "|").trim();
+                StringBuilder rest = new StringBuilder();
+                for (int c = header ? 0 : 1; c < cells.length; c++) rest.append(rest.length() == 0 ? "" : "  \u00b7  ").append(cells[c].replace("\\|", "|").trim());
+                if (!header) { inline(out, first, ui, open); out.append('\n'); }
+                if (rest.length() > 0) {
+                    int start = out.length();
+                    inline(out, rest.toString(), ui, open);
+                    out.setSpan(new ForegroundColorSpan(header ? ui.muted : ui.sub), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    out.setSpan(new RelativeSizeSpan(0.92f), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    out.append('\n');
+                }
+                int gap = out.length();
                 out.append('\n');
+                out.setSpan(new RelativeSizeSpan(0.45f), gap, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                 continue;
             }
             int level = 0;
@@ -118,6 +130,9 @@ final class Md {
                 String all = m.group(3), inner = all.substring(all.indexOf("[[") + 2, all.length() - 2);
                 if (all.startsWith("!")) { out.append("[").append(Vault.label(inner)).append("]"); out.setSpan(new ForegroundColorSpan(ui.muted), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); }
                 else { out.append(Vault.label(inner)); out.setSpan(new Link(ui.accent, open, inner), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); }
+            } else if (m.group(6) != null) {
+                out.append(m.group(6));
+                out.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), start, out.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             } else {
                 String label = m.group(4).substring(1, m.group(4).indexOf("]("));
                 out.append(label);

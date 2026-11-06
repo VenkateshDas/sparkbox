@@ -80,6 +80,8 @@ public class CaptureTest {
             "---\ntype: \"source\"\ntopics: [\"[[LLM Memory Systems]]\"]\ncaptured: \"06/10/26, 8:20 AM\"\n---\n\n# Harness\n\n## Raw Content\n\nOriginal capture: https://example.org/a-long-link-here-for-sure\n\n### Key claims\n\n- Memory is a harness job, not the model's.\n- Second.\n![[pic.png]] [[Knowledge/Topics/Missing#Heading|alias]]\n");
         check(src.title.equals("Harness") && src.description.equals("Memory is a harness job, not the model's.") && src.updated.equals("06/10/26, 8:20 AM"));
         check(src.links.equals(Arrays.asList("LLM Memory Systems", "Knowledge/Topics/Missing")) && src.topics.equals(Arrays.asList("LLM Memory Systems")));
+        check(Vault.parse("Sources/X/2026/2026-06-02 - Plain Name.md", 1, "text").title.equals("Plain Name"));
+        check(Vault.parse("K/n.md", 1, "*one* and **two** and `three`").digest.contains("one"));
         Vault.Note bare = Vault.parse("Knowledge/People/Ada.md", 1, "no frontmatter\n---\nnot yaml\n");
         check(bare.title.equals("Ada") && bare.type.isEmpty() && bare.digest.startsWith("Ada."));
         check(Vault.parse("x.md", 1, "---\ntype: broken\nnever closed\n").type.isEmpty()); // unclosed frontmatter is body

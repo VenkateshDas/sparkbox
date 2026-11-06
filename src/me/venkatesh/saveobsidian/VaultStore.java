@@ -27,6 +27,7 @@ final class VaultStore {
         DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_SIZE};
     private static final long MAX_NOTE = 2L * 1024 * 1024;
     static volatile Snap last;
+    private static final int CACHE = 2; // bump when Vault.parse changes what it extracts, so old caches are rebuilt
 
     /** Notes, their links, and the provider ids needed to open each one. */
     static final class Snap {
@@ -132,7 +133,7 @@ final class VaultStore {
         Map<String, Cached> map = new HashMap<>();
         try {
             JSONObject root = new JSONObject(new String(CaptureService.readAll(new AtomicFile(cacheFile(c)).openRead()), StandardCharsets.UTF_8));
-            if (!root.optString("tree").equals(tree(c))) return map; // another folder: start over
+            if (!root.optString("tree").equals(tree(c)) || root.optInt("v") != CACHE) return map; // another folder or an older parser: start over
             JSONArray notes = root.getJSONArray("notes");
             for (int i = 0; i < notes.length(); i++) {
                 JSONObject o = notes.getJSONObject(i);
@@ -161,7 +162,7 @@ final class VaultStore {
                     .put("g", n.digest).put("o", new JSONArray(n.topics)).put("l", new JSONArray(n.links)).put("i", k.id).put("z", k.size));
             }
             out = file.startWrite();
-            out.write(new JSONObject().put("tree", tree(c)).put("notes", notes).toString().getBytes(StandardCharsets.UTF_8));
+            out.write(new JSONObject().put("v", CACHE).put("tree", tree(c)).put("notes", notes).toString().getBytes(StandardCharsets.UTF_8));
             file.finishWrite(out);
         } catch (Exception e) { if (out != null) file.failWrite(out); }
     }

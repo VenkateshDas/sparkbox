@@ -293,7 +293,7 @@ public class VaultActivity extends Activity {
     private void folder(String path) {
         bar(path.contains("/") ? parentName(path) : "Knowledge");
         page.addView(ui.text(path.substring(path.lastIndexOf('/') + 1), 20, Ui.MEDIUM, ui.ink), ui.lp(8));
-        page.addView(ui.text(path, 12, Typeface.MONOSPACE, ui.muted), ui.lp(4));
+        if (path.contains("/")) page.addView(ui.text(path, 12, Typeface.MONOSPACE, ui.muted), ui.lp(4));
         Map<String, Integer> folders = new TreeMap<>();
         List<Vault.Note> notes = new ArrayList<>();
         String prefix = path + "/";
@@ -363,7 +363,7 @@ public class VaultActivity extends Activity {
         m.setMaxLines(1);
         m.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         row.addView(m, ui.lp(4));
-        if (!n.description.isEmpty()) {
+        if (!n.description.isEmpty() && !n.description.equalsIgnoreCase(n.title)) {
             TextView d = ui.text(n.description, 14, Typeface.DEFAULT, ui.sub);
             d.setMaxLines(2);
             d.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -383,7 +383,9 @@ public class VaultActivity extends Activity {
         bar(stack.size() > 2 ? "Back" : "Knowledge");
         TextView title = ui.text(n.title, 20, Ui.MEDIUM, ui.ink);
         page.addView(title, ui.lp(8));
-        TextView where = ui.text(n.path, 12, Typeface.MONOSPACE, ui.muted);
+        TextView where = ui.text(Vault.stripMd(n.path), 12, Typeface.MONOSPACE, ui.muted);
+        where.setMaxLines(1);
+        where.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         where.setOnClickListener(v -> { if (n.folder().length() > 0) go("folder", n.folder()); });
         page.addView(where, ui.lp(8));
         StringBuilder meta = new StringBuilder();

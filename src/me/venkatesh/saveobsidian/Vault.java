@@ -126,7 +126,7 @@ public final class Vault {
             else if (prose.isEmpty() && !title.isEmpty() && t.length() > 30 && "#>|-*!<`".indexOf(t.charAt(0)) < 0 && !t.startsWith("Original capture") && !t.startsWith("Retrieved on")) prose = t;
         }
         if (description.isEmpty()) description = prose;
-        if (title.isEmpty()) title = stripMd(path.substring(path.lastIndexOf('/') + 1));
+        if (title.isEmpty()) title = stripMd(path.substring(path.lastIndexOf('/') + 1)).replaceFirst("^\\d{4}-\\d{2}-\\d{2}\\s*-\\s*", ""); // the date shows as its own field
         title = plain(title);
         description = plain(description);
         if (description.length() > 200) description = description.substring(0, 200);
