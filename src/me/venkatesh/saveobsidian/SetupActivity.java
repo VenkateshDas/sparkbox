@@ -44,6 +44,9 @@ public class SetupActivity extends Activity {
     private String lastText, lastError;
     private int renderGeneration;
     private ScrollView scroll;
+    private View fab, scrim;
+    private LinearLayout dial;
+    private boolean dialOpen;
     private AlertDialog editor;
     private EditText draftWhy, draftIdeas;
     private InboxFile.Entry draftEntry;
@@ -83,15 +86,113 @@ public class SetupActivity extends Activity {
             } catch (Exception ignored) { toast("Draft could not be opened. It remains in private storage."); }
         }
         scroll = new ScrollView(this);
-        scroll.setFitsSystemWindows(true); // target 35 is edge-to-edge; keep content clear of the bars
-        scroll.setBackgroundColor(ui.bg);
+        FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(ui.bg);
         page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(ui.dp(24), ui.dp(16), ui.dp(24), ui.dp(32));
         scroll.addView(page);
-        setContentView(scroll);
-        Ui.insets(scroll);
+        frame.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        TextView plus = ui.text("+", 28, Ui.MEDIUM, ui.bg);
+        plus.setGravity(Gravity.CENTER);
+        plus.setBackground(ui.ripple(ui.round(ui.ink, 0, 26)));
+        plus.setElevation(ui.dp(6));
+        plus.setContentDescription("Capture");
+        plus.setOnClickListener(v -> toggleDial());
+        Ui.buttonRole(plus);
+        fab = plus;
+        FrameLayout.LayoutParams at = new FrameLayout.LayoutParams(ui.dp(52), ui.dp(52), Gravity.BOTTOM | Gravity.END);
+        at.setMargins(0, 0, ui.dp(20), ui.dp(20));
+        scrim = new View(this);
+        scrim.setBackgroundColor((ui.bg & 0xFFFFFF) | 0xD9000000);
+        scrim.setVisibility(View.GONE);
+        scrim.setOnClickListener(v -> toggleDial());
+        frame.addView(scrim, new FrameLayout.LayoutParams(-1, -1));
+        dial = new LinearLayout(this);
+        dial.setOrientation(LinearLayout.VERTICAL);
+        dial.setVisibility(View.GONE);
+        dial.addView(dialRow("Link or text", R.drawable.ic_dial_link, this::captureText), ui.lp(0));
+        dial.addView(dialRow("Photo or file", R.drawable.ic_dial_file, this::capturePick), ui.lp(16));
+        dial.addView(dialRow("Voice note", R.drawable.ic_dial_mic, this::captureVoice), ui.lp(16));
+        FrameLayout.LayoutParams above = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+        above.setMargins(0, 0, ui.dp(24), ui.dp(92));
+        frame.addView(dial, above);
+        frame.addView(fab, at);
+        setContentView(frame);
+        Ui.insets(frame); // target 35 is edge-to-edge; keep content clear of the bars
     }
+
+    /** Gmail-style speed dial: options rise out of the + one above the other. They reuse the share queue and ShareActivity. */
+    private void toggleDial() {
+        dialOpen = !dialOpen;
+        fab.animate().rotation(dialOpen ? 45 : 0).setDuration(180);
+        if (dialOpen) {
+            scrim.setAlpha(0); scrim.setVisibility(View.VISIBLE); scrim.animate().alpha(1).setDuration(180);
+            dial.setVisibility(View.VISIBLE);
+            for (int i = 0; i < dial.getChildCount(); i++) { // nearest the button first
+                View row = dial.getChildAt(dial.getChildCount() - 1 - i);
+                row.setAlpha(0); row.setTranslationY(ui.dp(24));
+                row.animate().alpha(1).translationY(0).setStartDelay(i * 40L).setDuration(180);
+            }
+        } else {
+            scrim.animate().alpha(0).setDuration(150).withEndAction(() -> { if (!dialOpen) scrim.setVisibility(View.GONE); });
+            for (int i = 0; i < dial.getChildCount(); i++) dial.getChildAt(i).animate().alpha(0).translationY(ui.dp(24)).setStartDelay(0).setDuration(150);
+            dial.postDelayed(() -> { if (!dialOpen) dial.setVisibility(View.GONE); }, 160);
+        }
+    }
+
+    private View dialRow(String label, int icon, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        TextView name = ui.text(label, 14, Ui.MEDIUM, ui.ink);
+        name.setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(8));
+        name.setBackground(ui.round(ui.surface, ui.line, 8));
+        name.setElevation(ui.dp(4));
+        LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(-2, -2);
+        gap.rightMargin = ui.dp(12);
+        row.addView(name, gap);
+        ImageView disc = new ImageView(this);
+        disc.setImageResource(icon);
+        disc.setColorFilter(ui.bg);
+        disc.setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11));
+        disc.setBackground(ui.round(ui.ink, 0, 22));
+        disc.setElevation(ui.dp(4));
+        row.addView(disc, new LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)));
+        row.setContentDescription(label);
+        row.setOnClickListener(v -> { toggleDial(); action.run(); });
+        Ui.buttonRole(row);
+        return row;
+    }
+
+    private void captureText() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(ui.dp(24), ui.dp(12), ui.dp(24), ui.dp(8));
+        View handle = new View(this);
+        handle.setBackground(ui.round((ui.ink & 0xFFFFFF) | 0x33000000, 0, 2));
+        LinearLayout.LayoutParams grip = new LinearLayout.LayoutParams(ui.dp(36), ui.dp(4));
+        grip.gravity = Gravity.CENTER_HORIZONTAL;
+        form.addView(handle, grip);
+        form.addView(ui.text("New capture", 20, Ui.MEDIUM, ui.ink), ui.lp(16));
+        form.addView(ui.text("Paste a link or write a note", 14, Typeface.DEFAULT, ui.sub), ui.lp(4));
+        EditText input = field("", 4);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); // no autocorrect: it breaks pasted URLs
+        form.addView(input, ui.lp(16));
+        AlertDialog d = new AlertDialog.Builder(this).setView(form)
+            .setPositiveButton("Save", (dialog, w) -> {
+                String value = input.getText().toString().trim();
+                if (!value.isEmpty()) startActivity(new Intent(this, ShareActivity.class).setAction(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, value));
+            }).setNegativeButton("Cancel", null).create();
+        d.show();
+        sheet(d, false);
+        input.requestFocus();
+        d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+    }
+    private void capturePick() {
+        startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), 5);
+    }
+    private void captureVoice() { startActivity(new Intent(this, QuickActivity.class).setAction(QuickActivity.VOICE)); }
+
     @Override protected void onResume() {
         super.onResume();
         android.content.IntentFilter changed = new android.content.IntentFilter(CaptureService.CHANGED);
@@ -121,6 +222,8 @@ public class SetupActivity extends Activity {
 
     private void draw(String inboxText, String readError) {
         lastText = inboxText; lastError = readError;
+        fab.setVisibility(settings ? View.GONE : View.VISIBLE);
+        if (settings && dialOpen) toggleDial();
         int position = restoredScroll > 0 ? restoredScroll : scroll.getScrollY(); restoredScroll = 0;
         page.removeAllViews();
         String inbox = prefs().getString("inbox", ""), name = CaptureService.inboxName(this);
@@ -168,12 +271,61 @@ public class SetupActivity extends Activity {
     private void header() {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView burger = quietLink("☰", v -> menu());
+        burger.setTextSize(22);
+        burger.setTextColor(ui.ink);
+        burger.setContentDescription("Menu");
+        burger.setPadding(0, 0, ui.dp(12), 0);
+        row.addView(burger);
         row.addView(ui.text("Sparkbox", 16, Ui.MEDIUM, ui.sub), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView settingsButton = quietLink("Settings", v -> showSettings(true));
-        settingsButton.setTextSize(14);
-        settingsButton.setTextColor(ui.sub);
-        row.addView(settingsButton);
         page.addView(row);
+    }
+
+    /** Navigation drawer: pages, actions and tag browsing, so the home screen stays just the inbox. */
+    private void menu() {
+        android.app.Dialog drawer = new android.app.Dialog(this);
+        drawer.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(ui.dp(24), ui.dp(32), ui.dp(24), ui.dp(24));
+        list.addView(ui.text("Sparkbox", 20, Ui.MEDIUM, ui.ink));
+        boolean ready = !prefs().getString("inbox", "").isEmpty();
+        list.addView(menuItem(drawer, "Overview", () -> startActivity(new Intent(this, DashboardActivity.class))), ui.lp(16));
+        list.addView(menuItem(drawer, "Settings", () -> showSettings(true)));
+        if (attentionCount(CaptureService.pending(this)) > 0 || CaptureService.recoveries(this).length > 0) {
+            TextView attention = menuItem(drawer, "Needs attention", () -> showSettings(true));
+            attention.setTextColor(ui.accent);
+            list.addView(attention);
+        }
+        if (ready) {
+            list.addView(menuItem(drawer, "Refresh inbox", this::render));
+            list.addView(menuItem(drawer, "Open in Obsidian", () -> openInObsidian(prefs().getString("inbox", ""))));
+        }
+        java.util.Map<String, Integer> tagCounts = new java.util.HashMap<>();
+        if (lastText != null) for (InboxFile.Entry e : InboxFile.parse(lastText)) for (String t : e.tags.split(", ")) if (!t.isEmpty()) tagCounts.merge(t, 1, Integer::sum);
+        if (!tagCounts.isEmpty()) {
+            List<java.util.Map.Entry<String, Integer>> top = new java.util.ArrayList<>(tagCounts.entrySet());
+            top.sort((a, b) -> b.getValue() != a.getValue().intValue() ? b.getValue() - a.getValue() : a.getKey().compareTo(b.getKey()));
+            list.addView(ui.label("Tags"), ui.lp(24));
+            for (java.util.Map.Entry<String, Integer> t : top.subList(0, Math.min(top.size(), 20))) {
+                String name = t.getKey();
+                TextView item = menuItem(drawer, "#" + name + "  " + t.getValue(), () -> { tag = tag.equals(name) ? "" : name; visibleLimit = 50; showSettings(false); draw(lastText, lastError); });
+                if (tag.equals(name)) item.setTypeface(Ui.MEDIUM);
+                list.addView(item);
+            }
+        }
+        ScrollView content = new ScrollView(this);
+        content.addView(list);
+        drawer.setContentView(content);
+        android.view.Window w = drawer.getWindow();
+        w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(ui.surface));
+        w.setLayout(ui.dp(300), ViewGroup.LayoutParams.MATCH_PARENT);
+        w.setGravity(Gravity.START);
+        drawer.show();
+    }
+
+    private TextView menuItem(android.app.Dialog drawer, String label, Runnable action) {
+        return settingsLink(label, v -> { drawer.dismiss(); action.run(); });
     }
 
     /** Reuse the native page and existing actions; no new navigation or storage layer. */
@@ -186,7 +338,7 @@ public class SetupActivity extends Activity {
         draw(lastText, lastError);
     }
     @Override public void onBackPressed() {
-        if (settings) showSettings(false); else super.onBackPressed();
+        if (dialOpen) toggleDial(); else if (settings) showSettings(false); else super.onBackPressed();
     }
     private TextView settingsLink(String label, View.OnClickListener click) {
         TextView link = quietLink(label, click);
@@ -387,9 +539,6 @@ public class SetupActivity extends Activity {
         LinearLayout heading = new LinearLayout(this);
         heading.setGravity(Gravity.CENTER_VERTICAL);
         heading.addView(ui.text("Inbox", 32, Ui.MEDIUM, ui.ink), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView overview = quietLink("Overview", v -> startActivity(new Intent(this, DashboardActivity.class)));
-        overview.setTextSize(14);
-        heading.addView(overview);
         page.addView(heading, ui.lp(20));
         page.addView(ui.text(entries.size() + (entries.size() == 1 ? " saved capture" : " saved captures"), 13, Typeface.DEFAULT, ui.muted), ui.lp(8));
         if (entries.isEmpty()) {
@@ -419,18 +568,13 @@ public class SetupActivity extends Activity {
         }
         page.addView(chipRow(chips), ui.lp(8));
 
-        java.util.Map<String, Integer> tagCounts = new java.util.HashMap<>();
-        for (InboxFile.Entry e : entries) for (String t : e.tags.split(", ")) if (!t.isEmpty()) tagCounts.merge(t, 1, Integer::sum);
-        if (!tag.isEmpty() && !tagCounts.containsKey(tag)) tag = ""; // its last entry is gone; do not strand the filter
-        if (!tagCounts.isEmpty()) {
-            List<java.util.Map.Entry<String, Integer>> top = new java.util.ArrayList<>(tagCounts.entrySet());
-            top.sort((a, b) -> b.getValue() != a.getValue().intValue() ? b.getValue() - a.getValue() : a.getKey().compareTo(b.getKey()));
-            LinearLayout tagChips = new LinearLayout(this);
-            for (java.util.Map.Entry<String, Integer> t : top.subList(0, Math.min(top.size(), 20))) {
-                String name = t.getKey();
-                addChip(tagChips, "#" + name + "  " + t.getValue(), tag.equals(name), () -> { tag = tag.equals(name) ? "" : name; });
-            }
-            page.addView(chipRow(tagChips), ui.lp(0));
+        boolean tagExists = false;
+        for (InboxFile.Entry e : entries) if (e.hasTag(tag)) { tagExists = true; break; }
+        if (!tagExists) tag = ""; // its last entry is gone; do not strand the filter
+        if (!tag.isEmpty()) {
+            LinearLayout active = new LinearLayout(this);
+            addChip(active, "#" + tag + "  ✕", true, () -> { tag = ""; });
+            page.addView(chipRow(active), ui.lp(0));
         }
 
         List<InboxFile.Entry> ordered = new java.util.ArrayList<>();
@@ -464,7 +608,7 @@ public class SetupActivity extends Activity {
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(ui.dp(12), ui.dp(16), 0, ui.dp(16));
-        TextView title = ui.text(entry.title, 17, Ui.MEDIUM, ui.ink);
+        TextView title = ui.text(entry.shownTitle(), 17, Ui.MEDIUM, ui.ink);
         title.setMaxLines(2);
         title.setEllipsize(TextUtils.TruncateAt.END);
         body.addView(title);
@@ -476,7 +620,6 @@ public class SetupActivity extends Activity {
             tldr.setEllipsize(TextUtils.TruncateAt.END);
             body.addView(tldr, ui.lp(8));
         }
-        if (!entry.tags.isEmpty()) body.addView(ui.text("#" + entry.tags.replace(", ", "  #"), 12, Typeface.DEFAULT, ui.muted), ui.lp(6));
         if (!entry.why.isEmpty()) {
             TextView why = ui.text(entry.why.split("\n")[0], 14, Typeface.DEFAULT, ui.sub);
             why.setMaxLines(2);
@@ -484,6 +627,9 @@ public class SetupActivity extends Activity {
             body.addView(why, ui.lp(8));
         }
         row.addView(body, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        LinearLayout.LayoutParams thumb = new LinearLayout.LayoutParams(ui.dp(64), ui.dp(64));
+        thumb.topMargin = ui.dp(16); thumb.leftMargin = ui.dp(12);
+        row.addView(Thumb.view(this, ui, entry, 64, 64), thumb);
         row.setBackground(ui.ripple(null));
         row.setOnClickListener(v -> showEntry(entry, lastText, prefs().getString("inbox", ""), entry.why, entry.ideas));
         Ui.buttonRole(row);
@@ -500,28 +646,67 @@ public class SetupActivity extends Activity {
         editing = true; draftEntry = entry; draftSnapshot = snapshot; draftDestination = destination;
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(ui.dp(24), ui.dp(8), ui.dp(24), 0);
-        if (!entry.url.isEmpty()) form.addView(ui.button("Open source", false, v -> open(entry.url)));
-        if (!entry.file.isEmpty()) form.addView(ui.button("Open file", false, v -> openFile(entry.file)));
-        if (entry.text || !entry.sharedText.isEmpty()) {
-            TextView body = ui.text(entry.text ? entry.body : entry.sharedText, 16, Typeface.DEFAULT, ui.ink);
-            body.setTextIsSelectable(true); form.addView(body, ui.lp(16));
+        form.setPadding(ui.dp(24), ui.dp(12), ui.dp(24), ui.dp(8));
+        View handle = new View(this);
+        handle.setBackground(ui.round((ui.ink & 0xFFFFFF) | 0x33000000, 0, 2));
+        LinearLayout.LayoutParams grip = new LinearLayout.LayoutParams(ui.dp(36), ui.dp(4));
+        grip.gravity = Gravity.CENTER_HORIZONTAL;
+        form.addView(handle, grip);
+        if (!entry.text) {
+            LinearLayout.LayoutParams banner = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(168));
+            banner.topMargin = ui.dp(16);
+            form.addView(Thumb.view(this, ui, entry, 0, 168), banner);
         }
-        if (entry.file.isEmpty()) form.addView(quietLink(entry.text ? "Copy full note" : "Copy link", v -> copy(entry.text ? entry.body : entry.url)), ui.lp(8));
-        form.addView(ui.text(entry.time, 12, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        String kind = entry.type.isEmpty() ? "" : Character.toUpperCase(entry.type.charAt(0)) + entry.type.substring(1) + " · ";
+        String source = !entry.file.isEmpty() ? "File" : entry.text || entry.url.isEmpty() ? "Note" : Ui.host(entry.url);
+        form.addView(ui.text(kind + source + " · " + Ui.when(entry), 12, Typeface.DEFAULT, ui.muted), ui.lp(16));
+        if (entry.text) {
+            TextView note = ui.text(entry.body, 18, Typeface.DEFAULT, ui.ink);
+            note.setTextIsSelectable(true);
+            form.addView(note, ui.lp(8));
+        } else {
+            TextView heading = ui.text(entry.shownTitle(), 22, Ui.MEDIUM, ui.ink);
+            heading.setTextIsSelectable(true);
+            heading.setMaxLines(4);
+            heading.setEllipsize(TextUtils.TruncateAt.END);
+            form.addView(heading, ui.lp(8));
+        }
+        if (!entry.tldr.isEmpty()) form.addView(ui.text(entry.tldr, 16, Typeface.DEFAULT, ui.sub), ui.lp(12));
+        if (!entry.tags.isEmpty()) form.addView(ui.text("#" + entry.tags.replace(", ", "  #"), 12, Typeface.DEFAULT, ui.muted), ui.lp(12));
+        LinearLayout actions = new LinearLayout(this);
+        if (!entry.url.isEmpty() || !entry.file.isEmpty()) actions.addView(ui.button(entry.file.isEmpty() ? "Open source" : "Open file", true,
+            v -> { if (entry.file.isEmpty()) open(entry.url); else openFile(entry.file); }), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (entry.file.isEmpty()) {
+            LinearLayout.LayoutParams copyAt = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            if (actions.getChildCount() > 0) copyAt.leftMargin = ui.dp(8);
+            actions.addView(ui.button(entry.text ? "Copy note" : "Copy link", false, v -> copy(entry.text ? entry.body : entry.url)), copyAt);
+        }
+        form.addView(actions, ui.lp(20));
+        if (!entry.text && !entry.sharedText.isEmpty() && !entry.sharedText.equals(entry.url)) {
+            TextView shared = ui.text(entry.sharedText, 14, Typeface.DEFAULT, ui.muted);
+            shared.setTextIsSelectable(true);
+            form.addView(shared, ui.lp(16));
+        }
+        View rule = new View(this);
+        rule.setBackgroundColor(ui.line);
+        LinearLayout.LayoutParams ruleAt = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        ruleAt.topMargin = ui.dp(24);
+        form.addView(rule, ruleAt);
         TextView whyLabel = ui.label("Why I saved this");
-        form.addView(whyLabel, ui.lp(20));
+        form.addView(whyLabel, ui.lp(24));
         EditText why = field(whyValue, 2); draftWhy = why;
         why.setId(View.generateViewId()); whyLabel.setLabelFor(why.getId());
+        form.addView(intentChips(why), ui.lp(8));
         form.addView(why, ui.lp(8));
         TextView ideasLabel = ui.label("My ideas"); form.addView(ideasLabel, ui.lp(16));
         EditText ideas = field(ideasValue, 4); draftIdeas = ideas;
         ideas.setId(View.generateViewId()); ideasLabel.setLabelFor(ideas.getId());
         form.addView(ideas, ui.lp(8));
         form.addView(quietLink("Copy draft annotations", v -> copy("Why: " + why.getText() + "\nIdeas: " + ideas.getText())), ui.lp(8));
+        form.addView(ui.text("Captured " + entry.time, 12, Typeface.DEFAULT, ui.muted), ui.lp(8));
         relatedSection(form, entry, snapshot, why, ideas);
         ScrollView content = new ScrollView(this); content.addView(form);
-        editor = new AlertDialog.Builder(this).setTitle(entry.title).setView(content)
+        editor = new AlertDialog.Builder(this).setView(content)
             .setPositiveButton("Save", null).setNegativeButton("Close", null).setNeutralButton("Delete", null).create();
         editor.setCanceledOnTouchOutside(false);
         editor.setOnCancelListener(d -> keepDraft());
@@ -561,8 +746,80 @@ public class SetupActivity extends Activity {
                 }).setNegativeButton("Cancel", null).show());
         });
         editor.show();
+        sheet(editor, true);
         keepDraft();
     }
+    private static final String[] INTENTS = {"To read", "To try", "To cite", "Idea"};
+
+    /** One tap states why you saved it: the chip becomes the start of the Why text (tap again to clear). Saved with the normal Save. */
+    private View intentChips(EditText why) {
+        LinearLayout row = new LinearLayout(this);
+        TextView[] chips = new TextView[INTENTS.length];
+        Runnable paint = () -> {
+            String text = why.getText().toString();
+            for (int i = 0; i < chips.length; i++) {
+                boolean on = text.equals(INTENTS[i]) || text.startsWith(INTENTS[i] + " · ");
+                chips[i].setTextColor(on ? ui.bg : ui.sub);
+                chips[i].setBackground(ui.ripple(ui.round(on ? ui.ink : 0, on ? 0 : ui.line, 16)));
+                chips[i].setSelected(on);
+            }
+        };
+        for (int i = 0; i < chips.length; i++) {
+            String intent = INTENTS[i];
+            TextView chip = ui.text(intent, 14, Ui.MEDIUM, ui.sub);
+            chip.setGravity(Gravity.CENTER);
+            chip.setMinHeight(ui.dp(36));
+            chip.setPadding(ui.dp(16), 0, ui.dp(16), 0);
+            Ui.buttonRole(chip);
+            chip.setOnClickListener(v -> {
+                String text = why.getText().toString();
+                boolean same = false;
+                for (String other : INTENTS) {
+                    if (text.equals(other)) { same = other.equals(intent); text = ""; break; }
+                    if (text.startsWith(other + " · ")) { same = other.equals(intent); text = text.substring(other.length() + 3); break; }
+                }
+                if (!same) text = intent + (text.isEmpty() ? "" : " · " + text);
+                why.setText(text);
+                why.setSelection(text.length());
+            });
+            LinearLayout.LayoutParams at = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            at.rightMargin = ui.dp(8);
+            row.addView(chip, at);
+            chips[i] = chip;
+        }
+        why.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable e) { paint.run(); }
+        });
+        paint.run();
+        return chipRow(row);
+    }
+
+    /** Bottom sheet look for a dialog: rounded top, surface fill, quiet buttons with one primary. */
+    private void sheet(AlertDialog d, boolean tall) {
+        android.view.Window w = d.getWindow();
+        GradientDrawable shape = ui.round(ui.surface, ui.line, 0);
+        shape.setCornerRadii(new float[]{ui.dp(24), ui.dp(24), ui.dp(24), ui.dp(24), 0, 0, 0, 0});
+        w.setBackgroundDrawable(shape);
+        w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, tall ? (int) (getResources().getDisplayMetrics().heightPixels * 0.92f) : ViewGroup.LayoutParams.WRAP_CONTENT);
+        w.setGravity(Gravity.BOTTOM);
+        w.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        int[] ids = {AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE, AlertDialog.BUTTON_NEUTRAL};
+        for (int id : ids) {
+            Button b = d.getButton(id);
+            if (b == null) continue;
+            b.setAllCaps(false);
+            b.setTextSize(14);
+            b.setTypeface(Ui.MEDIUM);
+            b.setMinHeight(ui.dp(48));
+            b.setTextColor(id == AlertDialog.BUTTON_POSITIVE ? ui.bg : id == AlertDialog.BUTTON_NEGATIVE ? ui.ink : ui.muted);
+            if (id == AlertDialog.BUTTON_POSITIVE) { b.setBackground(ui.ripple(ui.round(ui.ink, 0, 10))); b.setMinWidth(ui.dp(96)); }
+        }
+        Button any = d.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (any != null && any.getParent() instanceof View) ((View) any.getParent()).setPadding(ui.dp(16), ui.dp(8), ui.dp(24), ui.dp(16));
+    }
+
     private void setEditorEnabled(boolean enabled) {
         saving = !enabled;
         if (editor == null) return;
@@ -695,7 +952,7 @@ public class SetupActivity extends Activity {
                 if (isDestroyed() || editor == null || near.isEmpty()) return;
                 box.addView(ui.label("Related"));
                 for (InboxFile.Entry other : near) {
-                    TextView row = quietLink(other.title, v -> {
+                    TextView row = quietLink(other.shownTitle(), v -> {
                         if (!why.getText().toString().equals(entry.why) || !ideas.getText().toString().equals(entry.ideas)) { toast("Save or close this entry first"); return; }
                         clearDraft(); editor.dismiss(); showEntry(other, snapshot, prefs().getString("inbox", ""), other.why, other.ideas);
                     });
@@ -753,6 +1010,19 @@ public class SetupActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == 5 && result == RESULT_OK && data != null) {
+            ArrayList<Uri> picked = new ArrayList<>();
+            if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) picked.add(data.getClipData().getItemAt(i).getUri());
+            else if (data.getData() != null) picked.add(data.getData());
+            if (picked.isEmpty()) return;
+            Intent send = new Intent(this, ShareActivity.class).setAction(Intent.ACTION_SEND_MULTIPLE).setType("*/*")
+                .putParcelableArrayListExtra(Intent.EXTRA_STREAM, picked).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            android.content.ClipData clip = android.content.ClipData.newRawUri("files", picked.get(0));
+            for (int i = 1; i < picked.size(); i++) clip.addItem(new android.content.ClipData.Item(picked.get(i)));
+            send.setClipData(clip);
+            startActivity(send);
+            return;
+        }
         if (request == 3 && result == RESULT_OK && data != null && data.getData() != null) {
             try {
                 Uri target = data.getData();

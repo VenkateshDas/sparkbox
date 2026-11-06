@@ -57,6 +57,41 @@ final class PageTitle {
         } catch (java.net.UnknownHostException | RuntimeException unknown) { return false; }
     }
 
+    /** Bounded HTTPS image download (2 MB max, same host and redirect rules as html()), or null. */
+    static byte[] image(String original) throws Exception {
+        URL current = new URL(original);
+        long deadline = System.currentTimeMillis() + 8000;
+        for (int redirects = 0; redirects <= 4; redirects++) {
+            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null || !publicHost(current.getHost())) return null;
+            HttpURLConnection connection = (HttpURLConnection) current.openConnection();
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(2500);
+            connection.setReadTimeout(2500);
+            connection.setRequestProperty("User-Agent", AGENT);
+            try {
+                int code = connection.getResponseCode();
+                if (code >= 300 && code < 400) {
+                    String location = connection.getHeaderField("Location");
+                    if (location == null) return null;
+                    current = new URL(current, location);
+                    continue;
+                }
+                String type = connection.getContentType();
+                if (code != 200 || type == null || !type.toLowerCase(Locale.ROOT).startsWith("image/")) return null;
+                try (InputStream input = connection.getInputStream(); ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+                    byte[] buffer = new byte[8192];
+                    int size;
+                    while ((size = input.read(buffer)) != -1) {
+                        bytes.write(buffer, 0, size);
+                        if (bytes.size() > 2 * 1024 * 1024 || System.currentTimeMillis() > deadline) return null;
+                    }
+                    return bytes.toByteArray();
+                }
+            } finally { connection.disconnect(); }
+        }
+        return null;
+    }
+
     /** Bounded HTTPS fetch. whole=false stops after &lt;head&gt;, enough for titles; true reads the body too. */
     static String html(String original, boolean whole) throws Exception {
         URL current = new URL(original);

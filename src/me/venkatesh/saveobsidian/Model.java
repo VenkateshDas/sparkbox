@@ -27,7 +27,7 @@ final class Model {
     static final String VISION = "google/gemini-2.5-flash-lite", TRANSCRIBE = "openai/whisper-large-v3";
     private static final String ALIAS = "sparkbox-ai-key";
 
-    /** {type, tags, tldr}, or null when the reply is unusable. IOException (network, key, quota) means stop for now. */
+    /** {type, tags, tldr, title}, or null when the reply is unusable. IOException (network, key, quota) means stop for now. */
     static String[] enrich(String key, String model, String title, String url) throws Exception {
         String page = "";
         String host = new URL(url).getHost().toLowerCase(java.util.Locale.ROOT);
@@ -76,7 +76,9 @@ final class Model {
             List<String> tags = new ArrayList<>();
             JSONArray array = out.optJSONArray("tags");
             for (int i = 0; array != null && i < array.length(); i++) tags.add(array.optString(i));
-            return Enrich.clean(out.optString("type"), tags, out.optString("tldr"));
+            String[] r = Enrich.clean(out.optString("type"), tags, out.optString("tldr"));
+            String title = Capture.clean(out.optString("title"));
+            return new String[]{r[0], r[1], r[2], title.length() > 80 ? title.substring(0, 80).trim() : title};
         } catch (Exception unusable) { return null; }
     }
 

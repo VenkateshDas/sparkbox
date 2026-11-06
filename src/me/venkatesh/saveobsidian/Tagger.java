@@ -48,14 +48,15 @@ final class Tagger {
             for (int i = all.size() - 1; i >= 0 && next == null; i--) {
                 InboxFile.Entry e = all.get(i);
                 boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty(); // a three-word note needs no summary
-                if (worth && e.type.isEmpty() && !skipped.contains(e.raw)) next = e;
+                if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
             }
             if (next == null) return;
             String[] result = next.text ? Model.enrichNote(key, model, next.body) : Model.enrich(key, model, next.title, next.url);
             calls++;
             if (result == null) { skipped.add(next.raw); continue; }
-            String raw = next.raw;
-            CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2]));
+            if (result[3].isEmpty() && !next.type.isEmpty()) { skipped.add(next.raw); continue; } // already tagged and the model gave no title: leave it, retry next run
+            String raw = next.raw, heading = result[3];
+            CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2], heading));
             c.sendBroadcast(new Intent(CaptureService.CHANGED).setPackage(c.getPackageName()));
         }
     }
@@ -120,7 +121,7 @@ final class Tagger {
             } catch (Model.Rejected | java.io.FileNotFoundException | SecurityException refused) { continue; } // this file only; the rest still run
             if (result == null) continue;
             String raw = next.raw;
-            CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2]));
+            CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2], result[3]));
             c.sendBroadcast(new Intent(CaptureService.CHANGED).setPackage(c.getPackageName()));
         }
     }

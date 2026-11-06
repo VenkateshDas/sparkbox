@@ -197,6 +197,10 @@ public class CaptureTest {
         InboxFile.Entry e = InboxFile.parse(tagged).get(0);
         check(e.type.equals("article") && e.tags.equals("sqlite, db") && e.tldr.equals("How SQLite stores pages.") && e.why.equals("for the db talk"));
         check(InboxFile.parse(tagged).get(1).type.isEmpty() && InboxFile.parse(tagged).size() == 2);
+        String titled = InboxFile.setEnrich(inbox, raw, "article", "db", "x", "Inside SQLite pages");
+        InboxFile.Entry g = InboxFile.parse(titled).get(0);
+        check(g.heading.equals("Inside SQLite pages") && g.title.equals("SQLite internals") && g.shownTitle().equals("Inside SQLite pages") && InboxFile.parse(inbox).get(0).shownTitle().equals("SQLite internals") && g.why.equals("for the db talk"));
+        check(InboxFile.parse(InboxFile.setEnrich(titled, g.raw, "article", "db", "x", "Second")).get(0).heading.equals("Second") && !InboxFile.setEnrich(titled, g.raw, "article", "db", "x", "Second").contains("Inside SQLite"));
         String again = InboxFile.setEnrich(tagged, e.raw, "tool", "", "");
         InboxFile.Entry f = InboxFile.parse(again).get(0);
         check(f.type.equals("tool") && f.tags.isEmpty() && f.tldr.isEmpty() && f.why.equals("for the db talk") && !again.contains("sqlite, db"));

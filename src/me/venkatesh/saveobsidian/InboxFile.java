@@ -6,19 +6,21 @@ import java.util.List;
 /** Supported capture blocks only; unfamiliar Markdown stays untouched. */
 public final class InboxFile {
     public static final class Entry {
-        public final String raw, title, url, time, why, ideas, body, sharedText, type, tags, tldr, file;
+        public final String raw, title, url, time, why, ideas, body, sharedText, type, tags, tldr, file, heading;
         public final boolean text;
         public final int start;
         Entry(int start, String raw, String title, String url, String time, String why, String ideas,
-                String body, String sharedText, boolean text, String type, String tags, String tldr, String file) {
+                String body, String sharedText, boolean text, String type, String tags, String tldr, String file, String heading) {
             this.start = start; this.raw = raw; this.title = title; this.url = url; this.time = time;
             this.why = why; this.ideas = ideas; this.body = body; this.sharedText = sharedText; this.text = text;
-            this.type = type; this.tags = tags; this.tldr = tldr; this.file = file;
+            this.type = type; this.tags = tags; this.tldr = tldr; this.file = file; this.heading = heading;
         }
+        /** The model-written title when there is one, else the saved title. */
+        public String shownTitle() { return heading.isEmpty() ? title : heading; }
         public boolean hasTag(String tag) { return (", " + tags + ", ").contains(", " + tag + ", "); }
         /** Every word of the query appears somewhere in the entry (case-insensitive). */
         public boolean contains(String query) {
-            String hay = (title + "\n" + file + "\n" + url + "\n" + why + "\n" + ideas + "\n" + body + "\n" + tldr + "\n" + tags).toLowerCase(java.util.Locale.ROOT);
+            String hay = (title + "\n" + heading + "\n" + file + "\n" + url + "\n" + why + "\n" + ideas + "\n" + body + "\n" + tldr + "\n" + tags).toLowerCase(java.util.Locale.ROOT);
             for (String word : query.toLowerCase(java.util.Locale.ROOT).split("\\s+")) if (!hay.contains(word)) return false;
             return true;
         }
@@ -81,7 +83,7 @@ public final class InboxFile {
         String[] lines = block.raw.split("\n", -1);
         String head = lines[0].substring(2).trim();
         boolean note = head.startsWith("📝");
-        String title = head.replaceFirst("^(🔗|📝|🖼|📎)\\s*", ""), url = "", time = "", type = "", tags = "", tldr = "", file = "";
+        String title = head.replaceFirst("^(🔗|📝|🖼|📎)\\s*", ""), url = "", time = "", type = "", tags = "", tldr = "", file = "", heading = "";
         java.util.regex.Matcher old = java.util.regex.Pattern.compile("^(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d) — (.*)$").matcher(title);
         if (old.matches()) { time = old.group(1); title = old.group(2); }
         StringBuilder why = new StringBuilder(), ideas = new StringBuilder(), body = new StringBuilder(), shared = new StringBuilder();
@@ -102,6 +104,7 @@ public final class InboxFile {
             else if (line.equals("  Shared text:")) current = shared;
             else if (line.startsWith("  Type:")) type = inline(line.substring(7)).trim();
             else if (line.startsWith("  Tags:")) tags = inline(line.substring(7)).trim();
+            else if (line.startsWith("  Title:")) heading = inline(line.substring(8)).trim();
             else if (line.startsWith("  TL;DR:")) tldr = inline(line.substring(8)).trim();
             else if (line.startsWith("  Captured:")) time = line.substring(11).trim();
             else {
@@ -117,7 +120,7 @@ public final class InboxFile {
             }
         }
         return new Entry(block.start, block.raw, title, url, time, why.toString(), ideas.toString(),
-            bodyPresent ? body.toString() : note ? title : "", shared.toString(), note, type, tags, tldr, file);
+            bodyPresent ? body.toString() : note ? title : "", shared.toString(), note, type, tags, tldr, file, heading);
     }
     private static Block find(String text, String raw) {
         Block found = null;
@@ -155,17 +158,19 @@ public final class InboxFile {
         return text.substring(0, b.start) + out + text.substring(b.end);
     }
     /** Replaces the model-written Type/Tags/TL;DR lines. Values must already be one clean line each. */
-    public static String setEnrich(String text, String raw, String type, String tags, String tldr) {
+    public static String setEnrich(String text, String raw, String type, String tags, String tldr) { return setEnrich(text, raw, type, tags, tldr, ""); }
+    public static String setEnrich(String text, String raw, String type, String tags, String tldr, String heading) {
         Block b = find(text, raw);
         StringBuilder out = new StringBuilder();
         for (String line : b.raw.split("\n", -1)) {
-            if (line.startsWith("  Type:") || line.startsWith("  Tags:") || line.startsWith("  TL;DR:")) continue;
+            if (line.startsWith("  Type:") || line.startsWith("  Tags:") || line.startsWith("  TL;DR:") || line.startsWith("  Title:")) continue;
             if (out.length() > 0) out.append('\n');
             out.append(line);
         }
         out.append("\n  Type: ").append(type);
         if (!tags.isEmpty()) out.append("\n  Tags: ").append(tags);
         if (!tldr.isEmpty()) out.append("\n  TL;DR: ").append(tldr);
+        if (!heading.isEmpty()) out.append("\n  Title: ").append(heading);
         return text.substring(0, b.start) + out + text.substring(b.end);
     }
     private static String inline(String value) { return value.startsWith(" ") ? value.substring(1) : value; }
