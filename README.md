@@ -69,6 +69,11 @@ The old Automate flow is no longer required.
 | `src/me/venkatesh/saveobsidian/PageTitle.java` | Bounded HTTPS HTML title retrieval |
 | `src/me/venkatesh/saveobsidian/Capture.java` | URL extraction, title cleanup, local timestamp, Markdown formatting |
 | `src/me/venkatesh/saveobsidian/AppendCheck.java` | Exact byte comparison of original content plus appended entry |
+| `src/me/venkatesh/saveobsidian/Vault.java` | Pure Java: frontmatter and `[[link]]` parsing, link resolution, backlinks, citations |
+| `src/me/venkatesh/saveobsidian/VaultStore.java` | Read-only vault folder scan over SAF with a modified-time cache, embeddings and search |
+| `src/me/venkatesh/saveobsidian/VaultActivity.java` | Knowledge screen: folders, notes, Read/Links/Similar tabs, search |
+| `src/me/venkatesh/saveobsidian/Ask.java`, `AskActivity.java` | Ask your notes: OpenRouter tool loop (search, read, list, links) with tappable citations |
+| `src/me/venkatesh/saveobsidian/Md.java` | Minimal Markdown renderer for notes and answers |
 | `tests/CaptureTest.java` | Runnable JVM checks; no test framework required |
 | `res/drawable/` | App and notification vector icons |
 | `build.py` | Compile, test, package, sign, and verify without Gradle |
@@ -201,3 +206,21 @@ See [stabilization validation](docs/stabilization-validation.md) for executed ch
 The front page now contains the Sparkbox wordmark, Settings, the inbox title/count, Overview, filters and captures. Stronger capture titles, consistent row spacing and the existing annotation rail give the list a clearer hierarchy. The full file path, file picker, access check, Obsidian link, refresh, notification preferences, Live Updates, edit recovery, earlier backup and retained captures are grouped in Settings. Historical backups no longer take space above the inbox. Unresolved captures or edit recovery still produce a small Review notice on the inbox.
 
 Settings reuses the native Activity and existing recovery actions. System Back and Back to inbox return to the list; filters and page position are kept, including across Activity recreation. No new dependencies, storage format changes or capture-service changes are introduced by this UI release.
+
+## 1.7.0: knowledge base
+
+Sparkbox now reads the whole vault, not only the inbox. Open **Knowledge** from the menu and choose the vault folder once (Android's folder picker, read-only).
+
+- **Scope.** Only `Knowledge/` (including `Knowledge/Learnings/`) and `Sources/` are read (not `Sources/Inbox.md`). Dot-folders, Daily, Health and every other folder are never read, indexed or sent anywhere.
+- **Browse.** Folders, notes, a topic and people chip row from frontmatter, and per note: **Read** (links are tappable), **Links** (links to, linked from, concepts with no page yet) and **Similar** (nearest by meaning). Notes with no links have their own list.
+- **Links.** `[[Path/To/Note]]`, `[[Note]]`, `[[Note|alias]]` and `[[Path\|alias]]` in tables resolve by exact path first, then by a name only one note has. An ambiguous name stays unresolved instead of being guessed.
+- **Search.** Word match shows at once. With an OpenRouter key, closest-meaning results are added. Note vectors live in `vault.bin`, separate from the inbox `index.bin`. The first index pass embeds 640 notes per background run.
+- **Ask.** The **Ask** button sits beside the capture **+** on the home screen, and a search in Knowledge offers "Ask your notes". Needs the OpenRouter key and a model that supports tool calls (default `anthropic/claude-haiku-5.5`, changeable in Settings). There is no agent SDK: `Ask.java` is a plain tool loop (about 150 lines) over OpenRouter chat completions. The model gets five read-only tools, `search`, `read`, `list`, `links` and `inbox`, and takes up to 8 steps. It covers Knowledge (with Learnings inside it), Sources and the inbox, and answers only from them. Each claim is cited as `[[path|Title]]`: a note citation opens the note, an inbox citation opens the inbox filtered to that capture. Long-press an answer to copy it. The searches and the text it reads are sent to OpenRouter.
+- **Search ranking.** Word match scores rarer words higher and title words triple (`Vault.search`). A query of up to three words puts the word match first and adds what meaning found; a longer question fuses both lists (`Vault.blend`).
+- **Obsidian.** A note's **Open in Obsidian** link uses the `obsidian://open` scheme with the vault folder's name.
+- **Read-only.** Nothing in this feature writes to the vault. The inbox keeps its own guarded append and edit path.
+- **Cache.** `vault.json` keeps parsed notes keyed by size and modified time. Bump `VaultStore.CACHE` whenever `Vault.parse` changes what it extracts.
+
+Measured on the OnePlus with the 426-note vault: first scan 2.6 s, cached scan about 0.4 s, Knowledge screen first frame about 50 ms (draw 16 ms). Opening it was slow at first because the recent list parsed dates with a fresh regex on every sort comparison and the search index was read on the main thread; dates are now memoised, the index count runs in the background, and the snapshot is preloaded when the inbox opens. A 42 KB note renders in 12 ms and lays out in 42 ms.
+
+The JVM checks cover parsing, link resolution, search ranking and result blending (138 checks). On the phone, by hand: browse, Links, Similar, search ranking, Ask with a note citation, Ask over an inbox capture with an inbox citation, Ask from a search, the no-links list and Open in Obsidian. Not tested: light theme, large font scale, rotation (the two screens handle it without recreating) and Ask with no network.

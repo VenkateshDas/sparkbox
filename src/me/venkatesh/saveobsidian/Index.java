@@ -94,6 +94,33 @@ public final class Index {
         return v == null ? new ArrayList<>() : rank(v, entries, limit, MIN_RELATED, self);
     }
 
+    /** Stored unit vector of this exact text, or null. */
+    public float[] vector(String text) { return vectors.get(key(text)); }
+
+    public static float dot(float[] a, float[] b) {
+        float sum = 0;
+        for (int i = 0; i < a.length; i++) sum += a[i] * b[i];
+        return sum;
+    }
+
+    /** Unit-length copy, for a query vector that did not come from put(). */
+    public static float[] normalized(float[] v) { return unit(v); }
+
+    /** Distinct texts that still need a vector (for text that is not an inbox entry, such as vault notes). */
+    public List<String> missingTexts(java.util.Collection<String> texts) {
+        Set<Long> seen = new HashSet<>();
+        List<String> todo = new ArrayList<>();
+        for (String t : texts) { long k = key(t); if (!vectors.containsKey(k) && seen.add(k)) todo.add(t); }
+        return todo;
+    }
+
+    /** Keeps only vectors of these texts. */
+    public void retainTexts(java.util.Collection<String> texts) {
+        Set<Long> live = new HashSet<>();
+        for (String t : texts) live.add(key(t));
+        vectors.keySet().retainAll(live);
+    }
+
     public int size() { return vectors.size(); }
 
     /** Write-then-rename so a crash never leaves a half-written index. */

@@ -35,6 +35,8 @@ import java.util.List;
 
 /** Capture-first inbox; configuration and recovery live in Settings. */
 public class SetupActivity extends Activity {
+    static final String FIND = "find";
+    static volatile boolean findFromApp; // set by Ask just before it sends FIND: this activity is exported, so other apps must not drive the filter
     private LinearLayout page;
     private Ui ui;
     private boolean waiting;
@@ -44,7 +46,7 @@ public class SetupActivity extends Activity {
     private String lastText, lastError;
     private int renderGeneration;
     private ScrollView scroll;
-    private View fab, scrim;
+    private View fab, scrim, askPill;
     private LinearLayout dial;
     private boolean dialOpen;
     private AlertDialog editor;
@@ -117,6 +119,19 @@ public class SetupActivity extends Activity {
         FrameLayout.LayoutParams above = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
         above.setMargins(0, 0, ui.dp(24), ui.dp(92));
         frame.addView(dial, above);
+        // Ask sits beside the capture button: capture adds to the inbox, Ask reads everything in it and in the vault.
+        TextView ask = ui.text("Ask", 15, Ui.MEDIUM, ui.ink);
+        ask.setGravity(Gravity.CENTER);
+        ask.setBackground(ui.ripple(ui.round(ui.raised, ui.line, 26)));
+        ask.setElevation(ui.dp(6));
+        ask.setPadding(ui.dp(24), 0, ui.dp(24), 0);
+        ask.setContentDescription("Ask your notes");
+        ask.setOnClickListener(v -> startActivity(new Intent(this, AskActivity.class)));
+        Ui.buttonRole(ask);
+        askPill = ask;
+        FrameLayout.LayoutParams beside = new FrameLayout.LayoutParams(-2, ui.dp(52), Gravity.BOTTOM | Gravity.END);
+        beside.setMargins(0, 0, ui.dp(84), ui.dp(20));
+        frame.addView(ask, beside);
         frame.addView(fab, at);
         setContentView(frame);
         Ui.insets(frame); // target 35 is edge-to-edge; keep content clear of the bars
@@ -126,6 +141,8 @@ public class SetupActivity extends Activity {
     private void toggleDial() {
         dialOpen = !dialOpen;
         fab.animate().rotation(dialOpen ? 45 : 0).setDuration(180);
+        askPill.animate().alpha(dialOpen ? 0 : 1).setDuration(150); // the dial owns the corner while open
+        askPill.setClickable(!dialOpen);
         if (dialOpen) {
             scrim.setAlpha(0); scrim.setVisibility(View.VISIBLE); scrim.animate().alpha(1).setDuration(180);
             dial.setVisibility(View.VISIBLE);
@@ -199,6 +216,7 @@ public class SetupActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(inboxUpdates, changed, android.content.Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(inboxUpdates, changed);
         listening = true;
+        if (VaultStore.ready(this) && VaultStore.last == null) new Thread(() -> VaultStore.cached(this)).start(); // warm the Knowledge screen while the inbox draws
         render(); InboxWidget.refresh(this);
         BackgroundJob.schedule(this);
         InboxWidget.refresh(this);
@@ -223,6 +241,7 @@ public class SetupActivity extends Activity {
     private void draw(String inboxText, String readError) {
         lastText = inboxText; lastError = readError;
         fab.setVisibility(settings ? View.GONE : View.VISIBLE);
+        askPill.setVisibility(settings ? View.GONE : View.VISIBLE);
         if (settings && dialOpen) toggleDial();
         int position = restoredScroll > 0 ? restoredScroll : scroll.getScrollY(); restoredScroll = 0;
         page.removeAllViews();
@@ -268,6 +287,20 @@ public class SetupActivity extends Activity {
         return link;
     }
 
+    /** Opened from an Ask citation: show the inbox filtered to that capture. */
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String find = intent.getStringExtra(FIND);
+        if (find == null) return;
+        intent.removeExtra(FIND);
+        boolean ours = findFromApp;
+        findFromApp = false;
+        if (!ours) return;
+        query = find; filter = 0; tag = ""; semanticRaw = null; visibleLimit = 50;
+        if (settings) showSettings(false); else draw(lastText, lastError);
+    }
+
     private void header() {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -291,6 +324,7 @@ public class SetupActivity extends Activity {
         list.addView(ui.text("Sparkbox", 20, Ui.MEDIUM, ui.ink));
         boolean ready = !prefs().getString("inbox", "").isEmpty();
         list.addView(menuItem(drawer, "Overview", () -> startActivity(new Intent(this, DashboardActivity.class))), ui.lp(16));
+        list.addView(menuItem(drawer, "Knowledge", () -> startActivity(new Intent(this, VaultActivity.class))));
         list.addView(menuItem(drawer, "Settings", () -> showSettings(true)));
         if (attentionCount(CaptureService.pending(this)) > 0 || CaptureService.recoveries(this).length > 0) {
             TextView attention = menuItem(drawer, "Needs attention", () -> showSettings(true));
@@ -399,16 +433,25 @@ public class SetupActivity extends Activity {
         files.addView(settingsLink(Attach.ready(this) ? "Change folder" : "Choose folder", v -> chooseAttach()), ui.lp(8));
         page.addView(files, ui.lp(16));
 
+        LinearLayout vault = ui.card("Knowledge base");
+        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 12,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
+        vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        vault.addView(settingsLink(VaultStore.ready(this) ? "Change folder" : "Choose vault folder", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK, true))), ui.lp(8));
+        page.addView(vault, ui.lp(16));
+
         LinearLayout smart = ui.card("Smart tags (optional)");
         smart.addView(ui.text("Adds a type, tags and a one-line summary to new links with your OpenRouter key. Sent to OpenRouter: link titles and page text (not the part of a link after ?), the text of longer notes, and a short digest of every capture for search. Off until you save a key.", 13, Typeface.DEFAULT, ui.sub));
         boolean keySaved = !Model.key(this).isEmpty();
-        EditText key = field("", 1), model = field(prefs().getString("aiModel", Model.DEFAULT), 1);
+        EditText key = field("", 1), model = field(prefs().getString("aiModel", Model.DEFAULT), 1), askModel = field(Ask.model(this), 1);
         key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         key.setHint(keySaved ? "Key saved. Paste a new one to replace it." : "OpenRouter API key");
         model.setInputType(InputType.TYPE_CLASS_TEXT);
+        askModel.setInputType(InputType.TYPE_CLASS_TEXT);
         smart.addView(key, ui.lp(12));
         smart.addView(model, ui.lp(8));
-        smart.addView(ui.button("Save", true, v -> saveSmart(key.getText().toString().trim(), model.getText().toString().trim())), ui.lp(12));
+        smart.addView(ui.text("Model for Ask. It must support tool calls.", 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
+        smart.addView(askModel, ui.lp(8));
+        smart.addView(ui.button("Save", true, v -> saveSmart(key.getText().toString().trim(), model.getText().toString().trim(), askModel.getText().toString().trim())), ui.lp(12));
         String problem = prefs().getString("aiProblem", "");
         if (keySaved && !problem.isEmpty()) smart.addView(ui.text(problem, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (keySaved) {
@@ -914,10 +957,10 @@ public class SetupActivity extends Activity {
             page.addView(card, ui.lp(16));
         }
     }
-    private void saveSmart(String key, String model) {
+    private void saveSmart(String key, String model, String askModel) {
         try {
             if (!key.isEmpty()) Model.saveKey(this, key);
-            prefs().edit().putString("aiModel", model.isEmpty() ? Model.DEFAULT : model).apply();
+            prefs().edit().putString("aiModel", model.isEmpty() ? Model.DEFAULT : model).putString("askModel", askModel.isEmpty() ? Ask.DEFAULT : askModel).apply();
             toast("Saved");
             render();
             BackgroundJob.schedule(this);

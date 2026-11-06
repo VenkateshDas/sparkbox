@@ -3,6 +3,7 @@ import me.venkatesh.saveobsidian.AppendCheck;
 import me.venkatesh.saveobsidian.InboxFile;
 import me.venkatesh.saveobsidian.Enrich;
 import me.venkatesh.saveobsidian.Index;
+import me.venkatesh.saveobsidian.Vault;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
 import java.io.IOException;
@@ -60,11 +61,64 @@ public class CaptureTest {
         inboxFileChecks();
         regressionChecks();
         editFailureChecks();
+        vaultChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3,3}));
         System.out.println("Capture and append checks passed (" + count + ").");
+    }
+    static void vaultChecks() {
+        String topic = "---\ntype: topic\nlast-updated: 2026-11-06\nrelated-topics: ['[[AI Agent Architecture]]', '[[RAG]]']\ndescription: LLM Memory Systems\n---\n\n## Core Mechanism\nPlain.\n"
+            + "| Claim | Source |\n|---|---|\n| Memory | [[Sources/AI Systems/2026/2026-04-12 - Harness\\|Harness]] |\n";
+        Vault.Note t = Vault.parse("Knowledge/Topics/LLM Memory Systems.md", 5, "\uFEFF" + topic.replace("\n", "\r\n"));
+        check(t.title.equals("LLM Memory Systems") && t.type.equals("topic") && t.updated.equals("2026-11-06") && t.description.equals("LLM Memory Systems"));
+        check(t.topics.equals(Arrays.asList("AI Agent Architecture", "RAG")));
+        check(t.links.equals(Arrays.asList("AI Agent Architecture", "RAG", "Sources/AI Systems/2026/2026-04-12 - Harness")));
+        check(t.cite().equals("[[Knowledge/Topics/LLM Memory Systems|LLM Memory Systems]]") && t.folder().equals("Knowledge/Topics") && !t.catalog);
+        Vault.Note src = Vault.parse("Sources/AI Systems/2026/2026-04-12 - Harness.md", 1,
+            "---\ntype: \"source\"\ntopics: [\"[[LLM Memory Systems]]\"]\ncaptured: \"06/10/26, 8:20 AM\"\n---\n\n# Harness\n\n## Raw Content\n\nOriginal capture: https://example.org/a-long-link-here-for-sure\n\n### Key claims\n\n- Memory is a harness job, not the model's.\n- Second.\n![[pic.png]] [[Knowledge/Topics/Missing#Heading|alias]]\n");
+        check(src.title.equals("Harness") && src.description.equals("Memory is a harness job, not the model's.") && src.updated.equals("06/10/26, 8:20 AM"));
+        check(src.links.equals(Arrays.asList("LLM Memory Systems", "Knowledge/Topics/Missing")) && src.topics.equals(Arrays.asList("LLM Memory Systems")));
+        check(Vault.parse("Sources/X/2026/2026-06-02 - Plain Name.md", 1, "text").title.equals("Plain Name"));
+        StringBuilder hostile = new StringBuilder();
+        for (int i = 0; i < 100000; i++) hostile.append("[[a ");
+        long began = System.nanoTime();
+        Vault.Note flood = Vault.parse("Sources/Flood.md", 1, "# Flood\n" + hostile + "\n[[Real]] next");
+        check((System.nanoTime() - began) < 2_000_000_000L && flood.links.contains("Real") && Vault.clipLines("a\nb").equals("a\nb")); // one 400 KB line must not stall the scan
+        check(Vault.parse("K/n.md", 1, "*one* and **two** and `three`").digest.contains("one"));
+        Vault.Note bare = Vault.parse("Knowledge/People/Ada.md", 1, "no frontmatter\n---\nnot yaml\n");
+        check(bare.title.equals("Ada") && bare.type.isEmpty() && bare.digest.startsWith("Ada."));
+        check(Vault.parse("x.md", 1, "---\ntype: broken\nnever closed\n").type.isEmpty()); // unclosed frontmatter is body
+        Vault.Note index = Vault.parse("Knowledge/index.md", 1, "# Knowledge Index\n");
+        Vault.Note dup1 = Vault.parse("A/Same.md", 1, "x"), dup2 = Vault.parse("B/Same.md", 1, "x");
+        Vault.Note a = Vault.parse("A/Linker.md", 1, "[[Same]] [[LLM Memory Systems]] [[Linker]] [[Knowledge/Topics/llm memory systems.md#h]] [[Nothing]]");
+        Vault.Graph g = Vault.build(Arrays.asList(t, src, bare, index, dup1, dup2, a));
+        check(index.catalog && g.resolve("llm memory systems") == t && g.resolve("Knowledge/Topics/LLM Memory Systems.md") == t);
+        check(g.resolve("Same") == null && g.resolve("A/Same") == dup1 && g.resolve("Nothing") == null); // ambiguous name is never guessed
+        check(g.out(a).equals(Arrays.asList(t)) && g.in(t).contains(a) && g.in(t).contains(src) && !g.in(a).contains(a));
+        check(g.out(t).contains(src) && g.in(src).contains(t));
+        check(g.ambiguous == 1 && g.unresolved >= 3 && g.orphans().contains(bare) && !g.orphans().contains(index));
+        check(Vault.target("X\\").equals("X") && Vault.target("a/b.md#h").equals("a/b") && Vault.label("a/b|Shown").equals("Shown") && Vault.label("a/b").equals("b"));
+        // search: every word first, rarer and title words weigh more; fusion favours notes both lists like
+        Vault.Note mem = Vault.parse("Knowledge/Topics/LLM Memory Systems.md", 1, "# LLM Memory Systems\nHow an agent keeps memory between sessions in files.");
+        List<Vault.Note> pile = new java.util.ArrayList<>(Arrays.asList(mem));
+        for (int i = 0; i < 8; i++) pile.add(Vault.parse("Sources/A/2026/Agent " + i + ".md", 10 + i, "# Agent " + i + "\nAn agent does tool calls and planning " + i));
+        pile.add(Vault.parse("Knowledge/Topics/Memory Palace.md", 3, "# Memory Palace\nA mnemonic technique for people."));
+        List<Vault.Note> found = Vault.search(pile, "agent memory", 5);
+        check(found.get(0) == mem); // the only note with both words leads the many that mention agents
+        check(Vault.search(pile, "palace", 5).size() == 1 && Vault.search(pile, "zebra", 5).isEmpty() && Vault.search(pile, "  ", 5).isEmpty());
+        check(Vault.search(pile, "memory", 5).get(0).title.equals("Memory Palace") || Vault.search(pile, "memory", 5).get(0) == mem); // title word beats body word
+        check(Vault.search(Arrays.asList(index), "knowledge", 5).isEmpty()); // index and log files are never ranked
+        List<Vault.Note> fused = Vault.fuse(Arrays.asList(pile.get(1), mem), Arrays.asList(mem, pile.get(2)), 1, 3);
+        check(fused.get(0) == mem && fused.size() == 3);
+        // a short query trusts the word match and meaning only adds what it missed; a question fuses both
+        List<Vault.Note> words = new java.util.ArrayList<>(Arrays.asList(mem));
+        words.addAll(pile.subList(1, 6));
+        List<Vault.Note> shortQuery = Vault.blend(Arrays.asList(pile.get(8), pile.get(1)), words, "agent memory", 20);
+        check(shortQuery.get(0) == mem && shortQuery.contains(pile.get(8)) && shortQuery.size() == 7);
+        check(Vault.blend(Arrays.asList(pile.get(8), pile.get(1)), words, "how do agents keep memory between sessions", 20).get(0) == pile.get(1)); // in both lists
+        check(t.contains("memory core") && !t.contains("memory zebra") && src.contains("harness job"));
     }
     static void inboxFileChecks() {
         String head = "---\ntype: inbox\n---\n# Sources Inbox\n\n*Landing pad.*\n\n";
