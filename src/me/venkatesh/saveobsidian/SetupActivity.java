@@ -291,6 +291,7 @@ public class SetupActivity extends Activity {
         list.addView(ui.text("Sparkbox", 20, Ui.MEDIUM, ui.ink));
         boolean ready = !prefs().getString("inbox", "").isEmpty();
         list.addView(menuItem(drawer, "Overview", () -> startActivity(new Intent(this, DashboardActivity.class))), ui.lp(16));
+        list.addView(menuItem(drawer, "Knowledge", () -> startActivity(new Intent(this, VaultActivity.class))));
         list.addView(menuItem(drawer, "Settings", () -> showSettings(true)));
         if (attentionCount(CaptureService.pending(this)) > 0 || CaptureService.recoveries(this).length > 0) {
             TextView attention = menuItem(drawer, "Needs attention", () -> showSettings(true));
@@ -399,16 +400,25 @@ public class SetupActivity extends Activity {
         files.addView(settingsLink(Attach.ready(this) ? "Change folder" : "Choose folder", v -> chooseAttach()), ui.lp(8));
         page.addView(files, ui.lp(16));
 
+        LinearLayout vault = ui.card("Knowledge base");
+        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge, Learnings and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search and Ask can find them.", 13, Typeface.DEFAULT, ui.sub));
+        vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        vault.addView(settingsLink(VaultStore.ready(this) ? "Change folder" : "Choose vault folder", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK, true))), ui.lp(8));
+        page.addView(vault, ui.lp(16));
+
         LinearLayout smart = ui.card("Smart tags (optional)");
         smart.addView(ui.text("Adds a type, tags and a one-line summary to new links with your OpenRouter key. Sent to OpenRouter: link titles and page text (not the part of a link after ?), the text of longer notes, and a short digest of every capture for search. Off until you save a key.", 13, Typeface.DEFAULT, ui.sub));
         boolean keySaved = !Model.key(this).isEmpty();
-        EditText key = field("", 1), model = field(prefs().getString("aiModel", Model.DEFAULT), 1);
+        EditText key = field("", 1), model = field(prefs().getString("aiModel", Model.DEFAULT), 1), askModel = field(Ask.model(this), 1);
         key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         key.setHint(keySaved ? "Key saved. Paste a new one to replace it." : "OpenRouter API key");
         model.setInputType(InputType.TYPE_CLASS_TEXT);
+        askModel.setInputType(InputType.TYPE_CLASS_TEXT);
         smart.addView(key, ui.lp(12));
         smart.addView(model, ui.lp(8));
-        smart.addView(ui.button("Save", true, v -> saveSmart(key.getText().toString().trim(), model.getText().toString().trim())), ui.lp(12));
+        smart.addView(ui.text("Model for Ask. It must support tool calls.", 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
+        smart.addView(askModel, ui.lp(8));
+        smart.addView(ui.button("Save", true, v -> saveSmart(key.getText().toString().trim(), model.getText().toString().trim(), askModel.getText().toString().trim())), ui.lp(12));
         String problem = prefs().getString("aiProblem", "");
         if (keySaved && !problem.isEmpty()) smart.addView(ui.text(problem, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (keySaved) {
@@ -914,10 +924,10 @@ public class SetupActivity extends Activity {
             page.addView(card, ui.lp(16));
         }
     }
-    private void saveSmart(String key, String model) {
+    private void saveSmart(String key, String model, String askModel) {
         try {
             if (!key.isEmpty()) Model.saveKey(this, key);
-            prefs().edit().putString("aiModel", model.isEmpty() ? Model.DEFAULT : model).apply();
+            prefs().edit().putString("aiModel", model.isEmpty() ? Model.DEFAULT : model).putString("askModel", askModel.isEmpty() ? Ask.DEFAULT : askModel).apply();
             toast("Saved");
             render();
             BackgroundJob.schedule(this);

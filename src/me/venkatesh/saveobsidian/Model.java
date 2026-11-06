@@ -101,6 +101,9 @@ final class Model {
         return java.util.Arrays.asList(out);
     }
 
+    /** One chat completion, raw JSON reply. For callers that build their own request, such as Ask with tools. */
+    static String chat(String key, JSONObject request) throws Exception { return post("chat/completions", key, request); }
+
     private static String post(String path, String key, JSONObject request) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setRequestMethod("POST");

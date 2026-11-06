@@ -31,6 +31,7 @@ final class Tagger {
             tag(c, key);
             describe(c, key);
             embed(c, key);
+            VaultStore.embed(c, key);
             c.getSharedPreferences("capture", 0).edit().remove("aiProblem").apply();
         } catch (Exception stop) {
             String m = String.valueOf(stop.getMessage()); // only provider trouble is worth showing; inbox contention clears itself
