@@ -187,6 +187,7 @@ public class AskActivity extends Activity {
 
     private void open(String raw) {
         if (Vault.target(raw).equalsIgnoreCase(Ask.INBOX)) { // an inbox capture: show it in the inbox list
+            SetupActivity.findFromApp = true;
             startActivity(new Intent(this, SetupActivity.class).putExtra(SetupActivity.FIND, Vault.label(raw)).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
             return;
         }

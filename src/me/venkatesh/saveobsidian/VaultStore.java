@@ -113,7 +113,14 @@ final class VaultStore {
     /** Full text of one note. */
     static String text(Context c, Uri uri) throws Exception {
         try (InputStream in = c.getContentResolver().openInputStream(uri)) {
-            return new String(CaptureService.readAll(in), StandardCharsets.UTF_8);
+            if (in == null) throw new java.io.IOException("Note unavailable");
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(); // a provider may not report size, so the cap is enforced while reading
+            byte[] buffer = new byte[8192]; int count;
+            while ((count = in.read(buffer)) != -1) {
+                if (bytes.size() + count > MAX_NOTE) throw new java.io.IOException("Note over 2 MB");
+                bytes.write(buffer, 0, count);
+            }
+            return new String(bytes.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 

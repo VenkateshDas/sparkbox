@@ -28,7 +28,7 @@ final class Md {
     /** Body of a note (frontmatter hidden) as styled text. Link taps go to open. */
     static SpannableStringBuilder render(Ui ui, String text, Open open) {
         if (text.startsWith("﻿")) text = text.substring(1);
-        text = text.replace("\r\n", "\n");
+        text = Vault.clipLines(text.replace("\r\n", "\n"));
         int[] at = new int[1];
         Vault.frontmatter(text, at);
         SpannableStringBuilder out = new SpannableStringBuilder();
@@ -86,13 +86,14 @@ final class Md {
     /** Answer text from Ask: the same inline rules, so [[path|Title]] citations are tappable. */
     static SpannableStringBuilder inlineOnly(Ui ui, String text, Open open) {
         SpannableStringBuilder out = new SpannableStringBuilder();
-        for (String line : text.replace("\r\n", "\n").split("\n", -1)) {
+        // Model text can be steered by a clipped page, so web links are shown as "label (host)" and are not tappable.
+        text = Vault.clipLines(text.replace("\r\n", "\n")).replaceAll("\\[([^\\]\\n]+)\\]\\(https?://([^/)\\s]+)[^)\\s]*\\)", "$1 ($2)");
+        for (String line : text.split("\n", -1)) {
             String t = line.replaceFirst("^#{1,6}\\s+", "").replaceFirst("^[-*]\\s+", "•  ");
             inline(out, t, ui, open);
             out.append('\n');
         }
         while (out.length() > 0 && out.charAt(out.length() - 1) == '\n') out.delete(out.length() - 1, out.length());
-        autolink(out, ui);
         return out;
     }
 

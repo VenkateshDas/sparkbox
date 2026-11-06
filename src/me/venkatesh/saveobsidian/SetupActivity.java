@@ -36,6 +36,7 @@ import java.util.List;
 /** Capture-first inbox; configuration and recovery live in Settings. */
 public class SetupActivity extends Activity {
     static final String FIND = "find";
+    static volatile boolean findFromApp; // set by Ask just before it sends FIND: this activity is exported, so other apps must not drive the filter
     private LinearLayout page;
     private Ui ui;
     private boolean waiting;
@@ -293,6 +294,9 @@ public class SetupActivity extends Activity {
         String find = intent.getStringExtra(FIND);
         if (find == null) return;
         intent.removeExtra(FIND);
+        boolean ours = findFromApp;
+        findFromApp = false;
+        if (!ours) return;
         query = find; filter = 0; tag = ""; semanticRaw = null; visibleLimit = 50;
         if (settings) showSettings(false); else draw(lastText, lastError);
     }
@@ -430,7 +434,7 @@ public class SetupActivity extends Activity {
         page.addView(files, ui.lp(16));
 
         LinearLayout vault = ui.card("Knowledge base");
-        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search and Ask can find them.", 13, Typeface.DEFAULT, ui.sub));
+        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 12,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
         vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
         vault.addView(settingsLink(VaultStore.ready(this) ? "Change folder" : "Choose vault folder", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK, true))), ui.lp(8));
         page.addView(vault, ui.lp(16));

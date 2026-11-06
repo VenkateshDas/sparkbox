@@ -106,9 +106,26 @@ public final class Vault {
 
     private static void add(List<String> list, String s) { if (!s.isEmpty() && !list.contains(s)) list.add(s); }
 
+    static final int LINE = 2000;
+
+    /** Lines past LINE characters cut short. The link patterns rescan a line from every "[[", so a minified clip on one huge line would hang the scan. */
+    public static String clipLines(String text) {
+        boolean long_ = false;
+        for (int from = 0, n = text.length(); from < n && !long_; ) {
+            int nl = text.indexOf('\n', from);
+            if (nl < 0) nl = n;
+            long_ = nl - from > LINE;
+            from = nl + 1;
+        }
+        if (!long_) return text;
+        StringBuilder out = new StringBuilder();
+        for (String line : text.split("\n", -1)) out.append(out.length() == 0 ? "" : "\n").append(line.length() > LINE ? line.substring(0, LINE) : line);
+        return out.toString();
+    }
+
     public static Note parse(String path, long mtime, String text) {
         if (text.startsWith("﻿")) text = text.substring(1);
-        text = text.replace("\r\n", "\n");
+        text = clipLines(text.replace("\r\n", "\n"));
         int[] bodyAt = new int[1];
         Map<String, String> fm = frontmatter(text, bodyAt);
         String body = text.substring(bodyAt[0]);

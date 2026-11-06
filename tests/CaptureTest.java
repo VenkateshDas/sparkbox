@@ -81,6 +81,11 @@ public class CaptureTest {
         check(src.title.equals("Harness") && src.description.equals("Memory is a harness job, not the model's.") && src.updated.equals("06/10/26, 8:20 AM"));
         check(src.links.equals(Arrays.asList("LLM Memory Systems", "Knowledge/Topics/Missing")) && src.topics.equals(Arrays.asList("LLM Memory Systems")));
         check(Vault.parse("Sources/X/2026/2026-06-02 - Plain Name.md", 1, "text").title.equals("Plain Name"));
+        StringBuilder hostile = new StringBuilder();
+        for (int i = 0; i < 100000; i++) hostile.append("[[a ");
+        long began = System.nanoTime();
+        Vault.Note flood = Vault.parse("Sources/Flood.md", 1, "# Flood\n" + hostile + "\n[[Real]] next");
+        check((System.nanoTime() - began) < 2_000_000_000L && flood.links.contains("Real") && Vault.clipLines("a\nb").equals("a\nb")); // one 400 KB line must not stall the scan
         check(Vault.parse("K/n.md", 1, "*one* and **two** and `three`").digest.contains("one"));
         Vault.Note bare = Vault.parse("Knowledge/People/Ada.md", 1, "no frontmatter\n---\nnot yaml\n");
         check(bare.title.equals("Ada") && bare.type.isEmpty() && bare.digest.startsWith("Ada."));
