@@ -72,7 +72,7 @@ final class Attach {
     }
 
     /** {document uri, size} of a file directly inside the folder, or null. */
-    private static Object[] lookup(Context c, Uri tree, String name) {
+    static Object[] lookup(Context c, Uri tree, String name) {
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
         try (Cursor q = c.getContentResolver().query(children, COLUMNS, null, null, null)) {
             while (q != null && q.moveToNext()) if (name.equals(q.getString(1)))

@@ -29,6 +29,8 @@ final class Tagger {
             CaptureService.sweep(c);
             transcribe(c, key);
             tag(c, key);
+            backfill(c);
+            if (Ingest.ready(c)) Ingest.run(c, key); else fileNotes(c); // ingest files each capture into Knowledge; the Captures folder is the lighter option
             describe(c, key);
             embed(c, key);
             VaultStore.embed(c, key);
@@ -49,16 +51,54 @@ final class Tagger {
             for (int i = all.size() - 1; i >= 0 && next == null; i--) {
                 InboxFile.Entry e = all.get(i);
                 boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty(); // a three-word note needs no summary
-                if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
+                if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title) || stale(c, e)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
             }
             if (next == null) return;
-            String[] result = next.text ? Model.enrichNote(key, model, next.body) : Model.enrich(key, model, next.title, next.url);
+            String pageUrl = next.url;
+            String[] result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
             calls++;
             if (result == null) { skipped.add(next.raw); continue; }
+            c.getSharedPreferences("enriched", 0).edit().putString(notesKey(next), notesHash(next)).apply(); // this Why and Ideas are now reflected, so it is not redone
             if (result[3].isEmpty() && !next.type.isEmpty()) { skipped.add(next.raw); continue; } // already tagged and the model gave no title: leave it, retry next run
             String raw = next.raw, heading = result[3];
             CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2], heading));
             c.sendBroadcast(new Intent(CaptureService.CHANGED).setPackage(c.getPackageName()));
+        }
+    }
+
+    private static String notesKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.url + "|" + (e.text ? e.body : ""))); }
+    private static String notesHash(InboxFile.Entry e) { return Long.toHexString(Index.key(e.why.trim() + "\n" + e.ideas.trim())); }
+
+    /** Tagged before you wrote a Why or Idea (or changed it since): summarise once more so the summary follows your instructions. */
+    static boolean stale(Context c, InboxFile.Entry e) {
+        boolean noted = !e.why.trim().isEmpty() || !e.ideas.trim().isEmpty();
+        return noted && !e.type.isEmpty() && !notesHash(e).equals(c.getSharedPreferences("enriched", 0).getString(notesKey(e), ""));
+    }
+
+    private static void fileNotes(Context c) {
+        android.content.SharedPreferences.Editor note = c.getSharedPreferences("capture", 0).edit();
+        try { Captures.file(c); note.remove("capturesProblem"); }
+        catch (Exception problem) { note.putString("capturesProblem", String.valueOf(problem.getMessage())); }
+        note.apply();
+    }
+
+    /** Links tagged before page text was kept: fetch it once (no model call), ten per run. A page that fails is not retried. */
+    private static void backfill(Context c) throws Exception {
+        android.content.SharedPreferences tried = c.getSharedPreferences("enriched", 0);
+        int fetched = 0;
+        for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
+            if (fetched >= 10 || halt || SetupActivity.editing) return;
+            String mark = "page:" + Long.toHexString(Index.key(e.url.replaceFirst("[?#].*$", "")));
+            if (e.text || e.url.isEmpty() || e.type.isEmpty() || Content.has(c, e.url) || tried.getBoolean(mark, false)) continue;
+            fetched++;
+            String host = e.url.replaceFirst("^[a-z]+://", "").replaceFirst("[/?#].*$", "").toLowerCase(java.util.Locale.ROOT);
+            boolean youtube = host.equals("youtu.be") || host.equals("youtube.com") || host.endsWith(".youtube.com"); // serves a consent page, not the video
+            if (youtube) { tried.edit().putBoolean(mark, true).apply(); continue; }
+            try {
+                String page = Enrich.pageText(PageTitle.html(e.url, true));
+                if (!page.isEmpty()) Content.save(c, e.url, page);
+                tried.edit().putBoolean(mark, true).apply(); // answered (even with nothing usable): do not ask again. A network error is retried next run.
+            } catch (Exception offline) { }
         }
     }
 
@@ -133,6 +173,7 @@ final class Tagger {
         Index index = Index.load(file);
         List<InboxFile.Entry> entries = InboxFile.parse(CaptureService.readText(c));
         index.retain(entries);
+        Content.retain(c, entries);
         List<String> todo = index.missing(entries);
         for (int i = 0; i < Math.min(todo.size(), 320) && !halt; i += 32) {
             List<String> batch = new ArrayList<>(todo.subList(i, Math.min(i + 32, todo.size())));

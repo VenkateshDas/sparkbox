@@ -22,7 +22,7 @@ public final class Index {
     public static final String MODEL = "openai/text-embedding-3-large";
     public static final int DIMS = 1024;
     /** Measured on a real inbox: unrelated queries score under 0.2, relevant ones 0.3 to 0.6. */
-    public static final float MIN_QUERY = 0.28f, MIN_RELATED = 0.45f;
+    public static final float MIN_QUERY = 0.28f, MIN_RELATED = 0.35f;
     private final Map<Long, float[]> vectors = new HashMap<>();
 
     /** What gets embedded: the capture as described, including your own words. */

@@ -36,6 +36,8 @@ import java.util.List;
 /** Capture-first inbox; configuration and recovery live in Settings. */
 public class SetupActivity extends Activity {
     static final String FIND = "find";
+    static final String ANNOTATE = "annotate"; // raw entry just saved; opens its editor. Harmless from other apps: it only opens an entry already in the file, and nothing is written until Save.
+    private String pendingEntry;
     static volatile boolean findFromApp; // set by Ask just before it sends FIND: this activity is exported, so other apps must not drive the filter
     private LinearLayout page;
     private Ui ui;
@@ -73,6 +75,8 @@ public class SetupActivity extends Activity {
         ShareActivity.publishShortcut(this);
         ui = new Ui(this);
         waiting = getIntent().getBooleanExtra("waiting", false);
+        pendingEntry = getIntent().getStringExtra(ANNOTATE);
+        getIntent().removeExtra(ANNOTATE);
         if (state != null) { settings = state.getBoolean("settings"); inboxScroll = state.getInt("inboxScroll"); settingsScroll = state.getInt("settingsScroll"); restoredScroll = state.getInt("scroll"); filter = state.getInt("filter"); query = state.getString("query", ""); tag = state.getString("tag", ""); visibleLimit = state.getInt("visibleLimit", 50);  }
         {
             String savedDraft = "";
@@ -234,8 +238,15 @@ public class SetupActivity extends Activity {
                 try { text = CaptureService.readText(this); } catch (Exception e) { error = "Cannot read the inbox. Choose the file again."; }
             }
             String t = text, err = error;
-            runOnUiThread(() -> { if (!isDestroyed() && generation == renderGeneration) draw(t, err); });
+            runOnUiThread(() -> { if (!isDestroyed() && generation == renderGeneration) { draw(t, err); openPending(t); } });
         }).start();
+    }
+
+    private void openPending(String text) {
+        String raw = pendingEntry;
+        pendingEntry = null;
+        if (raw == null || text == null || editor != null) return;
+        for (InboxFile.Entry e : InboxFile.parse(text)) if (e.raw.trim().equals(raw.trim())) { Usage.hit(this, "island"); showEntry(e, text, prefs().getString("inbox", ""), e.why, e.ideas); return; }
     }
 
     private void draw(String inboxText, String readError) {
@@ -271,6 +282,7 @@ public class SetupActivity extends Activity {
             Bundle d = restoredDraft; restoredDraft = null;
             String snapshot = d.getString("snapshot", "");
             for (InboxFile.Entry e : InboxFile.parse(snapshot)) if (e.start == d.getInt("start")) {
+                if (d.getString("why", "").equals(e.why) && d.getString("ideas", "").equals(e.ideas)) { new AtomicFile(new File(getFilesDir(), "draft.json")).delete(); break; } // saved by an older build with nothing typed: not a draft
                 showEntry(e, snapshot, d.getString("destination", ""), d.getString("why", ""), d.getString("ideas", "")); break;
             }
         }
@@ -291,6 +303,9 @@ public class SetupActivity extends Activity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        pendingEntry = intent.getStringExtra(ANNOTATE);
+        intent.removeExtra(ANNOTATE);
+        if (pendingEntry != null) render();
         String find = intent.getStringExtra(FIND);
         if (find == null) return;
         intent.removeExtra(FIND);
@@ -433,11 +448,44 @@ public class SetupActivity extends Activity {
         files.addView(settingsLink(Attach.ready(this) ? "Change folder" : "Choose folder", v -> chooseAttach()), ui.lp(8));
         page.addView(files, ui.lp(16));
 
+        LinearLayout ingest = ui.card("Ingest into Knowledge");
+        ingest.addView(ui.text("Each tagged link is processed the moment it is ready, like Process inbox: a Source note in its subject and year folder, claims added to Topic and People pages (new ones created), the indexes and log updated, then the capture leaves the inbox. Pages are only added to, never rewritten, and each changed page is backed up privately for two weeks. Needs write access to your vault and a smart tags key. One extra model call per capture.", 13, Typeface.DEFAULT, ui.sub));
+        boolean canWrite = VaultWrite.writable(this);
+        ingest.addView(ui.text("Vault write access: " + (canWrite ? "granted" : VaultStore.ready(this) ? "not granted" : "choose the vault first"), 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        ingest.addView(settingsLink(canWrite ? "Re-pick vault folder with write access" : "Allow write access to the vault", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))), ui.lp(8));
+        ingest.addView(settingsLink("Process captures into Knowledge: " + (Ingest.on(this) ? "On" : "Off") + " (tap to change)", v -> {
+            if (!Ingest.on(this) && !canWrite) { toast("Allow write access to the vault first"); return; }
+            prefs().edit().putBoolean("ingest", !Ingest.on(this)).apply(); BackgroundJob.schedule(this); render();
+        }));
+        ingest.addView(settingsLink("Model: " + Ingest.model(this) + " (tap to change)", v -> {
+            EditText model = new EditText(this); model.setText(Ingest.model(this)); model.setSingleLine(true);
+            new AlertDialog.Builder(this).setTitle("Model for Ingest").setMessage("An OpenRouter model id. A stronger model than the tagger gives better topics.").setView(model)
+                .setPositiveButton("Save", (d, w) -> { String m = model.getText().toString().trim(); prefs().edit().putString("ingestModel", m.isEmpty() ? Ingest.DEFAULT_MODEL : m).apply(); render(); })
+                .setNegativeButton("Cancel", null).show();
+        }));
+        String ingestProblem = prefs().getString("ingestProblem", ""), ingestLog = prefs().getString("ingestLog", "");
+        if (!ingestProblem.isEmpty()) ingest.addView(ui.text(ingestProblem, 13, Typeface.DEFAULT, ui.accent), ui.lp(8));
+        if (!ingestLog.isEmpty()) { ingest.addView(ui.label("Recently ingested"), ui.lp(12)); for (String l : ingestLog.split("\n")) { ingest.addView(ui.text(l, 12, Typeface.DEFAULT, ui.sub), ui.lp(4)); if (ingest.getChildCount() > 14) break; } }
+        page.addView(ingest, ui.lp(16));
+
+        LinearLayout notes = ui.card("Capture notes");
+        notes.addView(ui.text("The lighter option, used only while Ingest is off: each tagged link is saved as its own note (summary, your Why and Ideas, and the whole page text) in one vault folder, for example Sources/Captures. Sparkbox writes only there, and only changes notes it created. Off until you pick a folder.", 13, Typeface.DEFAULT, ui.sub));
+        notes.addView(ui.text(Captures.ready(this) ? Captures.label(this) : "Off", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        String capturesProblem = prefs().getString("capturesProblem", "");
+        if (Captures.ready(this) && !capturesProblem.isEmpty()) notes.addView(ui.text(capturesProblem, 13, Typeface.DEFAULT, ui.accent), ui.lp(8));
+        notes.addView(settingsLink(Captures.ready(this) ? "Change folder" : "Choose Captures folder", v -> chooseCaptures()), ui.lp(8));
+        if (Captures.ready(this)) notes.addView(settingsLink("Stop filing notes", v -> { prefs().edit().remove("captures").remove("capturesProblem").apply(); render(); }));
+        page.addView(notes, ui.lp(16));
+
         LinearLayout vault = ui.card("Knowledge base");
-        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 12,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
+        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources. It changes them only through Ingest, when you turn that on. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 20,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
         vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
         vault.addView(settingsLink(VaultStore.ready(this) ? "Change folder" : "Choose vault folder", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK, true))), ui.lp(8));
         page.addView(vault, ui.lp(16));
+        LinearLayout usage = ui.card("Feature usage");
+        usage.addView(ui.text("How often you use each feature, counted on this phone only. Nothing is sent anywhere.", 13, Typeface.DEFAULT, ui.sub));
+        for (String line : Usage.lines(this)) usage.addView(ui.text(line, 14, Typeface.DEFAULT, ui.ink), ui.lp(8));
+        page.addView(usage, ui.lp(16));
 
         LinearLayout smart = ui.card("Smart tags (optional)");
         smart.addView(ui.text("Adds a type, tags and a one-line summary to new links with your OpenRouter key. Sent to OpenRouter: link titles and page text (not the part of a link after ?), the text of longer notes, and a short digest of every capture for search. Off until you save a key.", 13, Typeface.DEFAULT, ui.sub));
@@ -725,6 +773,22 @@ public class SetupActivity extends Activity {
             actions.addView(ui.button(entry.text ? "Copy note" : "Copy link", false, v -> copy(entry.text ? entry.body : entry.url)), copyAt);
         }
         form.addView(actions, ui.lp(20));
+        if (!entry.text && !entry.url.isEmpty() && Content.has(this, entry.url)) {
+            LinearLayout saved = new LinearLayout(this);
+            saved.setOrientation(LinearLayout.VERTICAL);
+            TextView toggle = quietLink("Read saved page text", null);
+            toggle.setOnClickListener(v -> {
+                if (saved.getChildCount() > 0) { saved.removeAllViews(); toggle.setText("Read saved page text"); return; }
+                String text = Content.load(this, entry.url, 30000); // the whole page stays saved; a screenful is plenty to read here
+                TextView body = ui.text(text.isEmpty() ? "Nothing saved." : text, 14, Typeface.DEFAULT, ui.sub);
+                body.setTextIsSelectable(true);
+                body.setLineSpacing(0, 1.3f);
+                saved.addView(body);
+                toggle.setText("Hide saved page text");
+            });
+            form.addView(toggle);
+            form.addView(saved, ui.lp(12));
+        }
         if (!entry.text && !entry.sharedText.isEmpty() && !entry.sharedText.equals(entry.url)) {
             TextView shared = ui.text(entry.sharedText, 14, Typeface.DEFAULT, ui.muted);
             shared.setTextIsSelectable(true);
@@ -766,7 +830,9 @@ public class SetupActivity extends Activity {
                 keepDraft(); setEditorEnabled(false);
                 new Thread(() -> {
                     try {
-                        CaptureService.edit(this, destination, snapshot, t -> InboxFile.setNotes(t, entry, whyText, ideasText));
+                        editRebased(destination, snapshot, entry, (t, e) -> InboxFile.setNotes(t, e, whyText, ideasText));
+                        Usage.hit(this, "annotate");
+                        BackgroundJob.schedule(this); // a new Why or Idea re-summarises the capture
                         runOnUiThread(() -> { clearDraft(); if (isDestroyed()) return; if (editor != null) editor.dismiss(); toast("Saved to inbox on this phone"); render(); });
                     } catch (Exception failure) {
                         runOnUiThread(() -> { setEditorEnabled(true); if (!isDestroyed()) new AlertDialog.Builder(this)
@@ -781,7 +847,8 @@ public class SetupActivity extends Activity {
                     keepDraft(); setEditorEnabled(false);
                     new Thread(() -> {
                         try {
-                            CaptureService.edit(this, destination, snapshot, t -> InboxFile.delete(t, entry));
+                            editRebased(destination, snapshot, entry, InboxFile::delete);
+                            Usage.hit(this, "delete");
                             runOnUiThread(() -> { clearDraft(); if (isDestroyed()) return; if (editor != null) editor.dismiss(); toast("Deleted"); render(); });
                         } catch (Exception failure) { runOnUiThread(() -> { setEditorEnabled(true); if (!isDestroyed()) new AlertDialog.Builder(this)
                             .setTitle("Delete not confirmed").setMessage(failure.getMessage()).setPositiveButton("OK", null).show(); }); }
@@ -792,6 +859,26 @@ public class SetupActivity extends Activity {
         sheet(editor, true);
         keepDraft();
     }
+    /**
+     * Background tagging rewrites the entry (summary, tags, title) while its editor is open, so the editor's snapshot goes stale and the
+     * verified edit refuses. Retry once on the fresh file, only when the same capture is still there with the same Why and Ideas you opened it with.
+     */
+    private void editRebased(String destination, String snapshot, InboxFile.Entry entry, java.util.function.BiFunction<String, InboxFile.Entry, String> change) throws Exception {
+        try { CaptureService.edit(this, destination, snapshot, t -> change.apply(t, entry)); }
+        catch (java.io.IOException stale) {
+            if (!String.valueOf(stale.getMessage()).startsWith("Inbox changed. Refresh")) throw stale;
+            String fresh = CaptureService.readText(this);
+            InboxFile.Entry same = null;
+            for (InboxFile.Entry e : InboxFile.parse(fresh)) if (e.time.equals(entry.time) && e.url.equals(entry.url) && (!e.url.isEmpty() || e.body.equals(entry.body))) {
+                if (same != null) throw stale; // two look alike: do not guess
+                same = e;
+            }
+            if (same == null || !same.why.equals(entry.why) || !same.ideas.equals(entry.ideas)) throw stale; // gone, or you changed it elsewhere
+            InboxFile.Entry target = same;
+            CaptureService.edit(this, destination, fresh, t -> change.apply(t, target));
+        }
+    }
+
     private static final String[] INTENTS = {"To read", "To try", "To cite", "Idea"};
 
     /** One tap states why you saved it: the chip becomes the start of the Why text (tap again to clear). Saved with the normal Save. */
@@ -873,6 +960,7 @@ public class SetupActivity extends Activity {
     }
     private void keepDraft() {
         if (saving || draftEntry == null || draftWhy == null) return;
+        if (draftWhy.getText().toString().equals(draftEntry.why) && draftIdeas.getText().toString().equals(draftEntry.ideas)) { dropDraftFile(); return; } // nothing typed: a restored empty editor helps no one
         synchronized (DRAFT_LOCK) {
         AtomicFile draft = new AtomicFile(new File(getFilesDir(), "draft.json"));
         java.io.FileOutputStream out = null;
@@ -886,6 +974,11 @@ public class SetupActivity extends Activity {
 
     private void clearDraft() {
         saving = false;
+        dropDraftFile();
+        draftEntry = null; draftWhy = null; draftIdeas = null;
+    }
+    /** Removes this editor's saved draft, if it is the one on disk; the open editor keeps its fields. */
+    private void dropDraftFile() {
         synchronized (DRAFT_LOCK) {
             AtomicFile file = new AtomicFile(new File(getFilesDir(), "draft.json"));
             try (InputStream input = file.openRead()) {
@@ -893,7 +986,6 @@ public class SetupActivity extends Activity {
                 if (draftId.equals(saved.optString("id"))) file.delete();
             } catch (Exception ignored) { } // leave unreadable recovery intact
         }
-        draftEntry = null; draftWhy = null; draftIdeas = null;
     }
     @Override protected void onPause() {
         if (listening) { unregisterReceiver(inboxUpdates); listening = false; }
@@ -984,29 +1076,60 @@ public class SetupActivity extends Activity {
         }).start();
     }
 
-    /** Up to three closest captures, offline from the stored vectors; tapping one opens it. */
+    /** Closest captures and vault notes. Embeds this entry on demand when its vector is missing (new, or edited since the last index run). */
     private void relatedSection(LinearLayout form, InboxFile.Entry entry, String snapshot, EditText why, EditText ideas) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         form.addView(box, ui.lp(16));
         new Thread(() -> {
-            List<InboxFile.Entry> near = Index.load(new File(getFilesDir(), "index.bin")).related(entry, InboxFile.parse(snapshot), 3);
+            List<InboxFile.Entry> near = new ArrayList<>();
+            List<Vault.Note> notes = new ArrayList<>();
+            try {
+                File file = new File(getFilesDir(), "index.bin");
+                Index index = Index.load(file);
+                String text = Index.text(entry);
+                float[] v = index.vector(text);
+                String key = Model.key(this);
+                if (v == null && !key.isEmpty()) { // ponytail: one call per open, only while the vector is missing
+                    index.put(text, Model.embed(key, java.util.Collections.singletonList(text)).get(0));
+                    index.save(file); // new vector only; Tagger.embed prunes stale ones
+                    v = index.vector(text);
+                }
+                if (v != null) {
+                    near = index.related(entry, InboxFile.parse(snapshot), 3);
+                    VaultStore.Snap vault = VaultStore.ready(this) ? VaultStore.cached(this) : null;
+                    if (vault != null) { notes = VaultStore.nearest(this, vault, v, 6, Index.MIN_RELATED, null); notes.removeIf(n -> n.path.contains("Sources/Captures/")); if (notes.size() > 3) notes = new ArrayList<>(notes.subList(0, 3)); } // the filed copy of this very capture is not related, it is the same
+                }
+            } catch (Exception offline) { } // stored results still show; nothing to say without network
+            List<InboxFile.Entry> inbox = near;
+            List<Vault.Note> vaultNotes = notes;
             runOnUiThread(() -> {
-                if (isDestroyed() || editor == null || near.isEmpty()) return;
+                if (isDestroyed() || editor == null || inbox.isEmpty() && vaultNotes.isEmpty()) return;
                 box.addView(ui.label("Related"));
-                for (InboxFile.Entry other : near) {
-                    TextView row = quietLink(other.shownTitle(), v -> {
+                for (InboxFile.Entry other : inbox) {
+                    TextView row = relatedRow(other.shownTitle(), v -> {
                         if (!why.getText().toString().equals(entry.why) || !ideas.getText().toString().equals(entry.ideas)) { toast("Save or close this entry first"); return; }
-                        clearDraft(); editor.dismiss(); showEntry(other, snapshot, prefs().getString("inbox", ""), other.why, other.ideas);
+                        Usage.hit(this, "related"); clearDraft(); editor.dismiss(); showEntry(other, snapshot, prefs().getString("inbox", ""), other.why, other.ideas);
                     });
-                    row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
-                    row.setTextSize(14);
-                    row.setMaxLines(2);
-                    row.setEllipsize(TextUtils.TruncateAt.END);
                     box.addView(row);
+                }
+                for (Vault.Note n : vaultNotes) {
+                    box.addView(relatedRow(n.title + "  ·  Knowledge", v -> {
+                        if (!why.getText().toString().equals(entry.why) || !ideas.getText().toString().equals(entry.ideas)) { toast("Save or close this entry first"); return; }
+                        Usage.hit(this, "related"); startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path));
+                    }));
                 }
             });
         }).start();
+    }
+
+    private TextView relatedRow(String label, View.OnClickListener click) {
+        TextView row = quietLink(label, click);
+        row.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        row.setTextSize(14);
+        row.setMaxLines(2);
+        row.setEllipsize(TextUtils.TruncateAt.END);
+        return row;
     }
 
     private EditText field(String value, int lines) {
@@ -1037,6 +1160,12 @@ public class SetupActivity extends Activity {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Obsidian"));
         startActivityForResult(pick, 4);
+    }
+    private void chooseCaptures() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Obsidian"));
+        startActivityForResult(pick, 6);
     }
     private void openFile(String name) {
         Uri uri = Attach.find(this, name);
@@ -1080,6 +1209,16 @@ public class SetupActivity extends Activity {
                 }
                 toast("Recovery copy exported and verified");
             } catch (Exception e) { toast("Export failed; private recovery copy is kept"); }
+            return;
+        }
+        if (request == 6 && result == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                Uri tree = data.getData();
+                getContentResolver().takePersistableUriPermission(tree, data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+                prefs().edit().putString("captures", tree.toString()).remove("capturesProblem").commit();
+                BackgroundJob.schedule(this);
+                render();
+            } catch (Exception e) { toast("Could not get write access to that folder."); }
             return;
         }
         if (request == 4 && result == RESULT_OK && data != null && data.getData() != null) {
