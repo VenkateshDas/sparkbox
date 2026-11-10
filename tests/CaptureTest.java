@@ -282,6 +282,7 @@ public class CaptureTest {
         check(hits.size() == 2 && hits.get(0).title.equals("Caching") && hits.get(1).title.equals("Moats")); // Scraper is orthogonal: cut by min
         check(index.rank(vec(1, 0), es, 1, 0f, 0).size() == 1);
         check(index.related(es.get(0), es, 3).size() == 0 || index.related(es.get(0), es, 3).get(0) != es.get(0)); // never itself
+        check(Enrich.notes("To try", "").equals("\nWhy saved: To try") && Enrich.notes(" ", null).isEmpty() && Enrich.notes("a", "b").endsWith("\nIdeas: b")); // annotations reach the prompt only when present
         java.io.File file = java.io.File.createTempFile("index", ".bin");
         index.save(file);
         Index again = Index.load(file);

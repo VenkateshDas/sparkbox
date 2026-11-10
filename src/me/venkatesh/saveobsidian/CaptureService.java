@@ -187,8 +187,12 @@ public class CaptureService extends Service {
         channel.setSound(null, null);
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
+    /** The entry just saved: tapping the island opens its why/ideas editor instead of the bare inbox. */
+    private volatile String openEntry;
     private PendingIntent openApp() {
-        return PendingIntent.getActivity(this, 0, new Intent(this, SetupActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Intent open = new Intent(this, SetupActivity.class);
+        if (openEntry != null) open.putExtra(SetupActivity.ANNOTATE, openEntry).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        return PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
     private Notification notification(String title, String message, String shortText, int progress) {
         Notification.Builder builder = new Notification.Builder(this, CHANNEL)
@@ -320,6 +324,8 @@ public class CaptureService extends Service {
             InboxWidget.refresh(this);
             sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
             if (!duplicate) BackgroundJob.schedule(this);
+            openEntry = duplicate ? null : entry;
+            if (!duplicate) Usage.hit(this, "capture");
             if (duplicate) stage("Already in inbox", label.isEmpty() ? "This is already in " + name : label, "Seen", 100);
             else stage("Source added", label.isEmpty() ? "Saved to " + name : label + " → " + name, "Added", 100);
         } catch (Exception e) {

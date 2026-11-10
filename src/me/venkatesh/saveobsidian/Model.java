@@ -28,24 +28,27 @@ final class Model {
     private static final String ALIAS = "sparkbox-ai-key";
 
     /** {type, tags, tldr, title}, or null when the reply is unusable. IOException (network, key, quota) means stop for now. */
-    static String[] enrich(String key, String model, String title, String url) throws Exception {
+    static String[] enrich(String key, String model, String title, String url, String why, String ideas, java.util.function.Consumer<String> pageSink) throws Exception {
         String page = "";
         String host = new URL(url).getHost().toLowerCase(java.util.Locale.ROOT);
         boolean youtube = host.equals("youtu.be") || host.equals("youtube.com") || host.endsWith(".youtube.com");
         // YouTube serves an "unsupported browser" page to this fetch; the title alone is better than that text.
-        if (!youtube) try { page = Enrich.pageText(PageTitle.html(url, true)); } catch (Exception ignored) { } // title and URL still classify
+        String full = "";
+        if (!youtube) try { full = Enrich.pageText(PageTitle.html(url, true)); } catch (Exception ignored) { } // title and URL still classify
+        page = full.length() > Enrich.PROMPT_CHARS ? full.substring(0, Enrich.PROMPT_CHARS) : full;
+        if (pageSink != null && !full.isEmpty()) pageSink.accept(full); // the whole page, so Ask and later processing need no refetch
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", 300)
             .put("messages", new JSONArray()
-                .put(new JSONObject().put("role", "system").put("content", Enrich.SYSTEM))
-                .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + url.replaceFirst("[?#].*$", "") + "\nPage text:\n" + page))); // query strings often carry tokens
+                .put(new JSONObject().put("role", "system").put("content", Enrich.SYSTEM + Enrich.INSTRUCTIONS))
+                .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + url.replaceFirst("[?#].*$", "") + "\nPage text:\n" + page + Enrich.notes(why, ideas)))); // query strings often carry tokens
         return parse(post("chat/completions", key, request));
     }
 
     /** {type, tags, tldr} for a typed or spoken note. */
-    static String[] enrichNote(String key, String model, String text) throws Exception {
+    static String[] enrichNote(String key, String model, String text, String why, String ideas) throws Exception {
         return parse(post("chat/completions", key, new JSONObject().put("model", model).put("max_tokens", 300).put("messages", new JSONArray()
-            .put(new JSONObject().put("role", "system").put("content", Enrich.NOTE))
-            .put(new JSONObject().put("role", "user").put("content", text.length() > 4000 ? text.substring(0, 4000) : text)))));
+            .put(new JSONObject().put("role", "system").put("content", Enrich.NOTE + Enrich.INSTRUCTIONS))
+            .put(new JSONObject().put("role", "user").put("content", (text.length() > 4000 ? text.substring(0, 4000) : text) + Enrich.notes(why, ideas))))));
     }
 
     /** Photo or PDF description. PDFs are read by OpenRouter's free parser first, so any model can summarise them. */
@@ -101,8 +104,51 @@ final class Model {
         return java.util.Arrays.asList(out);
     }
 
-    /** One chat completion, raw JSON reply. For callers that build their own request, such as Ask with tools. */
-    static String chat(String key, JSONObject request) throws Exception { return post("chat/completions", key, request); }
+    /** Streamed chat completion: calls live with the text so far, returns the assembled message {content, tool_calls?}. */
+    static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(10000);
+        connection.setReadTimeout(90000);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Authorization", "Bearer " + key);
+        connection.setRequestProperty("Content-Type", "application/json");
+        try {
+            try (OutputStream out = connection.getOutputStream()) { out.write(request.put("stream", true).toString().getBytes(StandardCharsets.UTF_8)); }
+            int code = connection.getResponseCode();
+            if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
+            StringBuilder text = new StringBuilder();
+            JSONArray calls = new JSONArray();
+            try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                for (String line; (line = in.readLine()) != null; ) {
+                    if (!line.startsWith("data:")) continue; // blank lines and ": OPENROUTER PROCESSING" keep-alives
+                    String data = line.substring(5).trim();
+                    if (data.equals("[DONE]")) break;
+                    JSONObject chunk = new JSONObject(data);
+                    if (chunk.has("error")) throw new IOException("Smart tags paused: " + chunk.getJSONObject("error").optString("message", "provider error"));
+                    JSONArray choices = chunk.optJSONArray("choices");
+                    JSONObject delta = choices == null || choices.length() == 0 ? null : choices.getJSONObject(0).optJSONObject("delta");
+                    if (delta == null) continue;
+                    if (!delta.isNull("content") && delta.has("content")) { text.append(delta.getString("content")); if (live != null) live.accept(text.toString()); }
+                    JSONArray parts = delta.optJSONArray("tool_calls");
+                    for (int i = 0; parts != null && i < parts.length(); i++) {
+                        JSONObject part = parts.getJSONObject(i), fn = part.optJSONObject("function");
+                        int at = part.optInt("index", i);
+                        while (calls.length() <= at) calls.put(new JSONObject().put("id", "").put("type", "function").put("function", new JSONObject().put("name", "").put("arguments", "")));
+                        JSONObject slot = calls.getJSONObject(at), slotFn = slot.getJSONObject("function");
+                        if (part.optString("id", "").length() > 0) slot.put("id", part.getString("id"));
+                        if (fn != null) {
+                            if (!fn.isNull("name") && fn.has("name")) slotFn.put("name", slotFn.getString("name") + fn.getString("name"));
+                            if (!fn.isNull("arguments") && fn.has("arguments")) slotFn.put("arguments", slotFn.getString("arguments") + fn.getString("arguments"));
+                        }
+                    }
+                }
+            }
+            JSONObject message = new JSONObject().put("content", text.toString());
+            if (calls.length() > 0) message.put("tool_calls", calls);
+            return message;
+        } finally { connection.disconnect(); }
+    }
 
     private static String post(String path, String key, JSONObject request) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();

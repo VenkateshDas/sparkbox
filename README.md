@@ -207,6 +207,15 @@ The front page now contains the Sparkbox wordmark, Settings, the inbox title/cou
 
 Settings reuses the native Activity and existing recovery actions. System Back and Back to inbox return to the list; filters and page position are kept, including across Activity recreation. No new dependencies, storage format changes or capture-service changes are introduced by this UI release.
 
+## 1.8.0: faster Ask, Related, instructions
+
+- **Related** on a capture card embeds the capture on demand and includes Knowledge notes.
+- Tapping the **Source added** notification opens that capture's Why and Ideas editor.
+- **Ask** streams answers, keeps its last 20 messages, decides for itself whether to search, reads several notes at once and runs tool calls in parallel.
+- **Why and Ideas** are instructions for the summary and for Ask. Whole page text is kept privately and shown under **Read saved page text**.
+- Save and Delete retry on the fresh file when background tagging changed the entry; an empty draft no longer reopens.
+- **Feature usage** counters (on the phone only) are in Settings.
+
 ## 1.7.0: knowledge base
 
 Sparkbox now reads the whole vault, not only the inbox. Open **Knowledge** from the menu and choose the vault folder once (Android's folder picker, read-only).
@@ -215,7 +224,7 @@ Sparkbox now reads the whole vault, not only the inbox. Open **Knowledge** from 
 - **Browse.** Folders, notes, a topic and people chip row from frontmatter, and per note: **Read** (links are tappable), **Links** (links to, linked from, concepts with no page yet) and **Similar** (nearest by meaning). Notes with no links have their own list.
 - **Links.** `[[Path/To/Note]]`, `[[Note]]`, `[[Note|alias]]` and `[[Path\|alias]]` in tables resolve by exact path first, then by a name only one note has. An ambiguous name stays unresolved instead of being guessed.
 - **Search.** Word match shows at once. With an OpenRouter key, closest-meaning results are added. Note vectors live in `vault.bin`, separate from the inbox `index.bin`. The first index pass embeds 640 notes per background run.
-- **Ask.** The **Ask** button sits beside the capture **+** on the home screen, and a search in Knowledge offers "Ask your notes". Needs the OpenRouter key and a model that supports tool calls (default `anthropic/claude-haiku-5.5`, changeable in Settings). There is no agent SDK: `Ask.java` is a plain tool loop (about 150 lines) over OpenRouter chat completions. The model gets five read-only tools, `search`, `read`, `list`, `links` and `inbox`, and takes up to 8 steps. It covers Knowledge (with Learnings inside it), Sources and the inbox, and answers only from them. Each claim is cited as `[[path|Title]]`: a note citation opens the note, an inbox citation opens the inbox filtered to that capture. Long-press an answer to copy it. The searches and the text it reads are sent to OpenRouter.
+- **Ask.** The **Ask** button sits beside the capture **+** on the home screen, and a search in Knowledge offers "Ask your notes". Needs the OpenRouter key and a model that supports tool calls (default `anthropic/claude-haiku-5.5`, changeable in Settings). There is no agent SDK: `Ask.java` is a plain tool loop (about 150 lines) over OpenRouter chat completions. The model gets five read-only tools, `search`, `read`, `list`, `links` and `inbox`, and takes up to 8 steps. It covers Knowledge (with Learnings inside it), Sources and the inbox, and answers only from them. Each claim is cited as `[[path|Title]]`: a note citation opens the note, an inbox citation opens the inbox filtered to that capture. Answers stream in as they are written, and the last 20 messages are kept on the phone (**New chat** clears them). Long-press an answer to copy it. The model decides whether to search at all. `read` takes several notes at once, `list` pages through long folders, and tool calls in one step run in parallel. The searches and the text it reads are sent to OpenRouter.
 - **Search ranking.** Word match scores rarer words higher and title words triple (`Vault.search`). A query of up to three words puts the word match first and adds what meaning found; a longer question fuses both lists (`Vault.blend`).
 - **Obsidian.** A note's **Open in Obsidian** link uses the `obsidian://open` scheme with the vault folder's name.
 - **Read-only.** Nothing in this feature writes to the vault. The inbox keeps its own guarded append and edit path.
@@ -224,3 +233,16 @@ Sparkbox now reads the whole vault, not only the inbox. Open **Knowledge** from 
 Measured on the OnePlus with the 426-note vault: first scan 2.6 s, cached scan about 0.4 s, Knowledge screen first frame about 50 ms (draw 16 ms). Opening it was slow at first because the recent list parsed dates with a fresh regex on every sort comparison and the search index was read on the main thread; dates are now memoised, the index count runs in the background, and the snapshot is preloaded when the inbox opens. A 42 KB note renders in 12 ms and lays out in 42 ms.
 
 The JVM checks cover parsing, link resolution, search ranking and result blending (138 checks). On the phone, by hand: browse, Links, Similar, search ranking, Ask with a note citation, Ask over an inbox capture with an inbox citation, Ask from a search, the no-links list and Open in Obsidian. Not tested: light theme, large font scale, rotation (the two screens handle it without recreating) and Ask with no network.
+
+## Why and Ideas are instructions
+
+Why and Ideas under a capture are the user's instructions about it (to read, to try, to cite, a to-do, a question). Sparkbox passes them to the model that summarises the capture (`Enrich.INSTRUCTIONS`) and tells Ask to honour them. They are used when a capture is tagged, and again once if you add or change them later. The vault's `Process inbox` agent is outside this repo; the same rule is in the Inbox Entry Format section of the vault's `Agents.md`:
+
+> `Why:` and `Ideas:` are instructions from the user about this capture, not just context. Do what they ask (for example "to try" becomes an action in the morning summary, a question gets answered in the Source note) and record them under `## Why I captured this` and `## My ideas`.
+
+## Page text and usage counters
+
+- When a link is tagged, the whole readable page text (the fetch is bounded at 512 KB of HTML; the tagging prompt only gets the first 12,000 characters) is kept in private app storage (`files/content/`), keyed by the link, so Ask can use it without fetching the page again. Links tagged before this existed are backfilled by fetching the page once (no model call). It is dropped when the capture leaves the inbox. The card's **Read saved page text** row shows it.
+- Settings shows **Feature usage**: counters for capture, island taps, annotations, deletes, related taps, questions asked and Knowledge opens. They stay in private storage on the phone and are never sent anywhere, so the app still has no analytics.
+
+Design for dropping the inbox: [docs/inbox-to-knowledge.md](docs/inbox-to-knowledge.md).

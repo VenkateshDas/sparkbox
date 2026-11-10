@@ -24,7 +24,7 @@ public class AskActivity extends Activity {
     private ScrollView scroll;
     private LinearLayout thread;
     private EditText input;
-    private TextView send, status, clear;
+    private TextView send, status, clear, live;
     private final JSONArray history = new JSONArray(); // user questions and final answers only
     private boolean busy;
 
@@ -51,7 +51,7 @@ public class AskActivity extends Activity {
         clear.setMinWidth(ui.dp(48));
         clear.setGravity(Gravity.CENTER);
         clear.setVisibility(android.view.View.GONE);
-        clear.setOnClickListener(v -> { if (!busy) { while (history.length() > 0) history.remove(0); intro(); clear.setVisibility(android.view.View.GONE); } });
+        clear.setOnClickListener(v -> { if (!busy) { while (history.length() > 0) history.remove(0); save(); intro(); clear.setVisibility(android.view.View.GONE); } });
         Ui.buttonRole(clear);
         top.addView(clear);
         root.addView(top);
@@ -86,6 +86,7 @@ public class AskActivity extends Activity {
         setContentView(root);
         Ui.insets(root);
         intro();
+        restore();
         String q = getIntent().getStringExtra(QUESTION);
         if (q != null && !q.trim().isEmpty()) { getIntent().removeExtra(QUESTION); root.post(() -> ask(q.trim())); }
         else if (VaultStore.ready(this) && !Model.key(this).isEmpty()) input.postDelayed(() -> {
@@ -139,6 +140,10 @@ public class AskActivity extends Activity {
         thread.addView(q, ui.lp(history.length() == 0 ? 8 : 24));
         status = ui.text("Thinking", 12, Typeface.MONOSPACE, ui.muted);
         thread.addView(status, ui.lp(12));
+        live = ui.text("", 15, Typeface.DEFAULT, ui.ink);
+        live.setLineSpacing(0, 1.35f);
+        live.setVisibility(android.view.View.GONE);
+        thread.addView(live, ui.lp(4));
         down();
         JSONArray messages;
         try {
@@ -148,7 +153,10 @@ public class AskActivity extends Activity {
         JSONArray sent = messages;
         new Thread(() -> {
             String answer = null, error = null;
-            try { answer = Ask.run(this, snap, key, sent, line -> runOnUiThread(() -> { if (status != null) status.setText(line); })); }
+            try {
+                answer = Ask.run(this, snap, key, sent, line -> runOnUiThread(() -> { if (status != null) status.setText(line); }),
+                    soFar -> runOnUiThread(() -> { if (live != null) { live.setText(soFar); live.setVisibility(soFar.isEmpty() ? android.view.View.GONE : android.view.View.VISIBLE); down(); } })); // plain text while it streams; citations become links at the end
+            }
             catch (Exception e) { error = String.valueOf(e.getMessage()).replace("Smart tags paused: ", ""); }
             String a = answer, e = error;
             runOnUiThread(() -> finish(question, a, e));
@@ -160,7 +168,8 @@ public class AskActivity extends Activity {
         send.setAlpha(1f);
         if (isDestroyed()) return;
         thread.removeView(status);
-        status = null;
+        thread.removeView(live);
+        status = null; live = null;
         if (answer == null || answer.isEmpty()) {
             thread.addView(ui.text(error != null ? error : "The model returned no answer. Try again.", 14, Typeface.DEFAULT, ui.sub), ui.lp(12));
             down();
@@ -170,6 +179,12 @@ public class AskActivity extends Activity {
             history.put(new JSONObject().put("role", "user").put("content", question));
             history.put(new JSONObject().put("role", "assistant").put("content", answer));
         } catch (Exception ignored) { }
+        save();
+        addAnswer(answer);
+        down();
+    }
+
+    private void addAnswer(String answer) {
         clear.setVisibility(android.view.View.VISIBLE);
         TextView t = ui.text("", 15, Typeface.DEFAULT, ui.ink);
         t.setLineSpacing(0, 1.35f);
@@ -182,7 +197,32 @@ public class AskActivity extends Activity {
         t.setMovementMethod(LinkMovementMethod.getInstance());
         t.setHighlightColor(0x33000000 | (ui.accent & 0xFFFFFF));
         thread.addView(t, ui.lp(12));
-        down();
+    }
+
+    /** The chat survives closing the screen: last 20 messages, kept in the app's private storage. */
+    private void save() {
+        JSONArray keep = new JSONArray();
+        for (int i = Math.max(0, history.length() - 20); i < history.length(); i++) keep.put(history.opt(i));
+        getSharedPreferences("capture", 0).edit().putString("askHistory", keep.toString()).apply();
+    }
+
+    private void restore() {
+        try {
+            JSONArray saved = new JSONArray(getSharedPreferences("capture", 0).getString("askHistory", "[]"));
+            if (saved.length() == 0 || snap() == null) return;
+            thread.removeAllViews();
+            for (int i = 0; i < saved.length(); i++) {
+                JSONObject m = saved.getJSONObject(i);
+                history.put(m);
+                if (m.getString("role").equals("user")) {
+                    TextView q = ui.text(m.getString("content"), 15, Ui.MEDIUM, ui.ink);
+                    q.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+                    q.setBackground(ui.round(ui.raised, 0, 10));
+                    thread.addView(q, ui.lp(i == 0 ? 8 : 24));
+                } else addAnswer(m.getString("content"));
+            }
+            down();
+        } catch (Exception damaged) { while (history.length() > 0) history.remove(0); }
     }
 
     private void open(String raw) {
