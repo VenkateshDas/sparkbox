@@ -12,7 +12,7 @@ import java.util.Map;
 final class Usage {
     static final String[][] FEATURES = {
         {"capture", "Links and notes captured"}, {"island", "Island taps to annotate"}, {"annotate", "Why and ideas saved"}, {"delete", "Entries deleted"},
-        {"related", "Related items opened"}, {"ask", "Questions asked"}, {"knowledge", "Knowledge opened"}};
+        {"related", "Related items opened"}, {"ask", "Questions asked"}, {"knowledge", "Knowledge opened"}, {"filed", "Notes filed to the vault"}};
 
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("usage", 0); }
 

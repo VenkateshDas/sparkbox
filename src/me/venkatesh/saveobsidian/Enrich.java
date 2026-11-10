@@ -40,6 +40,25 @@ public final class Enrich {
 
     static final int PROMPT_CHARS = 12000;
 
+    /** File name for a capture's note: "2026-11-10 - Title.md", free of characters Obsidian or the provider reject. */
+    public static String noteName(String time, String title) {
+        String date = time != null && time.length() >= 10 ? time.substring(0, 10) : "undated";
+        String safe = title.replaceAll("[\\\\/:*?\"<>|#\\[\\]^]", " ").replaceAll("\\s+", " ").trim();
+        if (safe.length() > 80) safe = safe.substring(0, 80).trim();
+        return date + " - " + (safe.isEmpty() ? "Capture" : safe) + ".md";
+    }
+
+    /** A capture as a Source note in the vault's format (Agents.md): frontmatter, then the sections the vault agent fills in later. */
+    public static String sourceNote(String title, String url, String time, String tags, String tldr, String why, String ideas, String page) {
+        StringBuilder out = new StringBuilder("---\ntype: source\nsource: \"" + url.replace("\"", "%22") + "\"\ncaptured: "
+            + (time != null && time.length() >= 10 ? time.substring(0, 10) : "") + "\nvia: Sparkbox\ntopics: [" + tags + "]\nprocessed: false\n---\n\n# " + title.replaceAll("\\s+", " ").trim() + "\n");
+        if (!tldr.isEmpty()) out.append("\n## Summary\n").append(tldr).append('\n');
+        if (!why.trim().isEmpty()) out.append("\n## Why I captured this\n").append(why.trim()).append('\n');
+        if (!ideas.trim().isEmpty()) out.append("\n## My ideas\n").append(ideas.trim()).append('\n');
+        if (!page.isEmpty()) out.append("\n## Raw Content\n").append(page).append('\n');
+        return out.toString();
+    }
+
     /** {type, tags, tldr}: whitelisted type, slug tags, single-line summary. Nothing else from the model reaches the inbox. */
     public static String[] clean(String type, List<String> tags, String tldr) {
         String kind = type == null ? "" : type.trim().toLowerCase(Locale.ROOT);

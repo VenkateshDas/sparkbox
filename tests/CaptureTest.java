@@ -283,6 +283,10 @@ public class CaptureTest {
         check(index.rank(vec(1, 0), es, 1, 0f, 0).size() == 1);
         check(index.related(es.get(0), es, 3).size() == 0 || index.related(es.get(0), es, 3).get(0) != es.get(0)); // never itself
         check(Enrich.notes("To try", "").equals("\nWhy saved: To try") && Enrich.notes(" ", null).isEmpty() && Enrich.notes("a", "b").endsWith("\nIdeas: b")); // annotations reach the prompt only when present
+        check(Enrich.noteName("2026-11-10 19:31", "A/B: what? [x] #y").equals("2026-11-10 - A B what x y.md") && Enrich.noteName("", "").equals("undated - Capture.md")); // file names the provider and Obsidian accept
+        String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai, rag", "Sum.", "To try", "", "Body");
+        check(note.startsWith("---\ntype: source\nsource: \"https://e.org/a\"\ncaptured: 2026-11-10\nvia: Sparkbox\ntopics: [ai, rag]\nprocessed: false\n---\n\n# T\n")
+            && note.contains("## Summary\nSum.") && note.contains("## Why I captured this\nTo try") && !note.contains("## My ideas") && note.endsWith("## Raw Content\nBody\n")); // the vault's Source format, empty sections left out
         java.io.File file = java.io.File.createTempFile("index", ".bin");
         index.save(file);
         Index again = Index.load(file);

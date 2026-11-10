@@ -30,6 +30,7 @@ final class Tagger {
             transcribe(c, key);
             tag(c, key);
             backfill(c);
+            fileNotes(c);
             describe(c, key);
             embed(c, key);
             VaultStore.embed(c, key);
@@ -72,6 +73,13 @@ final class Tagger {
     private static boolean stale(Context c, InboxFile.Entry e) {
         boolean noted = !e.why.trim().isEmpty() || !e.ideas.trim().isEmpty();
         return noted && !e.type.isEmpty() && !notesHash(e).equals(c.getSharedPreferences("enriched", 0).getString(notesKey(e), ""));
+    }
+
+    private static void fileNotes(Context c) {
+        android.content.SharedPreferences.Editor note = c.getSharedPreferences("capture", 0).edit();
+        try { Captures.file(c); note.remove("capturesProblem"); }
+        catch (Exception problem) { note.putString("capturesProblem", String.valueOf(problem.getMessage())); }
+        note.apply();
     }
 
     /** Links tagged before page text was kept: fetch it once (no model call), ten per run. A page that fails is not retried. */

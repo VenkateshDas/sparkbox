@@ -215,6 +215,7 @@ Settings reuses the native Activity and existing recovery actions. System Back a
 - **Why and Ideas** are instructions for the summary and for Ask. Whole page text is kept privately and shown under **Read saved page text**.
 - Save and Delete retry on the fresh file when background tagging changed the entry; an empty draft no longer reopens.
 - **Feature usage** counters (on the phone only) are in Settings.
+- **Capture notes** (optional): each tagged link is also filed as its own Source note in a vault folder you pick, for example `Sources/Captures`. See below.
 
 ## 1.7.0: knowledge base
 
@@ -246,3 +247,31 @@ Why and Ideas under a capture are the user's instructions about it (to read, to 
 - Settings shows **Feature usage**: counters for capture, island taps, annotations, deletes, related taps, questions asked and Knowledge opens. They stay in private storage on the phone and are never sent anywhere, so the app still has no analytics.
 
 Design for dropping the inbox: [docs/inbox-to-knowledge.md](docs/inbox-to-knowledge.md).
+
+## Capture notes (step 1 of dropping the inbox)
+
+Settings → **Capture notes** → choose a folder (create `Sources/Captures` in the picker). Sparkbox then writes one note per tagged link into that folder and nowhere else:
+
+```markdown
+---
+type: source
+source: "https://example.org/article"
+captured: 2026-11-10
+via: Sparkbox
+topics: [tag-a, tag-b]
+processed: false
+---
+
+# Title
+## Summary
+## Why I captured this      (only when you wrote one)
+## My ideas                 (only when you wrote some)
+## Raw Content              (the whole saved page text)
+```
+
+- File name: `YYYY-MM-DD - Title.md`. It follows the Source format in the vault's `Agents.md`; `processed: false` marks it for the vault agent.
+- Only tagged links are filed (notes, voice, photos and files are not, yet). Up to ten per background run.
+- A note is rewritten only when its summary, Why, Ideas or page text changed, and only notes Sparkbox created. A file that already has the same name is never touched (a short suffix is added).
+- Each write is read back and its size checked. If write access is lost, Settings shows the problem.
+- `Inbox.md` keeps working next to it. **Stop filing notes** turns this off and leaves the notes in place. Related hides these filed copies of the same capture.
+- Sparkbox stays read-only on the rest of the vault. This folder is the single exception, granted by you through the folder picker.

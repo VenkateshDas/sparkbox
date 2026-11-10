@@ -448,6 +448,15 @@ public class SetupActivity extends Activity {
         files.addView(settingsLink(Attach.ready(this) ? "Change folder" : "Choose folder", v -> chooseAttach()), ui.lp(8));
         page.addView(files, ui.lp(16));
 
+        LinearLayout notes = ui.card("Capture notes");
+        notes.addView(ui.text("Each tagged link is also saved as its own note (summary, your Why and Ideas, and the whole page text) in one vault folder, for example Sources/Captures. Sparkbox writes only there, and only changes notes it created. Off until you pick a folder.", 13, Typeface.DEFAULT, ui.sub));
+        notes.addView(ui.text(Captures.ready(this) ? Captures.label(this) : "Off", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        String capturesProblem = prefs().getString("capturesProblem", "");
+        if (Captures.ready(this) && !capturesProblem.isEmpty()) notes.addView(ui.text(capturesProblem, 13, Typeface.DEFAULT, ui.accent), ui.lp(8));
+        notes.addView(settingsLink(Captures.ready(this) ? "Change folder" : "Choose Captures folder", v -> chooseCaptures()), ui.lp(8));
+        if (Captures.ready(this)) notes.addView(settingsLink("Stop filing notes", v -> { prefs().edit().remove("captures").remove("capturesProblem").apply(); render(); }));
+        page.addView(notes, ui.lp(16));
+
         LinearLayout vault = ui.card("Knowledge base");
         vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 20,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
         vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
@@ -1069,7 +1078,7 @@ public class SetupActivity extends Activity {
                 if (v != null) {
                     near = index.related(entry, InboxFile.parse(snapshot), 3);
                     VaultStore.Snap vault = VaultStore.ready(this) ? VaultStore.cached(this) : null;
-                    if (vault != null) notes = VaultStore.nearest(this, vault, v, 3, Index.MIN_RELATED, null);
+                    if (vault != null) { notes = VaultStore.nearest(this, vault, v, 6, Index.MIN_RELATED, null); notes.removeIf(n -> n.path.contains("Sources/Captures/")); if (notes.size() > 3) notes = new ArrayList<>(notes.subList(0, 3)); } // the filed copy of this very capture is not related, it is the same
                 }
             } catch (Exception offline) { } // stored results still show; nothing to say without network
             List<InboxFile.Entry> inbox = near;
@@ -1132,6 +1141,12 @@ public class SetupActivity extends Activity {
         pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Obsidian"));
         startActivityForResult(pick, 4);
     }
+    private void chooseCaptures() {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Obsidian"));
+        startActivityForResult(pick, 6);
+    }
     private void openFile(String name) {
         Uri uri = Attach.find(this, name);
         if (uri == null) { toast("That file is not in the attachments folder"); return; }
@@ -1174,6 +1189,16 @@ public class SetupActivity extends Activity {
                 }
                 toast("Recovery copy exported and verified");
             } catch (Exception e) { toast("Export failed; private recovery copy is kept"); }
+            return;
+        }
+        if (request == 6 && result == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                Uri tree = data.getData();
+                getContentResolver().takePersistableUriPermission(tree, data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+                prefs().edit().putString("captures", tree.toString()).remove("capturesProblem").commit();
+                BackgroundJob.schedule(this);
+                render();
+            } catch (Exception e) { toast("Could not get write access to that folder."); }
             return;
         }
         if (request == 4 && result == RESULT_OK && data != null && data.getData() != null) {

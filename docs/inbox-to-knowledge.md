@@ -22,5 +22,8 @@ A in two steps, because the risky part is writing outside the inbox file:
 1. **Step 1 (low risk):** write each capture as its own note under a new folder `Sources/Captures/` only (never touching existing notes), using the saved page text. Ask, Related and search already read Sources. Keep `Inbox.md` working in parallel behind a setting.
 2. **Step 2:** once Step 1 is trusted, change `Process inbox` to link and file `Sources/Captures/` notes into Topics, then retire `Inbox.md`.
 
-## Decision needed from the owner
+## Status
+Step 1 is built (Settings → Capture notes). Step 2 (the vault agent filing `Sources/Captures/` into Topics and retiring `Inbox.md`) is not.
+
+## Decision (done)
 Allow the app to **write** into one vault subfolder (`Sources/Captures/`)? Everything else stays read-only. Until that is yes, nothing here is built.
