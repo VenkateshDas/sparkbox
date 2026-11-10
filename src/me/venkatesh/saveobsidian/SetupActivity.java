@@ -448,8 +448,28 @@ public class SetupActivity extends Activity {
         files.addView(settingsLink(Attach.ready(this) ? "Change folder" : "Choose folder", v -> chooseAttach()), ui.lp(8));
         page.addView(files, ui.lp(16));
 
+        LinearLayout ingest = ui.card("Ingest into Knowledge");
+        ingest.addView(ui.text("Each tagged link is processed the moment it is ready, like Process inbox: a Source note in its subject and year folder, claims added to Topic and People pages (new ones created), the indexes and log updated, then the capture leaves the inbox. Pages are only added to, never rewritten, and each changed page is backed up privately for two weeks. Needs write access to your vault and a smart tags key. One extra model call per capture.", 13, Typeface.DEFAULT, ui.sub));
+        boolean canWrite = VaultWrite.writable(this);
+        ingest.addView(ui.text("Vault write access: " + (canWrite ? "granted" : VaultStore.ready(this) ? "not granted" : "choose the vault first"), 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
+        ingest.addView(settingsLink(canWrite ? "Re-pick vault folder with write access" : "Allow write access to the vault", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))), ui.lp(8));
+        ingest.addView(settingsLink("Process captures into Knowledge: " + (Ingest.on(this) ? "On" : "Off") + " (tap to change)", v -> {
+            if (!Ingest.on(this) && !canWrite) { toast("Allow write access to the vault first"); return; }
+            prefs().edit().putBoolean("ingest", !Ingest.on(this)).apply(); BackgroundJob.schedule(this); render();
+        }));
+        ingest.addView(settingsLink("Model: " + Ingest.model(this) + " (tap to change)", v -> {
+            EditText model = new EditText(this); model.setText(Ingest.model(this)); model.setSingleLine(true);
+            new AlertDialog.Builder(this).setTitle("Model for Ingest").setMessage("An OpenRouter model id. A stronger model than the tagger gives better topics.").setView(model)
+                .setPositiveButton("Save", (d, w) -> { String m = model.getText().toString().trim(); prefs().edit().putString("ingestModel", m.isEmpty() ? Ingest.DEFAULT_MODEL : m).apply(); render(); })
+                .setNegativeButton("Cancel", null).show();
+        }));
+        String ingestProblem = prefs().getString("ingestProblem", ""), ingestLog = prefs().getString("ingestLog", "");
+        if (!ingestProblem.isEmpty()) ingest.addView(ui.text(ingestProblem, 13, Typeface.DEFAULT, ui.accent), ui.lp(8));
+        if (!ingestLog.isEmpty()) { ingest.addView(ui.label("Recently ingested"), ui.lp(12)); for (String l : ingestLog.split("\n")) { ingest.addView(ui.text(l, 12, Typeface.DEFAULT, ui.sub), ui.lp(4)); if (ingest.getChildCount() > 14) break; } }
+        page.addView(ingest, ui.lp(16));
+
         LinearLayout notes = ui.card("Capture notes");
-        notes.addView(ui.text("Each tagged link is also saved as its own note (summary, your Why and Ideas, and the whole page text) in one vault folder, for example Sources/Captures. Sparkbox writes only there, and only changes notes it created. Off until you pick a folder.", 13, Typeface.DEFAULT, ui.sub));
+        notes.addView(ui.text("The lighter option, used only while Ingest is off: each tagged link is saved as its own note (summary, your Why and Ideas, and the whole page text) in one vault folder, for example Sources/Captures. Sparkbox writes only there, and only changes notes it created. Off until you pick a folder.", 13, Typeface.DEFAULT, ui.sub));
         notes.addView(ui.text(Captures.ready(this) ? Captures.label(this) : "Off", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
         String capturesProblem = prefs().getString("capturesProblem", "");
         if (Captures.ready(this) && !capturesProblem.isEmpty()) notes.addView(ui.text(capturesProblem, 13, Typeface.DEFAULT, ui.accent), ui.lp(8));
@@ -458,7 +478,7 @@ public class SetupActivity extends Activity {
         page.addView(notes, ui.lp(16));
 
         LinearLayout vault = ui.card("Knowledge base");
-        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources, and never changes them. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 20,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
+        vault.addView(ui.text("Your vault folder. Sparkbox reads only Knowledge and Sources. It changes them only through Ingest, when you turn that on. Daily notes, health and other folders are not read. With a smart tags key, note titles and short digests are sent to OpenRouter so search can find them. Ask also sends the notes and inbox captures it reads, up to 20,000 characters at a time.", 13, Typeface.DEFAULT, ui.sub));
         vault.addView(ui.text(VaultStore.ready(this) ? VaultStore.label(this) : "No folder chosen", 14, Typeface.DEFAULT, ui.ink), ui.lp(12));
         vault.addView(settingsLink(VaultStore.ready(this) ? "Change folder" : "Choose vault folder", v -> startActivity(new Intent(this, VaultActivity.class).putExtra(VaultActivity.PICK, true))), ui.lp(8));
         page.addView(vault, ui.lp(16));

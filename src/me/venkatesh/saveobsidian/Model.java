@@ -150,6 +150,14 @@ final class Model {
         } finally { connection.disconnect(); }
     }
 
+    /** One non-streamed completion; the reply text. For Ingest, which asks for JSON. */
+    static String complete(String key, String model, String system, String user, int maxTokens) throws Exception {
+        JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
+            .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
+        JSONObject message = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0).getJSONObject("message");
+        return message.isNull("content") ? "" : message.optString("content", "");
+    }
+
     private static String post(String path, String key, JSONObject request) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setRequestMethod("POST");

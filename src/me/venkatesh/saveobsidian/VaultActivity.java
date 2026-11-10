@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  * Quiet chrome: notes are set in the reading column, paths in mono so a note's address is always visible.
  */
 public class VaultActivity extends Activity {
-    static final String PICK = "pick", OPEN = "open";
+    static final String PICK = "pick", OPEN = "open", PICK_WRITE = "pickWrite";
     private static final int PAGE = 60;
 
     private Ui ui;
@@ -75,7 +75,8 @@ public class VaultActivity extends Activity {
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handle(intent); }
 
     private void handle(Intent intent) {
-        if (intent.getBooleanExtra(PICK, false)) { intent.removeExtra(PICK); pick(); return; }
+        if (intent.getBooleanExtra(PICK, false)) { intent.removeExtra(PICK); pick(false); return; }
+        if (intent.getBooleanExtra(PICK_WRITE, false)) { intent.removeExtra(PICK_WRITE); pick(true); return; }
         String path = intent.getStringExtra(OPEN);
         if (path != null) { intent.removeExtra(OPEN); stack.clear(); stack.add(new String[]{"home"}); stack.add(new String[]{"note", path}); tab = "read"; }
     }
@@ -110,18 +111,21 @@ public class VaultActivity extends Activity {
 
     private static long newest(VaultStore.Snap s) { long m = 0; for (Vault.Note n : s.graph.notes) m = Math.max(m, n.mtime); return m; }
 
-    private void pick() {
-        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE) // read-only: nothing here ever writes to the vault
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+    /** write=false: read-only, as before. write=true: the same vault folder with write access, which Ingest needs to file captures into Knowledge. */
+    private void pick(boolean write) {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | (write ? Intent.FLAG_GRANT_WRITE_URI_PERMISSION : 0));
         pick.putExtra(DocumentsContract.EXTRA_INITIAL_URI, DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Obsidian"));
-        startActivityForResult(pick, 7);
+        startActivityForResult(pick, write ? 8 : 7);
     }
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request != 7 || result != RESULT_OK || data == null || data.getData() == null) return;
+        if ((request != 7 && request != 8) || result != RESULT_OK || data == null || data.getData() == null) return;
         try {
-            getContentResolver().takePersistableUriPermission(data.getData(), data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | (request == 8 ? Intent.FLAG_GRANT_WRITE_URI_PERMISSION : 0));
+            if (request == 8 && (flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == 0) throw new SecurityException();
+            getContentResolver().takePersistableUriPermission(data.getData(), flags);
             getSharedPreferences("capture", 0).edit().putString("vault", data.getData().toString()).commit();
             VaultStore.last = null;
             snap = null;
@@ -129,7 +133,8 @@ public class VaultActivity extends Activity {
             BackgroundJob.schedule(this);
             draw(true);
             scan();
-        } catch (Exception e) { Toast.makeText(this, "Could not read that folder.", Toast.LENGTH_SHORT).show(); }
+            if (request == 8) { Toast.makeText(this, "Write access granted", Toast.LENGTH_SHORT).show(); finish(); }
+        } catch (Exception e) { Toast.makeText(this, request == 8 ? "Could not get write access to that folder." : "Could not read that folder.", Toast.LENGTH_SHORT).show(); }
     }
 
     @Override public void onBackPressed() {
@@ -174,14 +179,14 @@ public class VaultActivity extends Activity {
         bar("Inbox");
         page.addView(ui.text("Knowledge", 20, Ui.MEDIUM, ui.ink), ui.lp(8));
         page.addView(ui.text("Choose your vault folder to browse Knowledge and Sources. Sparkbox only reads them and never changes a note.", 14, Typeface.DEFAULT, ui.sub), ui.lp(12));
-        page.addView(ui.button("Choose vault folder", true, v -> pick()), ui.lp(24));
+        page.addView(ui.button("Choose vault folder", true, v -> pick(false)), ui.lp(24));
     }
 
     private void loading() {
         bar("Inbox");
         page.addView(ui.text("Knowledge", 20, Ui.MEDIUM, ui.ink), ui.lp(8));
         page.addView(ui.text(problem.isEmpty() ? "Reading your vault" : problem, 14, Typeface.DEFAULT, ui.sub), ui.lp(12));
-        if (!problem.isEmpty()) page.addView(ui.button("Choose vault folder", false, v -> pick()), ui.lp(16));
+        if (!problem.isEmpty()) page.addView(ui.button("Choose vault folder", false, v -> pick(false)), ui.lp(16));
     }
 
     private TextView status;

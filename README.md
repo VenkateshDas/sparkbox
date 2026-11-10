@@ -215,7 +215,8 @@ Settings reuses the native Activity and existing recovery actions. System Back a
 - **Why and Ideas** are instructions for the summary and for Ask. Whole page text is kept privately and shown under **Read saved page text**.
 - Save and Delete retry on the fresh file when background tagging changed the entry; an empty draft no longer reopens.
 - **Feature usage** counters (on the phone only) are in Settings.
-- **Capture notes** (optional): each tagged link is also filed as its own Source note in a vault folder you pick, for example `Sources/Captures`. See below.
+- **Ingest into Knowledge** (optional): each tagged link is processed on arrival like `Process inbox`. See below.
+- **Capture notes** (optional, lighter): each tagged link is also filed as its own Source note in a vault folder you pick, for example `Sources/Captures`. See below.
 
 ## 1.7.0: knowledge base
 
@@ -275,3 +276,16 @@ processed: false
 - Each write is read back and its size checked. If write access is lost, Settings shows the problem.
 - `Inbox.md` keeps working next to it. **Stop filing notes** turns this off and leaves the notes in place. Related hides these filed copies of the same capture.
 - Sparkbox stays read-only on the rest of the vault. This folder is the single exception, granted by you through the folder picker.
+
+## Ingest into Knowledge (replaces the inbox step)
+
+Settings → **Ingest into Knowledge**: allow write access to the vault folder (pick `Tiny experiments`; Android cannot scope a grant to two subfolders, so the grant covers the vault, but the app writes only under `Knowledge` and `Sources`), turn it on, optionally change the model (default `anthropic/claude-sonnet-5.5`). Needs a smart tags key.
+
+When a link has been tagged, one model call reads the page, your Why and Ideas (treated as instructions) and the names of your existing Topics and People, and returns a plan. The app then does what `Process inbox` does in `Agents.md`:
+
+1. Source note in `Sources/<category>/<year>/YYYY-MM-DD - Title.md`: Raw Content, Why, My ideas, Claude's Extraction (key claims, topics as `[[links]]`, people, relevance flags), `processed: true`.
+2. Existing Topic pages: claim rows added to Key Claims, open questions, the Source under "Sources that built this page", `source-count` and `last-updated` bumped. Unknown topics become new pages (`confidence: low`).
+3. People pages added or extended. 4. `Knowledge/index.md` (counts, rows), `Sources/index.md`, the category `index.md`, and an `[INGEST]` line in `Knowledge/log.md`.
+5. The capture leaves `Inbox.md`.
+
+Rules: pages are only added to, never rewritten. Each edit starts from the exact text that was read (if the file changed meanwhile it is retried later), is read back after writing, and the previous text is kept privately for two weeks. Every step is recorded, so an interrupted run resumes instead of repeating; the model answer is kept so a retry does not pay twice. At most 3 captures per run and 3 tries per capture. Settings lists what was ingested and the last problem. Typed notes, voice and photos are not ingested yet and stay in the inbox.

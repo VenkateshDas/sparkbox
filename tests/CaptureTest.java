@@ -4,6 +4,7 @@ import me.venkatesh.saveobsidian.InboxFile;
 import me.venkatesh.saveobsidian.Enrich;
 import me.venkatesh.saveobsidian.Index;
 import me.venkatesh.saveobsidian.Vault;
+import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
 import java.io.IOException;
@@ -284,7 +285,22 @@ public class CaptureTest {
         check(index.related(es.get(0), es, 3).size() == 0 || index.related(es.get(0), es, 3).get(0) != es.get(0)); // never itself
         check(Enrich.notes("To try", "").equals("\nWhy saved: To try") && Enrich.notes(" ", null).isEmpty() && Enrich.notes("a", "b").endsWith("\nIdeas: b")); // annotations reach the prompt only when present
         check(Enrich.noteName("2026-11-10 19:31", "A/B: what? [x] #y").equals("2026-11-10 - A B what x y.md") && Enrich.noteName("", "").equals("undated - Capture.md")); // file names the provider and Obsidian accept
-        String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai, rag", "Sum.", "To try", "", "Body");
+                // Ingest text edits follow the vault's formats and only add
+        java.util.List<String> noRows = new java.util.ArrayList<>(), rows = java.util.Collections.singletonList(IngestText.claimRow("A | B claim", "[[Sources/AI Systems/2026/S]]", "2026", "low"));
+        String topic = "---\ntype: topic\nlast-updated: 2026-01-01\nsource-count: 4\n---\n\n## Core Mechanism\nx\n\n## Key Claims\n| Claim | Source | Year | Confidence |\n|---|---|---|---|\n| old | [[S0]] | 2025 | high |\n\n## Sources that built this page\n- [[S0]]\n";
+        String updated = IngestText.updateTopic(topic, rows, java.util.Collections.singletonList("Open?"), "[[Sources/AI Systems/2026/S]]", "2026-11-10");
+        check(updated.contains("last-updated: 2026-11-10") && updated.contains("source-count: 5") && updated.contains("| old | [[S0]] | 2025 | high |\n| A \\| B claim | [[Sources/AI Systems/2026/S]] | 2026 | low |")
+            && updated.contains("## Contradictions / Open Questions\n- Open?") && updated.contains("- [[S0]]\n- [[Sources/AI Systems/2026/S]]\n")); // rows after the table, counters bumped, nothing removed
+        check(IngestText.updateTopic(updated, noRows, noRows, "[[Sources/AI Systems/2026/S]]", "2026-11-10").equals(updated.replace("source-count: 5", "source-count: 6"))); // a source link is never listed twice
+        check(IngestText.newTopic("T", "Core.", rows, java.util.Collections.singletonList("R"), noRows, "[[S]]", "2026-11-10").contains("related-topics: ['[[R]]']\nreferenced-in: []\n---\n\n## Core Mechanism\nCore.")
+            && IngestText.updatePerson(IngestText.newPerson("N", "", "[[S]]"), "[[S2]]").endsWith("- [[S]]\n- [[S2]]\n"));
+        String kidx = "*Last updated: 2026-11-09 | 27 topic pages | 104 people pages | 297 source records*\n| T | C | S | U |\n| [[Knowledge/Topics/RAG\\|RAG]] | core | 20 | 2026-11-06 |\n| [[Knowledge/Topics/LLM\\|LLM]] | core | 30 | 2026-11-06 |\n\n| P | R | N | S |\n| [[Knowledge/People/Z\\|Z]] | r | n | [[S]] |\n";
+        String k2 = IngestText.knowledgeIndex(kidx, java.util.Collections.singletonList("| [[Knowledge/Topics/New\\|New]] | c | 1 | 2026-11-10 |"), java.util.Collections.singletonList("| [[Knowledge/People/Q\\|Q]] | r | n | [[S]] |"), java.util.Collections.singletonList("RAG"), 1, "2026-11-10");
+        check(k2.contains("28 topic pages | 105 people pages | 298 source records") && k2.contains("| [[Knowledge/Topics/RAG\\|RAG]] | core | 21 | 2026-11-10 |") && k2.contains("| [[Knowledge/Topics/LLM\\|LLM]] | core | 30 | 2026-11-06 |\n| [[Knowledge/Topics/New")
+            && k2.indexOf("Knowledge/People/Q") > k2.indexOf("Knowledge/People/Z"));
+        check(IngestText.sourcesIndex("- [[Sources/AI Systems/index|AI Systems]] — 120 notes\n*297 source records under", "AI Systems").equals("- [[Sources/AI Systems/index|AI Systems]] — 121 notes\n*298 source records under")
+            && IngestText.category("people & society").equals("People & Society") && IngestText.category("nonsense").equals("AI Systems") && IngestText.safe("A/B: x?").equals("A B x"));
+String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai, rag", "Sum.", "To try", "", "Body");
         check(note.startsWith("---\ntype: source\nsource: \"https://e.org/a\"\ncaptured: 2026-11-10\nvia: Sparkbox\ntopics: [ai, rag]\nprocessed: false\n---\n\n# T\n")
             && note.contains("## Summary\nSum.") && note.contains("## Why I captured this\nTo try") && !note.contains("## My ideas") && note.endsWith("## Raw Content\nBody\n")); // the vault's Source format, empty sections left out
         java.io.File file = java.io.File.createTempFile("index", ".bin");

@@ -30,7 +30,7 @@ final class Tagger {
             transcribe(c, key);
             tag(c, key);
             backfill(c);
-            fileNotes(c);
+            if (Ingest.ready(c)) Ingest.run(c, key); else fileNotes(c); // ingest files each capture into Knowledge; the Captures folder is the lighter option
             describe(c, key);
             embed(c, key);
             VaultStore.embed(c, key);
@@ -70,7 +70,7 @@ final class Tagger {
     private static String notesHash(InboxFile.Entry e) { return Long.toHexString(Index.key(e.why.trim() + "\n" + e.ideas.trim())); }
 
     /** Tagged before you wrote a Why or Idea (or changed it since): summarise once more so the summary follows your instructions. */
-    private static boolean stale(Context c, InboxFile.Entry e) {
+    static boolean stale(Context c, InboxFile.Entry e) {
         boolean noted = !e.why.trim().isEmpty() || !e.ideas.trim().isEmpty();
         return noted && !e.type.isEmpty() && !notesHash(e).equals(c.getSharedPreferences("enriched", 0).getString(notesKey(e), ""));
     }

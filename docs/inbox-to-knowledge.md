@@ -23,7 +23,7 @@ A in two steps, because the risky part is writing outside the inbox file:
 2. **Step 2:** once Step 1 is trusted, change `Process inbox` to link and file `Sources/Captures/` notes into Topics, then retire `Inbox.md`.
 
 ## Status
-Step 1 is built (Settings → Capture notes). Step 2 (the vault agent filing `Sources/Captures/` into Topics and retiring `Inbox.md`) is not.
+Built: Capture notes (a lighter option) and Ingest into Knowledge, which processes each tagged link on arrival into Sources, Topics, People, the indexes and the log, then removes it from the inbox. Typed notes, voice and photos still use the inbox.
 
 ## Decision (done)
 Allow the app to **write** into one vault subfolder (`Sources/Captures/`)? Everything else stays read-only. Until that is yes, nothing here is built.
