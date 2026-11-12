@@ -80,18 +80,25 @@ final class CardGen {
         VaultStore.Snap snap = VaultStore.cached(c);
         if (snap == null) return false;
         List<Vault.Note> todo = todo(snap);
-        int did = 0;
+        int did = 0, streak = 0;
         for (Vault.Note n : todo) {
             if (did >= BATCH || stop || Tagger.halt) break;
             try {
                 process(c, key, n);
                 did++;
+                streak = 0;
                 try { VaultStore.scan(c); } catch (Exception ignored) { } // re-reads only this note, so the progress count moves note by note
                 prefs(c).edit().remove("problem").apply();
             } catch (Provider paused) {
                 prefs(c).edit().putString("problem", paused.getMessage()).apply();
                 break;
+            } catch (VaultWrite.Stale changed) {
+                // the note was edited while the model worked: not the note's fault, so it is not counted as a failed try
             } catch (Exception failed) {
+                if (++streak >= 3) { // three in a row points at the model or the network, not at the notes: stop before any note is marked failed
+                    prefs(c).edit().putString("problem", "Three notes failed in a row: " + failed.getMessage() + ". Check the card model in Settings.").apply();
+                    break;
+                }
                 int n1 = tries(c, n.path) + 1;
                 tried(c, n.path, n1);
                 android.util.Log.w("sparkbox", "cards failed for " + n.path + ": " + failed);
@@ -144,6 +151,7 @@ final class CardGen {
     static void loop(Context c) {
         if (!RUNNING.compareAndSet(false, true)) return;
         stop = false;
+        VaultWrite.pruneBackups(c); // every note written here leaves a private backup; old ones go
         try {
             while (on(c) && !stop && run(c)) { /* next batch */ }
         } finally { RUNNING.set(false); }

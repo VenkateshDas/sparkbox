@@ -32,16 +32,18 @@ final class VaultWrite {
 
     private static Uri tree(Context c) { return Uri.parse(VaultStore.tree(c)); }
 
-    private static String child(Context c, Uri tree, String parentId, String name) {
+    /** Id of the child with this name, or null when there is none. A provider that cannot list the folder throws: "unreadable" must never look like "missing", or a write would duplicate a file or drop a change. */
+    private static String child(Context c, Uri tree, String parentId, String name) throws IOException {
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
         try (Cursor q = c.getContentResolver().query(children, COLUMNS, null, null, null)) {
-            while (q != null && q.moveToNext()) if (name.equals(q.getString(1))) return q.getString(0);
-        } catch (RuntimeException unreadable) { }
+            if (q == null) throw new IOException("Vault unavailable");
+            while (q.moveToNext()) if (name.equals(q.getString(1))) return q.getString(0);
+        } catch (RuntimeException unreadable) { throw new IOException("Vault unavailable: " + unreadable.getMessage()); }
         return null;
     }
 
     /** Document id of the file or folder at this vault path ("Knowledge/Topics/X.md"), or null. */
-    private static String find(Context c, Uri tree, String path) {
+    private static String find(Context c, Uri tree, String path) throws IOException {
         String id = DocumentsContract.getTreeDocumentId(tree);
         for (String part : path.split("/")) { id = child(c, tree, id, part); if (id == null) return null; }
         return id;

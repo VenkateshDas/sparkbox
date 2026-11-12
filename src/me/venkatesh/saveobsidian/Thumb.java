@@ -70,7 +70,9 @@ final class Thumb {
             WAITING.put(memoryKey, list);
         }
         POOL.execute(() -> {
-            Bitmap b = get(c, e);
+            Bitmap got = null;
+            try { got = get(c, e); } catch (Throwable broken) { }
+            final Bitmap b = got; // a decode failure must still clear the waiting list, or this image is never asked for again
             if (b != null) MEMORY.put(memoryKey, b);
             main.post(() -> {
                 java.util.List<Runnable> done;
@@ -89,11 +91,11 @@ final class Thumb {
         String key = Long.toHexString(Index.key(id));
         File jpg = new File(dir, key + ".jpg"), none = new File(dir, key + ".none");
         if (jpg.exists()) return BitmapFactory.decodeFile(jpg.getPath());
-        if (none.exists() && System.currentTimeMillis() - none.lastModified() < RETRY_MS) { android.util.Log.w("sparkbox", "thumb skipped (no image recorded) for " + id); return null; }
+        if (none.exists() && System.currentTimeMillis() - none.lastModified() < RETRY_MS) return null;
         Bitmap b = null;
-        try { byte[] data = fetch(c, e); android.util.Log.w("sparkbox", "thumb bytes " + (data == null ? "null" : data.length) + " for " + id); b = scale(data); } catch (Exception offline) { android.util.Log.w("sparkbox", "thumb failed for " + id + ": " + offline); return null; } // no network now: try again next time
+        try { b = scale(fetch(c, e)); } catch (Exception offline) { return null; } // no network now: try again next time
         try {
-            if (b == null) { android.util.Log.w("sparkbox", "thumb: no image for " + id); none.createNewFile(); none.setLastModified(System.currentTimeMillis()); return null; }
+            if (b == null) { none.createNewFile(); none.setLastModified(System.currentTimeMillis()); return null; }
             try (FileOutputStream out = new FileOutputStream(jpg)) { b.compress(Bitmap.CompressFormat.JPEG, 85, out); }
         } catch (Exception ignored) { } // cache write is best effort
         return b;

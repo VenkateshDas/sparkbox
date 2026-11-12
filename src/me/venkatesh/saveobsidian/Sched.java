@@ -25,7 +25,7 @@ public final class Sched {
                 if (fresh) interval = 4; else { interval = (int) Math.round(interval * ease * 1.3); ease = ease + 0.15; }
                 break;
             default: // good
-                if (fresh) interval = 1; else if (reps == 1) interval = 3; else interval = (int) Math.round(interval * ease);
+                if (fresh) interval = 1; else if (reps == 1) interval = Math.max(3, interval + 1); else interval = (int) Math.round(interval * ease);
         }
         return new Cards.State(now + interval * DAY, interval, ease, reps + 1, lapses);
     }

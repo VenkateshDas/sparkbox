@@ -54,7 +54,7 @@ public final class CardPrompt {
     public static String apply(String note, String curiosity, String quality, List<Cards.Card> cards) {
         String t = note;
         String q = curiosity(curiosity);
-        if (!q.isEmpty() && !quality.equals(TITLE_ONLY) && !quality.equals(FAILED)) t = NoteEdit.setKey(t, "curiosity", "\"" + q.replace("\"", "'") + "\"");
+        if (!q.isEmpty() && !quality.equals(TITLE_ONLY) && !quality.equals(FAILED)) t = NoteEdit.setKey(t, "curiosity", "\"" + q.replace("\\", " ").replace("\"", "'") + "\"");
         t = NoteEdit.setKey(t, "quality", quality);
         if (!cards.isEmpty() && !quality.equals(TITLE_ONLY) && !quality.equals(FAILED)) t = Cards.add(t, cards);
         return t;

@@ -81,7 +81,9 @@ public final class IngestText {
 
     public static String newPerson(String name, String role, String sourceLink) {
         String field = role.replaceAll("\\s+", " ").trim();
-        return "---\ntype: person\nfield: " + (field.isEmpty() ? "Captured author / coauthor" : field) + "\nkey-works: []\nappears-in: ['" + sourceLink + "']\n---\n\n## Who They Are\nCaptured author / coauthor in "
+        if (field.isEmpty()) field = "Captured author / coauthor";
+        else if (field.matches("(?s).*(: | #|^[^A-Za-z0-9(]).*") || field.endsWith(":")) field = "\"" + field.replace("\\", " ").replace("\"", "'") + "\""; // a role from a web page must not break the front matter
+        return "---\ntype: person\nfield: " + field + "\nkey-works: []\nappears-in: ['" + sourceLink + "']\n---\n\n## Who They Are\nCaptured author / coauthor in "
             + sourceLink + ". Biography unverified.\n\n## Key Ideas\n- None recorded yet.\n\n## Where they appear in this vault\n- " + sourceLink + "\n";
     }
 

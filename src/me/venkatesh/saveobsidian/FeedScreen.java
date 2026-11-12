@@ -425,6 +425,7 @@ final class FeedScreen extends Screen {
     }
 
     private void openLink(String url) {
+        if (!url.matches("(?i)https?://.*")) return;
         try { host.startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (RuntimeException none) { Toast.makeText(ui.c, "No app can open this link", Toast.LENGTH_SHORT).show(); }
     }
 
