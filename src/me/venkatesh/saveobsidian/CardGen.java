@@ -14,7 +14,7 @@ import org.json.JSONObject;
  * stopped run picks up where it left off and never repeats a note. Runs in small batches, newest notes first, and stops on a provider error.
  */
 final class CardGen {
-    static final int BATCH = 10, TRIES = 3;
+    static final int BATCH = 48, WORKERS = 12, TRIES = 3;
     static final String DEFAULT_MODEL = "z-ai/glm-5.3-flash";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
     static volatile boolean stop;
@@ -70,7 +70,12 @@ final class CardGen {
     private static int tries(Context c, String path) { return prefs(c).getInt("t:" + Long.toHexString(Index.key(path)), 0); }
     private static void tried(Context c, String path, int n) { prefs(c).edit().putInt("t:" + Long.toHexString(Index.key(path)), n).apply(); }
 
-    /** One batch. Returns true when it did work, so a loop knows whether to go on. */
+    private static final class Result { Vault.Note note; Exception error; boolean skipped; }
+
+    /**
+     * One batch: up to BATCH notes, worked on by WORKERS at a time. The model calls are the slow part and are independent, so they overlap; progress
+     * (the scan that moves the count, the failure bookkeeping) is handled here one result at a time. Returns true when it did work, so a loop knows whether to go on.
+     */
     static boolean run(Context c) {
         String key = Model.key(c);
         if (key.isEmpty() || !VaultWrite.writable(c)) {
@@ -80,32 +85,58 @@ final class CardGen {
         VaultStore.Snap snap = VaultStore.cached(c);
         if (snap == null) return false;
         List<Vault.Note> todo = todo(snap);
+        final List<Vault.Note> batch = new ArrayList<>(todo.subList(0, Math.min(BATCH, todo.size())));
+        if (batch.isEmpty()) return false;
+        final java.util.concurrent.atomic.AtomicBoolean abort = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(Math.min(WORKERS, batch.size()));
+        java.util.concurrent.CompletionService<Result> finished = new java.util.concurrent.ExecutorCompletionService<>(pool);
+        for (final Vault.Note n : batch) finished.submit(() -> {
+            Result r = new Result();
+            r.note = n;
+            if (abort.get() || stop || Tagger.halt) { r.skipped = true; return r; }
+            try { process(c, key, n); } catch (Exception e) { r.error = e; }
+            return r;
+        });
         int did = 0, streak = 0;
-        for (Vault.Note n : todo) {
-            if (did >= BATCH || stop || Tagger.halt) break;
-            try {
-                process(c, key, n);
-                did++;
-                streak = 0;
-                try { VaultStore.scan(c); } catch (Exception ignored) { } // re-reads only this note, so the progress count moves note by note
-                prefs(c).edit().remove("problem").apply();
-            } catch (Provider paused) {
-                prefs(c).edit().putString("problem", paused.getMessage()).apply();
-                break;
-            } catch (VaultWrite.Stale changed) {
-                // the note was edited while the model worked: not the note's fault, so it is not counted as a failed try
-            } catch (Exception failed) {
-                if (++streak >= 3) { // three in a row points at the model or the network, not at the notes: stop before any note is marked failed
-                    prefs(c).edit().putString("problem", "Three notes failed in a row: " + failed.getMessage() + ". Check the card model in Settings.").apply();
-                    break;
+        try {
+            for (int i = 0; i < batch.size(); i++) {
+                Result r;
+                try { r = finished.take().get(); } catch (Exception interrupted) { break; }
+                if (r.skipped) continue;
+                if (r.error == null) {
+                    did++;
+                    streak = 0;
+                    try { VaultStore.scan(c); } catch (Exception ignored) { } // re-reads only the changed notes, so the progress count moves note by note
+                    prefs(c).edit().remove("problem").apply();
+                } else if (r.error instanceof Provider) {
+                    prefs(c).edit().putString("problem", r.error.getMessage()).apply();
+                    abort.set(true);
+                } else if (r.error instanceof VaultWrite.Stale) {
+                    // the note was edited while the model worked: not the note's fault, so it is not counted as a failed try
+                } else {
+                    if (++streak >= 3) { // three in a row points at the model or the network, not at the notes: stop before any note is marked failed
+                        prefs(c).edit().putString("problem", "Three notes failed in a row: " + r.error.getMessage() + ". Check the card model in Settings.").apply();
+                        abort.set(true);
+                        continue;
+                    }
+                    int n1 = tries(c, r.note.path) + 1;
+                    tried(c, r.note.path, n1);
+                    android.util.Log.w("sparkbox", "cards failed for " + r.note.path + ": " + r.error);
+                    if (n1 >= TRIES) { try { markFailed(c, r.note); } catch (Exception ignored) { } }
                 }
-                int n1 = tries(c, n.path) + 1;
-                tried(c, n.path, n1);
-                android.util.Log.w("sparkbox", "cards failed for " + n.path + ": " + failed);
-                if (n1 >= TRIES) { try { markFailed(c, n); } catch (Exception ignored) { } }
             }
-        }
+        } finally { pool.shutdownNow(); }
         return did > 0;
+    }
+
+    /** One model call. A rate limit (429) is waited out once, because several calls run at a time now. */
+    private static String call(Context c, String key, String input, boolean noReasoning) throws Exception {
+        try { return Model.complete(key, model(c), CardPrompt.SYSTEM, input, 4000, noReasoning); }
+        catch (java.io.IOException limited) {
+            if (!String.valueOf(limited.getMessage()).contains("answered 429")) throw limited;
+            Thread.sleep(4000);
+            return Model.complete(key, model(c), CardPrompt.SYSTEM, input, 4000, noReasoning);
+        }
     }
 
     private static final class Provider extends Exception { Provider(String m) { super(m); } }
@@ -125,11 +156,11 @@ final class CardGen {
         if (!input.isEmpty() && !quality.equals(CardPrompt.TITLE_ONLY)) {
             String reply;
             try {
-                try { reply = Model.complete(key, model(c), CardPrompt.SYSTEM, input, 2500, reasoningOff); }
+                try { reply = call(c, key, input, reasoningOff); }
                 catch (Model.Rejected refused) { // some models refuse the "no thinking" field: ask again without it, and remember
                     if (!reasoningOff) throw refused;
                     reasoningOff = false;
-                    reply = Model.complete(key, model(c), CardPrompt.SYSTEM, input, 2500, false);
+                    reply = call(c, key, input, false);
                 }
             }
             catch (java.io.IOException e) { if (String.valueOf(e.getMessage()).startsWith("Smart tags paused")) throw new Provider(e.getMessage().replace("Smart tags paused: ", "")); throw e; }
@@ -144,7 +175,8 @@ final class CardGen {
         }
         String after = CardPrompt.apply(before, curiosity, quality, cards);
         if (after.equals(before)) after = NoteEdit.setKey(before, "quality", quality);
-        VaultWrite.write(c, n.path, before, after); // throws Stale when the note changed meanwhile: it stays undone and is tried again
+        VaultWrite.write(c, n.path, before, after);
+        // throws Stale when the note changed meanwhile: it stays undone and is tried again
     }
 
     /** Batches until nothing is left, the owner pauses, or the provider stops it. For a foreground run. */
