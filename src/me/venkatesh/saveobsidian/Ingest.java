@@ -21,7 +21,7 @@ import org.json.JSONObject;
  * Every step is recorded as it completes, so an interrupted run resumes instead of repeating.
  */
 final class Ingest {
-    static final String DEFAULT_MODEL = "anthropic/claude-sonnet-5.5";
+    static final String DEFAULT_MODEL = "z-ai/glm-5.3-flash", OLD_DEFAULT = "anthropic/claude-sonnet-5.5";
     private static final int PAGE_FOR_MODEL = 30000, PER_RUN = 3, TRIES = 3;
 
     private static final String SYSTEM = "You are the ingest step of a personal knowledge base. You get one saved web page and the user's own note about why they saved it. "
@@ -38,7 +38,12 @@ final class Ingest {
 
     static boolean on(Context c) { return c.getSharedPreferences("capture", 0).getBoolean("ingest", false); }
     static boolean ready(Context c) { return on(c) && VaultWrite.writable(c) && !Model.key(c).isEmpty(); }
-    static String model(Context c) { return c.getSharedPreferences("capture", 0).getString("ingestModel", DEFAULT_MODEL); }
+    static String model(Context c) {
+        SharedPreferences p = c.getSharedPreferences("capture", 0);
+        String m = p.getString("ingestModel", DEFAULT_MODEL);
+        if (m.equals(OLD_DEFAULT)) { p.edit().remove("ingestModel").apply(); return DEFAULT_MODEL; } // the old default moved to GLM
+        return m;
+    }
 
     private static String today() { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()); }
     private static String entryKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.url)); }
@@ -96,7 +101,7 @@ final class Ingest {
             if (page.isEmpty()) try { page = Enrich.pageText(PageTitle.html(e.url, true)); if (page.length() > PAGE_FOR_MODEL) page = page.substring(0, PAGE_FOR_MODEL); } catch (Exception none) { }
             String user = "Existing topics: " + String.join("; ", topicNames.values()) + "\nExisting people: " + String.join("; ", peopleNames.values()) + "\nExisting entities: " + String.join("; ", entityNames.values())
                 + "\n\nTitle: " + e.heading + "\nURL: " + e.url.replaceFirst("[?#].*$", "") + "\nSummary: " + e.tldr + Enrich.notes(e.why, e.ideas) + "\nPage text:\n" + page;
-            plan = parse(Model.complete(key, model(c), SYSTEM, user, 3500));
+            plan = parse(Model.completeLean(key, model(c), SYSTEM, user, 3500));
             prog.edit().putString("plan:" + ek, plan.toString()).apply();
         } else plan = new JSONObject(saved);
 

@@ -166,6 +166,15 @@ final class Model {
         return message.isNull("content") ? "" : message.optString("content", "");
     }
 
+    private static final java.util.Set<String> NO_REASONING_FIELD = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** Asks for no hidden thinking so a reasoning model keeps its token budget for the answer; a model that refuses that field is asked again without it, and remembered. */
+    static String completeLean(String key, String model, String system, String user, int maxTokens) throws Exception {
+        if (NO_REASONING_FIELD.contains(model)) return complete(key, model, system, user, maxTokens, false);
+        try { return complete(key, model, system, user, maxTokens, true); }
+        catch (Rejected refused) { NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false); }
+    }
+
     private static String post(String path, String key, JSONObject request) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setRequestMethod("POST");
