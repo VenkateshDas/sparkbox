@@ -264,6 +264,15 @@ public class CaptureTest {
         java.util.List<Cards.Card> one = new java.util.ArrayList<>(); Cards.Card done = new Cards.Card(); done.id = "d"; done.path = "a.md"; done.state = new Cards.State(n + DAYMS, 1, 2.5, 1, 0); done.log = Cards.logWith("", n - MIN, "good", 4); one.add(done);
         check(Spark.plan(one, kept, n, utc, 7, newest).state.equals("caught_up") && Spark.plan(one, kept, n, utc, 1, newest).state.equals("caught_up") && Spark.clampCap(1) == 3 && Spark.clampCap(99) == 20);
 
+        // ---- CardPrompt: note input and quality ----
+        String src = "---\ntype: source\n---\n\n# Title\n\n## Why I captured this\nTo try.\n\n## Raw Content\n" + "word ".repeat(400) + "\n\n## Claude's Extraction\n\n### Key claims\n- One (high)\n- Two (low)\n";
+        check(CardPrompt.quality(src).equals("full") && CardPrompt.input(src).startsWith("Title: Title\nKey claims") && CardPrompt.input(src).contains("Why the owner saved it: To try.") && CardPrompt.input(src).contains("Page text:\nword word"));
+        String thinNote = "---\ntype: source\n---\n# T\n\n## Raw Content\nshort\n";
+        check(CardPrompt.quality(thinNote).equals("title_only") && CardPrompt.input("# Nothing\n").isEmpty());
+        String claimsOnly = "# T\n\n## Claude's Extraction\n\n### Key claims\n" + "- A claim that is long enough to count as text for the model to work from. ".repeat(30);
+        check(CardPrompt.quality(claimsOnly).equals("partial")); // claims alone never reach full
+        check(CardPrompt.input("# T\n\n## Raw Content\n" + "x".repeat(20000) + "\n").length() < 12100);
+
         // ---- CardPrompt ----
         java.util.List<String[]> raw = new java.util.ArrayList<>();
         raw.add(new String[]{"Why is X?", "Because Y.", "Y is true", "high"});

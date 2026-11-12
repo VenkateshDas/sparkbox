@@ -64,12 +64,12 @@ final class FeedScreen extends Screen {
         search.setOnClickListener(v -> host.select(2));
         Ui.buttonRole(search);
         head.addView(search);
-        TextView setup = ui.text("Setup", 14, Ui.MEDIUM, ui.sub); // until the Settings screen exists, this opens the existing setup and settings page
+        TextView setup = ui.text("Settings", 14, Ui.MEDIUM, ui.sub);
         setup.setMinHeight(ui.dp(48));
         setup.setMinWidth(ui.dp(48));
         setup.setGravity(Gravity.CENTER);
         setup.setPadding(ui.dp(8), 0, ui.dp(8), 0);
-        setup.setOnClickListener(v -> host.startActivity(new Intent(host, SetupActivity.class)));
+        setup.setOnClickListener(v -> host.push(new SettingsScreen()));
         Ui.buttonRole(setup);
         head.addView(setup);
         root.addView(head, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)));

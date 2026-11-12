@@ -31,6 +31,7 @@ final class Tagger {
             tag(c, key);
             backfill(c);
             if (Ingest.ready(c)) Ingest.run(c, key); else fileNotes(c); // ingest files each capture into Knowledge; the Captures folder is the lighter option
+            if (CardGen.on(c)) CardGen.run(c); // a batch of cards for existing notes, when the owner started it
             describe(c, key);
             embed(c, key);
             VaultStore.embed(c, key);
