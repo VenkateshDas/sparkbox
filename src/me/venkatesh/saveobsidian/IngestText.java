@@ -109,7 +109,7 @@ public final class IngestText {
     /** Sources/index.md: one more note in this category and one more record in total. */
     public static String sourcesIndex(String text, String category) {
         String t = text;
-        Matcher m = Pattern.compile("(\\[\\[Sources/" + Pattern.quote(category) + "/index\\|" + Pattern.quote(category) + "\\]\\] — )(\\d+)( notes)").matcher(t);
+        Matcher m = Pattern.compile("(\\[\\[(?:Knowledge/)?Sources/" + Pattern.quote(category) + "/index\\|" + Pattern.quote(category) + "\\]\\] — )(\\d+)( notes)").matcher(t);
         if (m.find()) t = t.substring(0, m.start()) + m.group(1) + (Integer.parseInt(m.group(2)) + 1) + m.group(3) + t.substring(m.end());
         m = Pattern.compile("\\*(\\d+)( source records)").matcher(t);
         if (m.find()) t = t.substring(0, m.start()) + "*" + (Integer.parseInt(m.group(1)) + 1) + m.group(2) + t.substring(m.end());

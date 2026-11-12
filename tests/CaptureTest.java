@@ -4,6 +4,8 @@ import me.venkatesh.saveobsidian.InboxFile;
 import me.venkatesh.saveobsidian.Enrich;
 import me.venkatesh.saveobsidian.Index;
 import me.venkatesh.saveobsidian.Vault;
+import me.venkatesh.saveobsidian.Layout;
+import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
@@ -70,6 +72,16 @@ public class CaptureTest {
         System.out.println("Capture and append checks passed (" + count + ").");
     }
     static void vaultChecks() {
+        Layout.detect(Arrays.asList("Sources/A/2026/x.md", "Knowledge/Topics/T.md"));
+        check(Layout.sources().equals("Sources") && Layout.inbox().equals("Sources/Inbox")); // only the old layout has notes
+        Layout.detect(Arrays.asList("Knowledge/Sources/A/2026/x.md", "Sources/A/2026/y.md"));
+        check(Layout.sources().equals("Knowledge/Sources")); // both present: the new one wins
+        Layout.detect(new ArrayList<String>());
+        check(Layout.sources().equals("Knowledge/Sources") && Layout.other("Sources/X").equals("Knowledge/Sources/X") && Layout.other("Knowledge/Sources/X").equals("Sources/X") && Layout.other("Knowledge/Topics/X") == null);
+        check(Layout.conflict("a.sync-conflict-20261112-ABC.md") && !Layout.conflict("a.md") && Layout.isInbox("Sources/Inbox") && Layout.isInbox("Knowledge/Sources/Inbox"));
+        Vault.Graph moved = Vault.build(Arrays.asList(Vault.parse("Knowledge/Sources/A/2026/2026-01-01 - One.md", 1, "# One\ntext"), Vault.parse("Sources/B/2026/2026-01-02 - Two.md", 1, "# Two\ntext")));
+        check(moved.resolve("Sources/A/2026/2026-01-01 - One") != null && moved.resolve("Knowledge/Sources/B/2026/2026-01-02 - Two") != null); // links from either side of the move
+        check(IngestText.sourcesIndex("- [[Knowledge/Sources/AI Systems/index|AI Systems]] — 120 notes\n*297 source records under", "AI Systems").contains("121 notes"));
         String topic = "---\ntype: topic\nlast-updated: 2026-11-06\nrelated-topics: ['[[AI Agent Architecture]]', '[[RAG]]']\ndescription: LLM Memory Systems\n---\n\n## Core Mechanism\nPlain.\n"
             + "| Claim | Source |\n|---|---|\n| Memory | [[Sources/AI Systems/2026/2026-04-12 - Harness\\|Harness]] |\n";
         Vault.Note t = Vault.parse("Knowledge/Topics/LLM Memory Systems.md", 5, "\uFEFF" + topic.replace("\n", "\r\n"));

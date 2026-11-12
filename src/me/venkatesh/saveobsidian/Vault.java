@@ -286,6 +286,8 @@ public final class Vault {
             String t = stripMd(target.replace('\\', '/')).toLowerCase(Locale.ROOT);
             Note exact = byPath.get(t);
             if (exact != null) return exact;
+            String moved = Layout.other(stripMd(target.replace('\\', '/'))); // a link written before or after Sources moved into Knowledge
+            if (moved != null && byPath.get(moved.toLowerCase(Locale.ROOT)) != null) return byPath.get(moved.toLowerCase(Locale.ROOT));
             List<Note> same = byName.get(name(t));
             return same != null && same.size() == 1 && t.indexOf('/') < 0 ? same.get(0) : null;
         }

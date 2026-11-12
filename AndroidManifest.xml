@@ -45,6 +45,8 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+        <!-- The new shell. Becomes the launcher once Feed is built (Phase 1); until then start it with adb. -->
+        <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="true" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".DashboardActivity" android:exported="false" />
         <activity android:name=".VaultActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".AskActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />

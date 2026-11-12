@@ -99,7 +99,7 @@ final class VaultStore {
         for (Row r : children(c, tree, dir.id)) {
             String p = path + "/" + r.name;
             if (r.dir) { walk(c, tree, r, p, old, fresh, counts); continue; }
-            if (!r.name.endsWith(".md") || p.equals("Sources/Inbox.md") || r.size > MAX_NOTE) continue;
+            if (!r.name.endsWith(".md") || Layout.conflict(r.name) || p.equals(Layout.NEW + "/Inbox.md") || p.equals(Layout.OLD + "/Inbox.md") || r.size > MAX_NOTE) continue;
             Cached known = old.get(p);
             if (known != null && known.size == r.size && known.note.mtime == r.modified && known.id.equals(r.id)) { fresh.put(p, known); counts[1]++; continue; }
             try {
@@ -129,6 +129,7 @@ final class VaultStore {
         List<Vault.Note> notes = new ArrayList<>();
         Map<String, String> ids = new HashMap<>();
         for (Cached k : all) { notes.add(k.note); ids.put(k.note.path, k.id); }
+        Layout.detect(ids.keySet());
         return new Snap(Vault.build(notes), ids, Uri.parse(tree(c)));
     }
 

@@ -102,7 +102,7 @@ final class Ingest {
         String title = IngestText.safe(e.heading.isEmpty() ? e.title : e.heading), cat = IngestText.category(plan.optString("category"));
         String captured = e.time.length() >= 10 ? e.time.substring(0, 10) : today(), now = today();
         String file = Enrich.noteName(e.time, title), stem = file.substring(0, file.length() - 3);
-        String sourcePath = "Sources/" + cat + "/" + captured.substring(0, 4) + "/" + file, sourceLink = "[[" + sourcePath.substring(0, sourcePath.length() - 3) + "]]";
+        String sourcePath = Layout.sources() + "/" + cat + "/" + captured.substring(0, 4) + "/" + file, sourceLink = "[[" + sourcePath.substring(0, sourcePath.length() - 3) + "]]";
         String year = captured.substring(0, 4);
 
         List<Topic> topics = new ArrayList<>();
@@ -188,13 +188,13 @@ final class Ingest {
             step(prog, ek, done, "kidx");
         }
         if (!done.contains("sidx")) {
-            String text = VaultWrite.read(c, "Sources/index.md");
-            if (text != null) VaultWrite.write(c, "Sources/index.md", text, IngestText.sourcesIndex(text, cat));
+            String text = VaultWrite.read(c, Layout.sources() + "/index.md");
+            if (text != null) VaultWrite.write(c, Layout.sources() + "/index.md", text, IngestText.sourcesIndex(text, cat));
             step(prog, ek, done, "sidx");
         }
         if (!done.contains("cidx")) {
-            String text = VaultWrite.read(c, "Sources/" + cat + "/index.md");
-            if (text != null) VaultWrite.write(c, "Sources/" + cat + "/index.md", text, IngestText.categoryIndex(text, sourceLink));
+            String text = VaultWrite.read(c, Layout.sources() + "/" + cat + "/index.md");
+            if (text != null) VaultWrite.write(c, Layout.sources() + "/" + cat + "/index.md", text, IngestText.categoryIndex(text, sourceLink));
             step(prog, ek, done, "cidx");
         }
         if (!done.contains("log")) {
