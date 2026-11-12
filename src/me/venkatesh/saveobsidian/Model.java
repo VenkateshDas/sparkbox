@@ -155,9 +155,13 @@ final class Model {
     }
 
     /** One non-streamed completion; the reply text. For Ingest, which asks for JSON. */
-    static String complete(String key, String model, String system, String user, int maxTokens) throws Exception {
+    static String complete(String key, String model, String system, String user, int maxTokens) throws Exception { return complete(key, model, system, user, maxTokens, false); }
+
+    /** noReasoning asks the provider to skip hidden thinking, which a reasoning model would otherwise spend the whole token budget on. Models without it ignore the field. */
+    static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning) throws Exception {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
             .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
+        if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
         JSONObject message = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0).getJSONObject("message");
         return message.isNull("content") ? "" : message.optString("content", "");
     }

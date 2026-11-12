@@ -42,11 +42,13 @@ public class MainActivity extends Activity {
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
         for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
         draw();
+        CardGen.resume(this);
+        Reminder.schedule(this);
         if (state == null) handleIntent(getIntent());
     }
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
-    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : index == 3 ? new AskScreen() : new Placeholder(NAMES[index]); }
+    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : index == 3 ? new AskScreen() : index == 1 ? new SparkScreen() : new Placeholder(NAMES[index]); }
 
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); }
 

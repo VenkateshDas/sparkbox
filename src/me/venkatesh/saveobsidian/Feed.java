@@ -24,7 +24,8 @@ public final class Feed {
     public static final class Item {
         public String kind, status = "", lane = "", title = "", path = "", sourceName = "", curiosity = "", why = "", made = "", age = "", waiting = "", url = "", tldr = "";
         /** Source notes a topic gained recently, mentions of a person. */
-        public int count;
+        public int count, cards;
+        public boolean kept;
         /** Epoch minute of the capture (or the start of its day when only a date is known) and the tie-break. */
         long minute, tie;
         /** The inbox entry for a capture that has no note yet. */
@@ -116,6 +117,8 @@ public final class Feed {
             it.status = n.processed() ? PROCESSED : INGESTED;
             it.lane = Lane.of(n.path, n.meta);
             it.curiosity = n.meta("curiosity");
+            it.cards = n.cardsText.isEmpty() ? 0 : Cards.parse(n.path, n.cardsText).size();
+            it.kept = n.meta("kept").equalsIgnoreCase("true");
             it.tldr = n.description.equals(n.title) ? "" : n.description.replaceAll("\\s*\\((high|medium|low)\\)\\s*$", ""); // the confidence tag is for the Unit screen
             it.why = n.why.startsWith("Reason was not recorded") ? "" : n.why; // the agent writes this placeholder when the owner gave no reason
             it.made = made(n);

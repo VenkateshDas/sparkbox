@@ -169,6 +169,7 @@ final class FeedScreen extends Screen {
         rows.clear();
         List<Attention> need = attention();
         boolean all = chip.equals("All");
+        if (all) { Spark.Plan plan = SparkScreen.plan(ui); if (!plan.queue.isEmpty()) rows.add(plan); }
         if (!need.isEmpty() && all) { rows.add(new Heading("Needs attention (" + need.size() + ")")); rows.addAll(need); }
         List<Feed.Item> shown = Feed.filter(items, chip);
         if (!need.isEmpty() && all && !shown.isEmpty()) rows.add(new Heading("Latest"));
@@ -229,18 +230,37 @@ final class FeedScreen extends Screen {
         @Override public int getCount() { return rows.size(); }
         @Override public Object getItem(int i) { return rows.get(i); }
         @Override public long getItemId(int i) { return i; }
-        @Override public int getViewTypeCount() { return 4; }
+        @Override public int getViewTypeCount() { return 5; }
         @Override public int getItemViewType(int i) {
             Object r = rows.get(i);
-            return r instanceof Heading ? 0 : r instanceof Attention ? 1 : r instanceof Feed.Item ? 2 : 3;
+            return r instanceof Heading ? 0 : r instanceof Attention ? 1 : r instanceof Feed.Item ? 2 : r instanceof Spark.Plan ? 4 : 3;
         }
         @Override public View getView(int i, View reuse, ViewGroup parent) {
             Object r = rows.get(i);
             if (r instanceof Heading) return heading(((Heading) r).text);
             if (r instanceof Attention) return attentionCard((Attention) r);
             if (r instanceof Feed.Item) return itemCard((Feed.Item) r);
+            if (r instanceof Spark.Plan) return strip((Spark.Plan) r);
             return emptyState(String.valueOf(r));
         }
+    }
+
+    /** "Morning Spark": what is due today and a way in. */
+    private View strip(Spark.Plan plan) {
+        LinearLayout card = card();
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout text = new LinearLayout(ui.c);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.addView(ui.text("Morning Spark", 17, Ui.BOLD, ui.ink));
+        int n = plan.queue.size();
+        text.addView(ui.text(n + (n == 1 ? " card" : " cards") + " due, about " + plan.minutes() + " min", 13, Typeface.DEFAULT, ui.sub));
+        card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView start = ui.button("Start", true, v -> host.select(1));
+        start.setMinWidth(ui.dp(96));
+        card.addView(start);
+        card.setOnClickListener(v -> host.select(1));
+        return wrap(card);
     }
 
     private View heading(String text) {
@@ -386,6 +406,7 @@ final class FeedScreen extends Screen {
         if (!it.why.isEmpty()) card.addView(ui.text("Why saved: " + it.why, 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
         if (!it.waiting.isEmpty()) card.addView(ui.text(it.waiting, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (!it.made.isEmpty()) card.addView(ui.text(it.made, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        if (it.cards > 0) card.addView(ui.text(it.cards + (it.cards == 1 ? " card" : " cards") + (it.kept ? ", up first in Spark" : ""), 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
 
         View rule = new View(ui.c);
         rule.setBackgroundColor(ui.line);
@@ -394,6 +415,7 @@ final class FeedScreen extends Screen {
         card.addView(rule, rp);
         LinearLayout bar = new LinearLayout(ui.c);
         if (it.entry == null) bar.addView(action("Ask", R.drawable.ic_nav_ask, v -> host.ask("Tell me about " + it.title)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        if (it.cards > 0) bar.addView(action(it.kept ? "Kept" : "Keep", R.drawable.ic_keep, v -> { it.kept = !it.kept; CardStore.keep(ui.c, it.path, it.kept); drawRows(); }), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         if (!it.url.isEmpty()) bar.addView(action("Open", R.drawable.ic_open, v -> openLink(it.url)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         String shared = it.url.isEmpty() ? it.title : it.title + "\n" + it.url;
         bar.addView(action("Share", R.drawable.ic_share, v -> host.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shared), null))), new LinearLayout.LayoutParams(0, ui.dp(48), 1));

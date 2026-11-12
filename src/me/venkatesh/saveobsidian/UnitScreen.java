@@ -118,6 +118,9 @@ final class UnitScreen extends Screen {
         addMine(n);
 
         addedFrom(n);
+        int cardCount = 0;
+        for (Cards.Card k : CardStore.all(ui.c)) if (k.path.equals(n.path)) cardCount++;
+        page.addView(row("Cards", cardCount == 0 ? "None yet" : cardCount + (cardCount == 1 ? " card" : " cards"), v -> host.push(new CardsScreen(n.path))), ui.lp(12));
 
         if (n.words > 0) page.addView(row("Full text", n.words + " words", v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))), ui.lp(12));
         else page.addView(row("Open note", "", v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))), ui.lp(12));

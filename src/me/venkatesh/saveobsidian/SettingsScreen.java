@@ -62,6 +62,16 @@ final class SettingsScreen extends Screen {
         int[] p = snap == null ? new int[]{0, 0} : CardGen.progress(snap);
         String state = CardGen.on(ui.c) ? (CardGen.running() ? "Making cards " + p[0] + " of " + p[1] : "Paused at " + p[0] + " of " + p[1]) : p[0] > 0 && p[0] >= p[1] ? "All notes done" : "Not started";
         spark.addView(row("Make cards for existing notes", state, v -> host.push(new CardGenScreen())));
+        spark.addView(row("Daily reminder", Reminder.on(ui.c) ? Reminder.time(ui.c) : "Off", v -> {
+            if (Reminder.on(ui.c)) { ui.c.getSharedPreferences("capture", 0).edit().putBoolean("reminderOn", false).apply(); Reminder.schedule(ui.c); draw(); return; }
+            if (android.os.Build.VERSION.SDK_INT >= 33 && host.checkSelfPermission("android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED) host.requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 3);
+            int m = Reminder.minutes(ui.c);
+            new android.app.TimePickerDialog(host, (picker, h, min) -> {
+                ui.c.getSharedPreferences("capture", 0).edit().putBoolean("reminderOn", true).putInt("reminderAt", h * 60 + min).apply();
+                Reminder.schedule(ui.c);
+                draw();
+            }, m / 60, m % 60, true).show();
+        }));
         int cap = ui.c.getSharedPreferences("capture", 0).getInt("cardsPerDay", Spark.CAP_DEFAULT);
         spark.addView(row("Cards per day", String.valueOf(cap), v -> {
             int next = cap >= Spark.CAP_MAX ? Spark.CAP_MIN : cap + 1;

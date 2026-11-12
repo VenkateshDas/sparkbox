@@ -15,8 +15,10 @@ import org.json.JSONObject;
  */
 final class CardGen {
     static final int BATCH = 10, TRIES = 3;
+    static final String DEFAULT_MODEL = "z-ai/glm-5.3-flash";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
     static volatile boolean stop;
+    private static volatile boolean reasoningOff = true;
 
     private CardGen() { }
 
@@ -27,7 +29,12 @@ final class CardGen {
     static String problem(Context c) { return prefs(c).getString("problem", ""); }
     static boolean running() { return RUNNING.get(); }
 
-    static String model(Context c) { return c.getSharedPreferences("capture", 0).getString("cardModel", Ask.DEFAULT); }
+    /** Picks the run back up when the app opens, if the owner started it and has not paused it. */
+    static void resume(Context c) {
+        if (on(c) && !running()) { final Context app = c.getApplicationContext(); new Thread(() -> loop(app)).start(); }
+    }
+
+    static String model(Context c) { return c.getSharedPreferences("capture", 0).getString("cardModel", DEFAULT_MODEL); }
 
     /** Source notes eligible for cards: the notes themselves, not indexes, the inbox or the owner's own card file. */
     private static boolean eligible(Vault.Note n) { return Layout.inSources(n.path) && !n.catalog && !n.path.endsWith("/My cards.md") && !n.path.endsWith("/Inbox.md"); }
@@ -110,10 +117,17 @@ final class CardGen {
         List<Cards.Card> cards = new ArrayList<>();
         if (!input.isEmpty() && !quality.equals(CardPrompt.TITLE_ONLY)) {
             String reply;
-            try { reply = Model.complete(key, model(c), CardPrompt.SYSTEM, input, 1200); }
+            try {
+                try { reply = Model.complete(key, model(c), CardPrompt.SYSTEM, input, 2500, reasoningOff); }
+                catch (Model.Rejected refused) { // some models refuse the "no thinking" field: ask again without it, and remember
+                    if (!reasoningOff) throw refused;
+                    reasoningOff = false;
+                    reply = Model.complete(key, model(c), CardPrompt.SYSTEM, input, 2500, false);
+                }
+            }
             catch (java.io.IOException e) { if (String.valueOf(e.getMessage()).startsWith("Smart tags paused")) throw new Provider(e.getMessage().replace("Smart tags paused: ", "")); throw e; }
             int from = reply.indexOf('{'), to = reply.lastIndexOf('}');
-            if (from < 0 || to <= from) throw new java.io.IOException("The model did not return JSON");
+            if (from < 0 || to <= from) throw new java.io.IOException("The model did not return JSON: " + (reply.length() > 160 ? reply.substring(0, 160) : reply));
             JSONObject o = new JSONObject(reply.substring(from, to + 1));
             curiosity = o.optString("curiosity_question");
             List<String[]> proposed = new ArrayList<>();
