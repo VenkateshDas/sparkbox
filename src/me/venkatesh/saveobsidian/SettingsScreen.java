@@ -126,7 +126,6 @@ final class SettingsScreen extends Screen {
 
         LinearLayout more = group("More");
         more.addView(row("Browse vault", "", v -> host.startActivity(new Intent(host, VaultActivity.class))));
-        more.addView(row("Recovery and backups", "", v -> host.startActivity(new Intent(host, SetupActivity.class)))); // the edit-recovery and capture-backup tools
     }
 
     private android.content.SharedPreferences prefs() { return ui.c.getSharedPreferences("capture", 0); }

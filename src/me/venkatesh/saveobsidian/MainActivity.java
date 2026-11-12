@@ -76,6 +76,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        InboxWidget.refresh(this); // the widget shows the inbox as it is now
         new Thread(() -> VaultWrite.healInbox(getApplicationContext())).start(); // sets the inbox from the vault folder, or repairs it after a move
         if (Ui.dark(this) != dark) { draw(); return; } // the Theme setting changed while another screen was open
         current().onShow();

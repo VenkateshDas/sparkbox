@@ -52,7 +52,7 @@ public class InboxWidget extends AppWidgetProvider {
 
     private static Stats read(Context context) {
         Stats s = new Stats();
-        if (context.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) { s.message = "Choose an inbox in the app"; return s; }
+        if (context.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) { s.message = "Choose your vault folder in the app"; return s; }
         try {
             List<InboxFile.Entry> entries = InboxFile.parse(CaptureService.readText(context));
             LocalDate today = LocalDate.now(), first = null;
@@ -69,11 +69,11 @@ public class InboxWidget extends AppWidgetProvider {
             if (first != null) s.oldest = ChronoUnit.DAYS.between(first, today);
             for (int i = 0; i < 3 && i < entries.size(); i++) {
                 InboxFile.Entry e = entries.get(entries.size() - 1 - i);
-                s.title[i] = e.title.isEmpty() ? e.file : e.title;
+                s.title[i] = !e.shownTitle().isEmpty() ? e.shownTitle() : e.file; // the model-written title once tagged, not the raw link
                 String kind = !e.file.isEmpty() ? "File" : e.text ? "Note" : "Link";
                 s.meta[i] = kind + " · " + Ui.when(e).toLowerCase(java.util.Locale.getDefault());
             }
-        } catch (Exception unreadable) { s.message = "Reconnect the inbox in the app"; }
+        } catch (Exception unreadable) { s.message = "Open Sparkbox to reconnect the vault"; }
         return s;
     }
 
