@@ -70,17 +70,33 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(ui.bg);
-        Ui.insets(root);
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         View line = new View(this);
         line.setBackgroundColor(ui.line);
         root.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1));
+        final View navLine = line;
         nav = new LinearLayout(this);
         nav.setBackgroundColor(ui.bg);
         for (int i = 0; i < NAMES.length; i++) nav.addView(navItem(i), new LinearLayout.LayoutParams(0, ui.dp(64), 1));
         root.addView(nav);
         setContentView(root);
+        // System bars pad the shell. While the keyboard is open the tab bar steps aside, so typing never floats it above the keys.
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            boolean keyboard = false;
+            int left, top, right, bottom;
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() | android.view.WindowInsets.Type.displayCutout());
+                keyboard = insets.isVisible(android.view.WindowInsets.Type.ime());
+                android.graphics.Insets ime = insets.getInsets(android.view.WindowInsets.Type.ime());
+                left = bars.left; top = bars.top; right = bars.right; bottom = keyboard ? ime.bottom : bars.bottom;
+            } else { left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop(); right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom(); }
+            v.setPadding(left, top, right, bottom);
+            nav.setVisibility(keyboard ? View.GONE : View.VISIBLE);
+            navLine.setVisibility(keyboard ? View.GONE : View.VISIBLE);
+            return insets;
+        });
+        root.requestApplyInsets();
         for (int i = 0; i < built.length; i++) built[i] = null;
         List<Screen> keep = new ArrayList<>(stack);
         stack.clear();
@@ -89,14 +105,23 @@ public class MainActivity extends Activity {
         showTab();
     }
 
+    /** One bottom-bar item: a 24 dp icon over a 12 sp label, centred together in a 64 dp cell. */
     private View navItem(int i) {
         boolean on = i == tab;
         int color = on ? ui.accent : ui.sub;
-        TextView item = ui.text(NAMES[i], 12, on ? Ui.BOLD : Ui.MEDIUM, color);
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER);
-        item.setCompoundDrawablePadding(ui.dp(2));
-        item.setCompoundDrawablesRelativeWithIntrinsicBounds(0, ICONS[i], 0, 0);
-        item.setCompoundDrawableTintList(ColorStateList.valueOf(color));
+        android.widget.ImageView icon = new android.widget.ImageView(this);
+        icon.setImageResource(ICONS[i]);
+        icon.setImageTintList(ColorStateList.valueOf(color));
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        item.addView(icon, new LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)));
+        TextView label = ui.text(NAMES[i], 12, on ? Ui.BOLD : Ui.MEDIUM, color);
+        label.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = ui.dp(4);
+        item.addView(label, lp);
         item.setContentDescription(NAMES[i]);
         item.setSelected(on);
         item.setOnClickListener(v -> select(i));
