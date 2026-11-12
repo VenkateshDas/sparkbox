@@ -60,9 +60,11 @@ final class PageTitle {
     /** Bounded HTTPS image download (2 MB max, same host and redirect rules as html()), or null. */
     static byte[] image(String original) throws Exception {
         URL current = new URL(original);
-        long deadline = System.currentTimeMillis() + 8000;
+        long deadline = System.currentTimeMillis() + 20000; // the host look-ups can take seconds on a slow network
+        android.util.Log.w("sparkbox", "image start " + original);
         for (int redirects = 0; redirects <= 4; redirects++) {
-            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null || !publicHost(current.getHost())) return null;
+            boolean known = current.getHost().endsWith(".ytimg.com"); // YouTube's own image host: no need to resolve it twice to prove it is public
+            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null || (!known && !publicHost(current.getHost()))) { android.util.Log.w("sparkbox", "image refused: " + current.getHost()); return null; }
             HttpURLConnection connection = (HttpURLConnection) current.openConnection();
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(2500);
@@ -72,23 +74,24 @@ final class PageTitle {
                 int code = connection.getResponseCode();
                 if (code >= 300 && code < 400) {
                     String location = connection.getHeaderField("Location");
-                    if (location == null) return null;
+                    if (location == null) { android.util.Log.w("sparkbox", "image: redirect without location"); return null; }
                     current = new URL(current, location);
                     continue;
                 }
                 String type = connection.getContentType();
-                if (code != 200 || type == null || !type.toLowerCase(Locale.ROOT).startsWith("image/")) return null;
+                if (code != 200 || type == null || !type.toLowerCase(Locale.ROOT).startsWith("image/")) { android.util.Log.w("sparkbox", "image http " + code + " " + type + " " + current); return null; }
                 try (InputStream input = connection.getInputStream(); ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
                     byte[] buffer = new byte[8192];
                     int size;
                     while ((size = input.read(buffer)) != -1) {
                         bytes.write(buffer, 0, size);
-                        if (bytes.size() > 2 * 1024 * 1024 || System.currentTimeMillis() > deadline) return null;
+                        if (bytes.size() > 2 * 1024 * 1024 || System.currentTimeMillis() > deadline) { android.util.Log.w("sparkbox", "image: too big or too slow " + current + " bytes=" + bytes.size() + " left=" + (deadline - System.currentTimeMillis())); return null; }
                     }
                     return bytes.toByteArray();
                 }
             } finally { connection.disconnect(); }
         }
+        android.util.Log.w("sparkbox", "image: too many redirects " + original);
         return null;
     }
 

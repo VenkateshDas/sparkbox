@@ -29,6 +29,14 @@ final class Thumb {
     private static final ExecutorService POOL = Executors.newFixedThreadPool(3);
     private static final long RETRY_MS = 3L * 24 * 3600 * 1000; // a page with no image is asked again after 3 days
 
+    private static final android.util.LruCache<String, Bitmap> MEMORY = new android.util.LruCache<>(24);
+    private static final java.util.Map<String, java.util.List<Runnable>> WAITING = new java.util.HashMap<>();
+
+    /** Thumbnail for a link with no inbox entry (a Source note's own URL). */
+    static View view(Context c, Ui ui, String title, String url, int widthDp, int heightDp) {
+        return view(c, ui, new InboxFile.Entry(0, "", title, url, "", "", "", "", "", false, "", "", "", "", ""), widthDp, heightDp);
+    }
+
     /** Square or banner view: tile first, image swapped in when loaded. */
     static View view(Context c, Ui ui, InboxFile.Entry e, int widthDp, int heightDp) {
         String seed = e.file.isEmpty() ? (e.url.isEmpty() ? e.type + e.title : Ui.host(e.url)) : e.file;
@@ -50,9 +58,25 @@ final class Thumb {
         box.setLayoutParams(new ViewGroup.LayoutParams(widthDp > 0 ? ui.dp(widthDp) : ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(heightDp)));
         box.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         Handler main = new Handler(Looper.getMainLooper());
+        String memoryKey = e.file.isEmpty() ? e.url : e.file;
+        Bitmap seen = memoryKey.isEmpty() ? null : MEMORY.get(memoryKey);
+        if (seen != null) { image.setImageBitmap(seen); letter.setVisibility(View.GONE); return box; } // already loaded this session: no work while scrolling
+        Runnable show = () -> { Bitmap b = MEMORY.get(memoryKey); if (b != null) { image.setImageBitmap(b); letter.setVisibility(View.GONE); } };
+        synchronized (WAITING) {
+            java.util.List<Runnable> list = WAITING.get(memoryKey);
+            if (list != null) { list.add(show); return box; } // this image is already being fetched: wait for it instead of starting a second fetch
+            list = new java.util.ArrayList<>();
+            list.add(show);
+            WAITING.put(memoryKey, list);
+        }
         POOL.execute(() -> {
             Bitmap b = get(c, e);
-            if (b != null) main.post(() -> { image.setImageBitmap(b); letter.setVisibility(View.GONE); });
+            if (b != null) MEMORY.put(memoryKey, b);
+            main.post(() -> {
+                java.util.List<Runnable> done;
+                synchronized (WAITING) { done = WAITING.remove(memoryKey); }
+                if (b != null && done != null) for (Runnable r : done) r.run();
+            });
         });
         return box;
     }
@@ -60,16 +84,16 @@ final class Thumb {
     static Bitmap get(Context c, InboxFile.Entry e) {
         String id = e.file.isEmpty() ? e.url : e.file;
         if (id.isEmpty() || e.text) return null;
-        File dir = new File(c.getCacheDir(), "thumbs");
+        File dir = new File(c.getCacheDir(), "thumbs6");
         dir.mkdirs();
         String key = Long.toHexString(Index.key(id));
         File jpg = new File(dir, key + ".jpg"), none = new File(dir, key + ".none");
         if (jpg.exists()) return BitmapFactory.decodeFile(jpg.getPath());
-        if (none.exists() && System.currentTimeMillis() - none.lastModified() < RETRY_MS) return null;
+        if (none.exists() && System.currentTimeMillis() - none.lastModified() < RETRY_MS) { android.util.Log.w("sparkbox", "thumb skipped (no image recorded) for " + id); return null; }
         Bitmap b = null;
-        try { b = scale(fetch(c, e)); } catch (Exception offline) { return null; } // no network now: try again next time
+        try { byte[] data = fetch(c, e); android.util.Log.w("sparkbox", "thumb bytes " + (data == null ? "null" : data.length) + " for " + id); b = scale(data); } catch (Exception offline) { android.util.Log.w("sparkbox", "thumb failed for " + id + ": " + offline); return null; } // no network now: try again next time
         try {
-            if (b == null) { none.createNewFile(); none.setLastModified(System.currentTimeMillis()); return null; }
+            if (b == null) { android.util.Log.w("sparkbox", "thumb: no image for " + id); none.createNewFile(); none.setLastModified(System.currentTimeMillis()); return null; }
             try (FileOutputStream out = new FileOutputStream(jpg)) { b.compress(Bitmap.CompressFormat.JPEG, 85, out); }
         } catch (Exception ignored) { } // cache write is best effort
         return b;

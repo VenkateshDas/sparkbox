@@ -300,26 +300,80 @@ final class FeedScreen extends Screen {
         return wrap(card);
     }
 
+    /** A round letter badge in the source's colour, like a profile picture on a post. */
+    private View avatar(String seed, String glyph) {
+        float[] hsv = {Math.abs(seed.hashCode()) % 360, ui.dark ? 0.35f : 0.25f, ui.dark ? 0.38f : 0.92f};
+        android.graphics.drawable.GradientDrawable disc = new android.graphics.drawable.GradientDrawable();
+        disc.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        disc.setColor(android.graphics.Color.HSVToColor(hsv));
+        TextView v = ui.text(glyph, 15, Ui.BOLD, ui.dark ? 0xFFDDDDDD : 0xFF444444);
+        v.setGravity(Gravity.CENTER);
+        v.setBackground(disc);
+        v.setLayoutParams(new LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)));
+        return v;
+    }
+
+    /** One action under a post: icon and short label side by side, centred, 48 dp tall, spread evenly. */
+    private View action(String label, int icon, View.OnClickListener click) {
+        LinearLayout v = new LinearLayout(ui.c);
+        v.setGravity(Gravity.CENTER);
+        v.setMinimumHeight(ui.dp(48));
+        android.widget.ImageView image = new android.widget.ImageView(ui.c);
+        image.setImageResource(icon);
+        image.setImageTintList(android.content.res.ColorStateList.valueOf(ui.sub));
+        image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        v.addView(image, new LinearLayout.LayoutParams(ui.dp(20), ui.dp(20)));
+        TextView text = ui.text(label, 14, Ui.MEDIUM, ui.sub);
+        text.setPadding(ui.dp(8), 0, 0, 0);
+        v.addView(text);
+        v.setBackground(ui.ripple(null));
+        v.setOnClickListener(click);
+        v.setContentDescription(label);
+        Ui.buttonRole(v);
+        return v;
+    }
+
+    /** A feed card built like a social post: who and when on top, the title and tldr, a link preview image, then a row of actions. */
     private View itemCard(Feed.Item it) {
         LinearLayout card = card();
-        LinearLayout top = new LinearLayout(ui.c);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        if (it.kind.equals(Feed.SOURCE)) top.addView(ui.chip(it.status, it.status.equals(Feed.PROCESSED) ? 1 : 0));
-        else top.addView(ui.chip(it.kind.equals(Feed.TOPIC) ? "Topic" : "Person", 0));
-        if (!it.lane.isEmpty()) {
-            top.addView(new View(ui.c), new LinearLayout.LayoutParams(ui.dp(8), 1));
-            top.addView(ui.chip(it.lane, 0));
-        }
-        top.addView(new View(ui.c), new LinearLayout.LayoutParams(0, 1, 1));
-        String right = it.kind.equals(Feed.TOPIC) ? it.count + " new sources" : it.age;
-        if (!right.isEmpty()) top.addView(ui.text(right, 12, Typeface.DEFAULT, ui.sub));
-        card.addView(top);
+        card.setPadding(ui.dp(16), ui.dp(12), ui.dp(16), 0);
+        boolean source = it.kind.equals(Feed.SOURCE), topic = it.kind.equals(Feed.TOPIC);
+
+        LinearLayout byline = new LinearLayout(ui.c);
+        byline.setGravity(Gravity.CENTER_VERTICAL);
+        String who = source ? (it.sourceName.isEmpty() ? "Note" : it.sourceName) : topic ? "Topic" : "Person";
+        byline.addView(avatar(who, who.substring(0, 1).toUpperCase()));
+        LinearLayout names = new LinearLayout(ui.c);
+        names.setOrientation(LinearLayout.VERTICAL);
+        names.setPadding(ui.dp(12), 0, ui.dp(8), 0);
+        TextView name = ui.text(who, 15, Ui.BOLD, ui.ink);
+        name.setSingleLine(true);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        names.addView(name);
+        String when = topic ? it.count + " new sources" : it.age;
+        String line = (when.isEmpty() ? "" : when) + (it.lane.isEmpty() ? "" : (when.isEmpty() ? "" : " · ") + it.lane);
+        if (!line.isEmpty()) names.addView(ui.text(line, 12, Typeface.DEFAULT, ui.sub));
+        byline.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        if (source) byline.addView(ui.chip(it.status, it.status.equals(Feed.PROCESSED) ? 1 : 0));
+        card.addView(byline);
+
         TextView title = ui.text(it.title, 17, Ui.BOLD, ui.ink);
         title.setMaxLines(3);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        card.addView(title, ui.lp(8));
-        if (it.kind.equals(Feed.PERSON)) card.addView(ui.text("Mentioned in " + it.count + (it.count == 1 ? " note" : " notes"), 13, Typeface.DEFAULT, ui.sub), ui.lp(4));
-        if (!it.sourceName.isEmpty()) card.addView(ui.text(it.sourceName, 13, Typeface.DEFAULT, ui.sub), ui.lp(4));
+        card.addView(title, ui.lp(12));
+        if (it.kind.equals(Feed.PERSON)) card.addView(ui.text("Mentioned in " + it.count + (it.count == 1 ? " note" : " notes"), 14, Typeface.DEFAULT, ui.sub), ui.lp(4));
+        if (!it.tldr.isEmpty()) {
+            TextView tldr = ui.text(it.tldr, 15, Typeface.DEFAULT, ui.ink);
+            tldr.setMaxLines(4);
+            tldr.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            card.addView(tldr, ui.lp(8));
+        }
+        if (source && !it.url.isEmpty()) {
+            View pic = Thumb.view(ui.c, ui, it.title, it.url, 0, 180);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(180));
+            p.topMargin = ui.dp(12);
+            card.addView(pic, p);
+        }
         if (!it.curiosity.isEmpty()) {
             LinearLayout q = new LinearLayout(ui.c);
             q.setOrientation(LinearLayout.VERTICAL);
@@ -332,15 +386,24 @@ final class FeedScreen extends Screen {
         if (!it.why.isEmpty()) card.addView(ui.text("Why saved: " + it.why, 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
         if (!it.waiting.isEmpty()) card.addView(ui.text(it.waiting, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (!it.made.isEmpty()) card.addView(ui.text(it.made, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
-        if (it.entry == null) {
-            TextView ask = ui.button("Ask", false, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, "Tell me about " + it.title)));
-            ask.setMinWidth(ui.dp(96));
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            p.topMargin = ui.dp(12);
-            card.addView(ask, p);
-        }
+
+        View rule = new View(ui.c);
+        rule.setBackgroundColor(ui.line);
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1);
+        rp.topMargin = ui.dp(12);
+        card.addView(rule, rp);
+        LinearLayout bar = new LinearLayout(ui.c);
+        if (it.entry == null) bar.addView(action("Ask", R.drawable.ic_nav_ask, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, "Tell me about " + it.title))), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        if (!it.url.isEmpty()) bar.addView(action("Open", R.drawable.ic_open, v -> openLink(it.url)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        String shared = it.url.isEmpty() ? it.title : it.title + "\n" + it.url;
+        bar.addView(action("Share", R.drawable.ic_share, v -> host.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shared), null))), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        card.addView(bar);
         card.setOnClickListener(v -> open(it));
         return wrap(card);
+    }
+
+    private void openLink(String url) {
+        try { host.startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); } catch (RuntimeException none) { Toast.makeText(ui.c, "No app can open this link", Toast.LENGTH_SHORT).show(); }
     }
 
     private void open(Feed.Item it) {

@@ -22,7 +22,7 @@ public final class Feed {
     public static final String CAPTURED = "Captured", INGESTED = "Ingested", PROCESSED = "Processed";
 
     public static final class Item {
-        public String kind, status = "", lane = "", title = "", path = "", sourceName = "", curiosity = "", why = "", made = "", age = "", waiting = "", url = "";
+        public String kind, status = "", lane = "", title = "", path = "", sourceName = "", curiosity = "", why = "", made = "", age = "", waiting = "", url = "", tldr = "";
         /** Source notes a topic gained recently, mentions of a person. */
         public int count;
         /** Epoch minute of the capture (or the start of its day when only a date is known) and the tie-break. */
@@ -116,6 +116,7 @@ public final class Feed {
             it.status = n.processed() ? PROCESSED : INGESTED;
             it.lane = Lane.of(n.path, n.meta);
             it.curiosity = n.meta("curiosity");
+            it.tldr = n.description.equals(n.title) ? "" : n.description.replaceAll("\\s*\\((high|medium|low)\\)\\s*$", ""); // the confidence tag is for the Unit screen
             it.why = n.why.startsWith("Reason was not recorded") ? "" : n.why; // the agent writes this placeholder when the owner gave no reason
             it.made = made(n);
             boolean[] time = new boolean[1];
@@ -138,6 +139,7 @@ public final class Feed {
             it.url = e.url;
             it.sourceName = e.url.isEmpty() ? "Note" : host(e.url);
             it.why = e.why;
+            it.tldr = e.tldr.isEmpty() && e.text ? e.body : e.tldr;
             it.waiting = "Saved on this phone. Not in your notes yet.";
             boolean[] time = new boolean[1];
             LocalDateTime at = when(e.time, time);
