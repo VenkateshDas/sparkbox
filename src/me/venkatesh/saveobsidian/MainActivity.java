@@ -34,15 +34,9 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false);
-        if (state == null && getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) { // first run: the setup checklist comes first
-            startActivity(new android.content.Intent(this, SetupActivity.class));
-            finish();
-            return;
-        }
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
         for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
         draw();
-        new Thread(() -> VaultWrite.healInbox(getApplicationContext())).start();
         CardGen.resume(this);
         Reminder.schedule(this);
         if (state == null) handleIntent(getIntent());
@@ -51,11 +45,20 @@ public class MainActivity extends Activity {
     /** The screen behind each tab. Replaced by the real ones as they are built. */
     private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : index == 3 ? new AskScreen() : index == 1 ? new SparkScreen() : new Placeholder(NAMES[index]); }
 
-    static final int PICK_FILES = 5;
+    static final int PICK_FILES = 5, PICK_ATTACH = 4;
 
     /** Photos and files picked from the Feed capture button go through the same share path as the share sheet. */
     @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PICK_ATTACH && result == RESULT_OK && data != null && data.getData() != null) {
+            try {
+                android.net.Uri tree = data.getData();
+                getContentResolver().takePersistableUriPermission(tree, data.getFlags() & (android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION | android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
+                getSharedPreferences("capture", 0).edit().putString("attach", tree.toString()).commit();
+                if (CaptureService.pending(this).length > 0) CaptureService.start(this, null);
+            } catch (Exception e) { android.widget.Toast.makeText(this, "Could not get write access to that folder.", android.widget.Toast.LENGTH_SHORT).show(); }
+            return;
+        }
         if (request != PICK_FILES || result != RESULT_OK || data == null) return;
         ArrayList<android.net.Uri> picked = new ArrayList<>();
         if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) picked.add(data.getClipData().getItemAt(i).getUri());
@@ -73,6 +76,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        new Thread(() -> VaultWrite.healInbox(getApplicationContext())).start(); // sets the inbox from the vault folder, or repairs it after a move
         if (Ui.dark(this) != dark) { draw(); return; } // the Theme setting changed while another screen was open
         current().onShow();
     }

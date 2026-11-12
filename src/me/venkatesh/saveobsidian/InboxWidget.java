@@ -113,7 +113,7 @@ public class InboxWidget extends AppWidgetProvider {
     }
 
     private static PendingIntent app(Context c) {
-        return PendingIntent.getActivity(c, 0, new Intent(c, SetupActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return PendingIntent.getActivity(c, 0, new Intent(c, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     /** Timer and Stop for the live strip. */

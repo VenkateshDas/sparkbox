@@ -487,7 +487,7 @@ final class FeedScreen extends Screen {
         body.setGravity(Gravity.CENTER);
         box.addView(body, ui.lp(8));
         box.addView(ui.button(none ? "Choose folder" : "Check vault folder now", true, v -> {
-            if (none) host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK, true)); else scan();
+            if (none) host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true)); else scan();
         }), ui.lp(16));
         return box;
     }

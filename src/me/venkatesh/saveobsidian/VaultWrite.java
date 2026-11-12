@@ -104,15 +104,15 @@ final class VaultWrite {
     }
 
     /**
-     * The inbox the user picked is a stored file address. When the Sources folder was moved (Sources to Knowledge/Sources) that address goes dead and
+     * The inbox is a stored file address (also set the first time the vault folder is chosen). When the Sources folder was moved (Sources to Knowledge/Sources) that address goes dead and
      * every capture fails. If the stored inbox cannot be opened and the vault folder is writable, point it at the Inbox.md found in the vault now.
      */
     static void healInbox(Context c) {
         try {
             android.content.SharedPreferences prefs = c.getSharedPreferences("capture", 0);
             String saved = prefs.getString("inbox", "");
-            if (saved.isEmpty() || !writable(c)) return;
-            try (java.io.InputStream in = c.getContentResolver().openInputStream(Uri.parse(saved))) { if (in != null) return; } catch (Exception dead) { /* fall through */ }
+            if (!writable(c)) return;
+            if (!saved.isEmpty()) try (java.io.InputStream in = c.getContentResolver().openInputStream(Uri.parse(saved))) { if (in != null) return; } catch (Exception dead) { /* fall through */ }
             Uri tree = tree(c);
             for (String path : new String[]{Layout.NEW + "/Inbox.md", Layout.OLD + "/Inbox.md"}) {
                 String id = find(c, tree, path);

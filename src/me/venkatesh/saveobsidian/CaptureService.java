@@ -190,8 +190,7 @@ public class CaptureService extends Service {
     /** The entry just saved: tapping the island opens its why/ideas editor instead of the bare inbox. */
     private volatile String openEntry;
     private PendingIntent openApp() {
-        Intent open = new Intent(this, SetupActivity.class);
-        if (openEntry != null) open.putExtra(SetupActivity.ANNOTATE, openEntry).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent open = new Intent(this, MainActivity.class).putExtra(MainActivity.TAB, 0).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         return PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
     private Notification notification(String title, String message, String shortText, int progress) {

@@ -390,7 +390,7 @@ final class AskScreen extends Screen {
     }
 
     private void openSource(String path, Vault.Note note) {
-        if (Layout.isInbox(path)) { SetupActivity.findFromApp = true; ui.c.startActivity(new Intent(ui.c, SetupActivity.class).putExtra(SetupActivity.FIND, "").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)); return; }
+        if (Layout.isInbox(path)) { host.select(0); return; } // the inbox lives in the Feed
         if (note == null) { Toast.makeText(ui.c, "That note is not in your vault", Toast.LENGTH_SHORT).show(); return; }
         host.openNote(note.path);
     }
