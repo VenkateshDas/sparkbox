@@ -27,7 +27,7 @@ final class VaultStore {
         DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_SIZE};
     private static final long MAX_NOTE = 2L * 1024 * 1024;
     static volatile Snap last;
-    private static final int CACHE = 2; // bump when Vault.parse changes what it extracts, so old caches are rebuilt
+    private static final int CACHE = 3; // bump when Vault.parse changes what it extracts, so old caches are rebuilt
 
     /** Notes, their links, and the provider ids needed to open each one. */
     static final class Snap {
@@ -147,11 +147,17 @@ final class VaultStore {
             for (int i = 0; i < notes.length(); i++) {
                 JSONObject o = notes.getJSONObject(i);
                 Vault.Note n = new Vault.Note(o.getString("p"), o.getLong("m"), o.getString("t"), o.getString("y"), o.getString("d"), o.getString("u"),
-                    o.getString("g"), strings(o.getJSONArray("o")), strings(o.getJSONArray("l")));
+                    o.getString("g"), strings(o.getJSONArray("o")), strings(o.getJSONArray("l")), meta(o.optJSONObject("f")), o.optString("w"), o.optInt("n"));
                 map.put(n.path, new Cached(o.getString("i"), o.getLong("z"), n));
             }
         } catch (Exception none) { map.clear(); } // missing or damaged: a rescan rebuilds it
         return map;
+    }
+
+    private static Map<String, String> meta(JSONObject o) {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (o != null) for (java.util.Iterator<String> it = o.keys(); it.hasNext(); ) { String k = it.next(); out.put(k, o.optString(k)); }
+        return out;
     }
 
     private static List<String> strings(JSONArray a) throws Exception {
@@ -168,7 +174,7 @@ final class VaultStore {
             for (Cached k : all) {
                 Vault.Note n = k.note;
                 notes.put(new JSONObject().put("p", n.path).put("m", n.mtime).put("t", n.title).put("y", n.type).put("d", n.description).put("u", n.updated)
-                    .put("g", n.digest).put("o", new JSONArray(n.topics)).put("l", new JSONArray(n.links)).put("i", k.id).put("z", k.size));
+                    .put("g", n.digest).put("o", new JSONArray(n.topics)).put("l", new JSONArray(n.links)).put("f", new JSONObject(n.meta)).put("w", n.why).put("n", n.words).put("i", k.id).put("z", k.size));
             }
             out = file.startWrite();
             out.write(new JSONObject().put("v", CACHE).put("tree", tree(c)).put("notes", notes).toString().getBytes(StandardCharsets.UTF_8));

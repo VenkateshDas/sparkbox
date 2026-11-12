@@ -5,6 +5,8 @@ import me.venkatesh.saveobsidian.Enrich;
 import me.venkatesh.saveobsidian.Index;
 import me.venkatesh.saveobsidian.Vault;
 import me.venkatesh.saveobsidian.Layout;
+import me.venkatesh.saveobsidian.Lane;
+import me.venkatesh.saveobsidian.Feed;
 import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
@@ -65,6 +67,7 @@ public class CaptureTest {
         regressionChecks();
         editFailureChecks();
         vaultChecks();
+        feedChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
@@ -133,6 +136,35 @@ public class CaptureTest {
         check(Vault.blend(Arrays.asList(pile.get(8), pile.get(1)), words, "how do agents keep memory between sessions", 20).get(0) == pile.get(1)); // in both lists
         check(t.contains("memory core") && !t.contains("memory zebra") && src.contains("harness job"));
     }
+    static void feedChecks() {
+        Layout.detect(new ArrayList<String>());
+        String note = "---\ntype: source\nsource: \"https://www.example.com/a?utm=1\"\ncaptured: 2026-11-11\nvia: Sparkbox\nprocessed: true\ncuriosity: \"What changes?\"\nmade-topics-new: [\"[[T1]]\"]\nmade-topics-updated: [\"[[T2]]\"]\nmade-people-updated: [\"[[P]]\"]\n---\n\n# Stop coding\n\n## Why I captured this\nIdea to test.\n\n## Raw Content\none two three four\n\n## Claude's Extraction\n- x\n";
+        Vault.Note src = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-11 - Stop coding.md", 1000, note);
+        check(src.processed() && src.meta("curiosity").equals("What changes?") && src.why.equals("Idea to test.") && src.words == 4);
+        check(Vault.bullets("## Claude's Extraction\n### Key claims\n- One (high)\n- Two (low)\n### Topics identified\n- [[X]]\n", "Key claims").equals(Arrays.asList("One (high)", "Two (low)")));
+        check(Feed.made(src).equals("Made 1 note, 2 topics (1 new), 1 person"));
+        check(Lane.of(src.path, src.meta).equals("Craft") && Lane.of("Knowledge/Sources/Health & Biology/2026/x.md", new java.util.HashMap<String, String>()).equals("Life") && Lane.of("Knowledge/Topics/X.md", null).equals(""));
+        java.util.Map<String, String> override = new java.util.HashMap<>(); override.put("lane", "life");
+        check(Lane.of("Knowledge/Sources/AI Systems/2026/x.md", override).equals("Life"));
+        Vault.Note raw = Vault.parse("Knowledge/Sources/Developer Tools/2026/2026-11-10 - Raw.md", 900, "---\ntype: source\nsource: \"https://b.org/x\"\ncaptured: 2026-11-10\nprocessed: false\n---\n\n# Raw\ntext");
+        Vault.Note t1 = Vault.parse("Knowledge/Topics/T1.md", 800, "---\ntype: topic\n---\n# T1\n");
+        Vault.Note p1 = Vault.parse("Knowledge/People/P.md", 700, "---\ntype: person\n---\n# P\n");
+        Vault.Note s2 = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-09 - Second.md", 950, "---\ntype: source\ncaptured: 2026-11-09\n---\n# Second\n[[Knowledge/Topics/T1]]\n");
+        Vault.Note s3 = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-11 - Third.md", 960, "---\ntype: source\ncaptured: 2026-11-11\n---\n# Third\n[[Knowledge/Topics/T1]] [[Knowledge/People/P]]\n");
+        List<Vault.Note> all = Arrays.asList(src, raw, t1, p1, s2, s3);
+        InboxFile.Entry inboxed = InboxFile.parse("- \uD83D\uDD17 Fresh\n  https://c.org/y\n  Captured: 2026-11-12 08:14 \u00B7 via Sparkbox\n").get(0);
+        InboxFile.Entry dup = InboxFile.parse("- \uD83D\uDD17 Same\n  https://example.com/a\n  Captured: 2026-11-11 08:00 \u00B7 via Sparkbox\n").get(0);
+        java.time.LocalDateTime now = java.time.LocalDateTime.of(2026, 11, 12, 11, 14);
+        List<Feed.Item> items = Feed.build(all, Vault.build(all), Arrays.asList(inboxed, dup), now);
+        check(items.get(0).status.equals("Captured") && items.get(0).age.equals("3h ago") && items.get(0).sourceName.equals("c.org")); // newest first
+        int sources = 0, topics = 0, people = 0;
+        for (Feed.Item it : items) { if (it.kind.equals("source")) sources++; if (it.kind.equals("topic")) topics++; if (it.kind.equals("person")) people++; }
+        check(sources == 5 && topics == 1 && people == 1); // 4 notes + 1 capture; the duplicate capture is hidden; T1 has two fresh sources
+        check(Feed.filter(items, "All").size() == 6 && Feed.filter(items, "People").size() == 1 && Feed.filter(items, "Topics").size() == 1 && Feed.filter(items, "Craft").size() == 5);
+        check(Feed.filter(items, "Sources").size() == 5 && Feed.filter(items, "Life").isEmpty());
+        check(Feed.age(java.time.LocalDateTime.of(2026, 11, 9, 0, 0), false, now).equals("3d ago") && Feed.age(java.time.LocalDateTime.of(2026, 11, 12, 0, 0), false, now).equals("Today"));
+    }
+
     static void inboxFileChecks() {
         String head = "---\ntype: inbox\n---\n# Sources Inbox\n\n*Landing pad.*\n\n";
         String telegram = "- 🔗 Telegram title\n  https://t.example/a\n  Captured: 18/10/26, 7:36 AM\n";

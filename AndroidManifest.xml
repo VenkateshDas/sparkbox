@@ -38,15 +38,14 @@
         <service android:name=".QuickTile$Voice" android:label="Voice note" android:icon="@drawable/ic_tile_mic" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">
             <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
         </service>
-        <activity android:name=".SetupActivity" android:exported="true">
+        <activity android:name=".SetupActivity" android:exported="true" />
+        <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="true" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
-        <!-- The new shell. Becomes the launcher once Feed is built (Phase 1); until then start it with adb. -->
-        <activity android:name=".MainActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="true" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".DashboardActivity" android:exported="false" />
         <activity android:name=".VaultActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".AskActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />

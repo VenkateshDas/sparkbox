@@ -85,6 +85,17 @@ final class Ui {
         return view;
     }
 
+    /** Status chip, 24 dp tall. kind: 0 neutral, 1 green (done), 2 warning, 3 error. */
+    TextView chip(String label, int kind) {
+        int fill = kind == 1 ? container : kind == 2 ? warnBg : kind == 3 ? errBg : raised;
+        int color = kind == 1 ? onContainer : kind == 2 ? warn : kind == 3 ? err : sub;
+        TextView view = text(label, 12, MEDIUM, color);
+        view.setPadding(dp(8), dp(4), dp(8), dp(4));
+        view.setBackground(round(fill, kind == 0 ? line : 0, 12));
+        view.setSingleLine(true);
+        return view;
+    }
+
     /** Section label: 14 medium, secondary. */
     TextView label(String value) { return text(value, 14, MEDIUM, sub); }
 

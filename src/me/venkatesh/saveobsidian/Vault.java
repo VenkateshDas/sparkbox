@@ -23,16 +23,29 @@ public final class Vault {
         public final String path, title, type, description, updated, digest;
         public final List<String> topics, links;
         public final long mtime;
+        /** Frontmatter keys the feed and Unit screens read (source, author, captured, via, processed, curiosity, quality, kept, lane, made-*), as written. */
+        public final Map<String, String> meta;
+        /** The first 160 characters of "Why I captured this", and the word count of "Raw Content". */
+        public final String why;
+        public final int words;
         /** index.md and log.md: browsable and readable, but left out of search ranking. */
         public final boolean catalog;
 
         Note(String path, long mtime, String title, String type, String description, String updated, String digest, List<String> topics, List<String> links) {
+            this(path, mtime, title, type, description, updated, digest, topics, links, new LinkedHashMap<String, String>(), "", 0);
+        }
+
+        Note(String path, long mtime, String title, String type, String description, String updated, String digest, List<String> topics, List<String> links,
+             Map<String, String> meta, String why, int words) {
+            this.meta = meta; this.why = why; this.words = words;
             this.path = path; this.mtime = mtime; this.title = title; this.type = type; this.description = description;
             this.updated = updated; this.digest = digest; this.topics = topics; this.links = links;
             String name = name(path);
             this.catalog = name.equals("index") || name.equals("log");
         }
 
+        public String meta(String key) { String v = meta.get(key); return v == null ? "" : v; }
+        public boolean processed() { return meta("processed").equalsIgnoreCase("true"); }
         public String folder() { int slash = path.lastIndexOf('/'); return slash < 0 ? "" : path.substring(0, slash); }
         /** [[Knowledge/Topics/X|X]]: the title with its path, tappable in the app and valid in Obsidian. */
         public String cite() { return "[[" + stripMd(path) + "|" + title.replaceAll("[\\[\\]|]", " ").trim() + "]]"; }
@@ -106,6 +119,37 @@ public final class Vault {
 
     private static void add(List<String> list, String s) { if (!s.isEmpty() && !list.contains(s)) list.add(s); }
 
+    private static final String[] META = {"source", "author", "captured", "via", "processed", "curiosity", "quality", "kept", "lane", "people", "related-topics",
+        "made-topics-new", "made-topics-updated", "made-people-new", "made-people-updated", "made-entities-new", "made-entities-updated"};
+
+    /** The text under a "## Heading" line (case-insensitive) up to the next heading of the same or higher level, or "". */
+    public static String section(String body, String heading) {
+        boolean in = false;
+        StringBuilder out = new StringBuilder();
+        for (String line : body.split("\n")) {
+            String t = line.trim();
+            if (t.startsWith("## ") || t.equals("##")) {
+                if (in) break;
+                in = t.substring(2).trim().equalsIgnoreCase(heading);
+                continue;
+            }
+            if (in) out.append(line).append('\n');
+        }
+        return out.toString().trim();
+    }
+
+    /** The bullets (leading "- " removed) under a "### Heading" line, up to the next heading. */
+    public static List<String> bullets(String text, String heading) {
+        List<String> out = new ArrayList<>();
+        boolean in = false;
+        for (String line : text.split("\\n")) {
+            String t = line.trim();
+            if (t.startsWith("#")) { if (in) break; in = t.replaceFirst("^#+\\s*", "").equalsIgnoreCase(heading); continue; }
+            if (in && (t.startsWith("- ") || t.startsWith("* ")) && t.length() > 2) out.add(t.substring(2).trim());
+        }
+        return out;
+    }
+
     static final int LINE = 2000;
 
     /** Lines past LINE characters cut short. The link patterns rescan a line from every "[[", so a minified clip on one huge line would hang the scan. */
@@ -166,11 +210,17 @@ public final class Vault {
         String flat = plain(body).replaceAll("\\s+", " ").trim();
         String digest = (title + ". " + description + " " + (fm.containsKey("type") ? fm.get("type") + ". " : "") + (topics.isEmpty() ? "" : "Topics: " + topics + ". ") + flat).trim();
         if (digest.length() > DIGEST) digest = digest.substring(0, DIGEST);
-        return new Note(path, mtime, title, fm.containsKey("type") ? fm.get("type") : "", description, updated, digest, topics, links);
+        Map<String, String> meta = new LinkedHashMap<>();
+        for (String key : META) if (fm.containsKey(key)) meta.put(key, fm.get(key));
+        String why = plain(section(body, "Why I captured this")).replaceAll("\\s+", " ").trim();
+        if (why.length() > 160) why = why.substring(0, 160);
+        String raw = section(body, "Raw Content");
+        int words = raw.isEmpty() ? 0 : raw.trim().split("\\s+").length;
+        return new Note(path, mtime, title, fm.containsKey("type") ? fm.get("type") : "", description, updated, digest, topics, links, meta, why, words);
     }
 
     /** Text with [[a|b]] shown as b and bold/code marks dropped, for titles, previews and embedding. */
-    static String plain(String s) {
+    public static String plain(String s) {
         Matcher m = LINK.matcher(s);
         StringBuffer out = new StringBuffer();
         while (m.find()) m.appendReplacement(out, Matcher.quoteReplacement(label(m.group(2))));

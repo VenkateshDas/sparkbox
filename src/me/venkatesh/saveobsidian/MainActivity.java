@@ -34,13 +34,18 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false);
+        if (state == null && getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) { // first run: the setup checklist comes first
+            startActivity(new android.content.Intent(this, SetupActivity.class));
+            finish();
+            return;
+        }
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
         for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
         draw();
     }
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
-    private Screen screen(int index) { return new Placeholder(NAMES[index]); }
+    private Screen screen(int index) { return index == 0 ? new FeedScreen() : new Placeholder(NAMES[index]); }
 
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); }
 
