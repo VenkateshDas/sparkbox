@@ -105,6 +105,9 @@ final class Model {
     }
 
     /** Streamed chat completion: calls live with the text so far, returns the assembled message {content, tool_calls?}. */
+    /** Set by the Ask screen to stop a running answer: the stream ends and what has arrived so far is the reply. */
+    static volatile boolean cancel;
+
     static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
         connection.setRequestMethod("POST");
@@ -121,6 +124,7 @@ final class Model {
             JSONArray calls = new JSONArray();
             try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = in.readLine()) != null; ) {
+                    if (cancel) { calls = new JSONArray(); break; }
                     if (!line.startsWith("data:")) continue; // blank lines and ": OPENROUTER PROCESSING" keep-alives
                     String data = line.substring(5).trim();
                     if (data.equals("[DONE]")) break;

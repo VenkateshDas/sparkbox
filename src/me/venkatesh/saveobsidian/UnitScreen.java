@@ -121,7 +121,7 @@ final class UnitScreen extends Screen {
 
         if (n.words > 0) page.addView(row("Full text", n.words + " words", v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))), ui.lp(12));
         else page.addView(row("Open note", "", v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))), ui.lp(12));
-        TextView ask = ui.button("Ask about this", true, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, "Tell me about " + n.title)));
+        TextView ask = ui.button("Ask about this", true, v -> host.ask("Tell me about " + n.title));
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         p.topMargin = ui.dp(16);
         page.addView(ask, p);

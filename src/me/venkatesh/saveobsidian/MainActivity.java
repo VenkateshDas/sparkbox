@@ -42,10 +42,11 @@ public class MainActivity extends Activity {
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
         for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
         draw();
+        if (state == null) handleIntent(getIntent());
     }
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
-    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : new Placeholder(NAMES[index]); }
+    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : index == 3 ? new AskScreen() : new Placeholder(NAMES[index]); }
 
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); }
 
@@ -119,6 +120,24 @@ public class MainActivity extends Activity {
         if (built[tab] == null) built[tab] = tabs[tab].build(ui);
         show(built[tab]);
         tabs[tab].onShow();
+    }
+
+    /** Opens the Ask tab with a question already sent. */
+    void ask(String question) {
+        select(3);
+        ((AskScreen) tabs[3]).prefill(question);
+    }
+
+    @Override protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIntent(intent);
+    }
+
+    private void handleIntent(android.content.Intent intent) {
+        String q = intent.getStringExtra(AskActivity.QUESTION);
+        if (q != null && !q.trim().isEmpty()) { intent.removeExtra(AskActivity.QUESTION); ask(q.trim()); }
+        else if (intent.hasExtra(TAB)) select(Math.max(0, Math.min(3, intent.getIntExtra(TAB, 0))));
     }
 
     /** Opens a note in the right screen: a Source in its Unit, a Topic on its page, anything else in the note reader. */

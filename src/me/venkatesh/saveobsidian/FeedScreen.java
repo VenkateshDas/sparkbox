@@ -393,7 +393,7 @@ final class FeedScreen extends Screen {
         rp.topMargin = ui.dp(12);
         card.addView(rule, rp);
         LinearLayout bar = new LinearLayout(ui.c);
-        if (it.entry == null) bar.addView(action("Ask", R.drawable.ic_nav_ask, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, "Tell me about " + it.title))), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        if (it.entry == null) bar.addView(action("Ask", R.drawable.ic_nav_ask, v -> host.ask("Tell me about " + it.title)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         if (!it.url.isEmpty()) bar.addView(action("Open", R.drawable.ic_open, v -> openLink(it.url)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         String shared = it.url.isEmpty() ? it.title : it.title + "\n" + it.url;
         bar.addView(action("Share", R.drawable.ic_share, v -> host.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shared), null))), new LinearLayout.LayoutParams(0, ui.dp(48), 1));

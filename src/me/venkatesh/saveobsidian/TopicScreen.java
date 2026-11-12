@@ -92,7 +92,7 @@ final class TopicScreen extends Screen {
         String core = Vault.section(text, "Core Mechanism");
         if (core.isEmpty()) core = n.description;
         if (!core.isEmpty()) page.addView(ui.text(firstSentence(core), 15, Typeface.DEFAULT, ui.sub), ui.lp(8));
-        TextView ask = ui.button("Ask about this", true, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, "Tell me about " + n.title)));
+        TextView ask = ui.button("Ask about this", true, v -> host.ask("Tell me about " + n.title));
         page.addView(ask, ui.lp(12));
         page.addView(takeCard(n), ui.lp(12));
 

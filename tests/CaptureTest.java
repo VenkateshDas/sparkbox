@@ -8,6 +8,7 @@ import me.venkatesh.saveobsidian.Layout;
 import me.venkatesh.saveobsidian.Lane;
 import me.venkatesh.saveobsidian.Feed;
 import me.venkatesh.saveobsidian.NoteEdit;
+import me.venkatesh.saveobsidian.Cites;
 import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
@@ -70,6 +71,7 @@ public class CaptureTest {
         vaultChecks();
         feedChecks();
         noteEditChecks();
+        citesChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
@@ -166,6 +168,14 @@ public class CaptureTest {
         check(Feed.filter(items, "Sources").size() == 5 && Feed.filter(items, "Life").isEmpty());
         check(Feed.snippet("A long text about designing deterministic test harnesses before generating code in factories", "harnesses", 40).contains("harnesses") && Feed.snippet("short", "zzz", 40).isEmpty() && Feed.snippet("x harness y", "harness", 40).equals("x harness y"));
         check(Feed.age(java.time.LocalDateTime.of(2026, 11, 9, 0, 0), false, now).equals("3d ago") && Feed.age(java.time.LocalDateTime.of(2026, 11, 12, 0, 0), false, now).equals("Today"));
+    }
+
+    static void citesChecks() {
+        Cites.Result r = Cites.number("A [[Knowledge/Topics/X|X]] and B [[Knowledge/Sources/S|Source S]], again [[Knowledge/Topics/X|X]]. Table \\| [[Knowledge/Topics/Y\\|Y]] ![[img.png]] [[ ]]");
+        check(r.text.startsWith("A [1] and B [2], again [1]. Table \\| [3] ![[img.png]]"));
+        check(r.sources.size() == 3 && r.sources.get(0)[1].equals("Knowledge/Topics/X") && r.sources.get(1)[2].equals("Source S") && r.sources.get(2)[1].equals("Knowledge/Topics/Y"));
+        check(Cites.number("No citations here.").sources.isEmpty() && Cites.number("No citations here.").text.equals("No citations here."));
+        check(Cites.notInKnowledge("Not in your knowledge base. Closest: [[A|A]]") && Cites.notInKnowledge("  **Not in your knowledge base**") && !Cites.notInKnowledge("It is not in your knowledge base maybe"));
     }
 
     static void noteEditChecks() {

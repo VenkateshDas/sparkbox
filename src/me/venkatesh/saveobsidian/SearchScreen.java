@@ -173,7 +173,7 @@ final class SearchScreen extends Screen {
         TextView body = ui.text("Nothing matches this word. Try another, or ask your vault.", 15, Typeface.DEFAULT, ui.sub);
         body.setGravity(Gravity.CENTER);
         box.addView(body, ui.lp(8));
-        box.addView(ui.button("Ask your vault", true, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, query))), ui.lp(16));
+        box.addView(ui.button("Ask your vault", true, v -> host.ask(query)), ui.lp(16));
         return box;
     }
 

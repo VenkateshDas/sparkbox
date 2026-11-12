@@ -37,6 +37,7 @@ final class Ask {
         Usage.hit(c, "ask");
         String model = model(c);
         for (int step = 0; step < STEPS; step++) {
+            if (Model.cancel) return "";
             boolean last = step == STEPS - 1;
             JSONObject request = new JSONObject().put("model", model).put("max_tokens", 1800).put("messages", work);
             if (!last) request.put("tools", tools());
