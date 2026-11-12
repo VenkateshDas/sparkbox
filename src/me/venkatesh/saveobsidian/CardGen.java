@@ -46,7 +46,7 @@ final class CardGen {
         Collections.sort(out, (a, b) -> {
             boolean[] t = new boolean[1];
             java.time.LocalDateTime x = Feed.when(a.meta("captured"), t), y = Feed.when(b.meta("captured"), t);
-            int c = x == null || y == null ? 0 : y.compareTo(x);
+            int c = x == null ? (y == null ? 0 : 1) : y == null ? -1 : y.compareTo(x); // newest first, notes without a date last: a consistent order, or the sort throws
             return c != 0 ? c : Long.compare(b.mtime, a.mtime);
         });
         return out;
