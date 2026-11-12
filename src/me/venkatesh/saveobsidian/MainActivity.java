@@ -42,6 +42,7 @@ public class MainActivity extends Activity {
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
         for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
         draw();
+        new Thread(() -> VaultWrite.healInbox(getApplicationContext())).start();
         CardGen.resume(this);
         Reminder.schedule(this);
         if (state == null) handleIntent(getIntent());
@@ -49,6 +50,24 @@ public class MainActivity extends Activity {
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
     private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : index == 3 ? new AskScreen() : index == 1 ? new SparkScreen() : new Placeholder(NAMES[index]); }
+
+    static final int PICK_FILES = 5;
+
+    /** Photos and files picked from the Feed capture button go through the same share path as the share sheet. */
+    @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request != PICK_FILES || result != RESULT_OK || data == null) return;
+        ArrayList<android.net.Uri> picked = new ArrayList<>();
+        if (data.getClipData() != null) for (int i = 0; i < data.getClipData().getItemCount(); i++) picked.add(data.getClipData().getItemAt(i).getUri());
+        else if (data.getData() != null) picked.add(data.getData());
+        if (picked.isEmpty()) return;
+        android.content.Intent send = new android.content.Intent(this, ShareActivity.class).setAction(android.content.Intent.ACTION_SEND_MULTIPLE).setType("*/*")
+            .putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, picked).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        android.content.ClipData clip = android.content.ClipData.newRawUri("files", picked.get(0));
+        for (int i = 1; i < picked.size(); i++) clip.addItem(new android.content.ClipData.Item(picked.get(i)));
+        send.setClipData(clip);
+        startActivity(send);
+    }
 
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); }
 

@@ -103,6 +103,24 @@ final class VaultWrite {
         if (!VaultStore.text(c, doc).equals(after)) throw new IOException(path + " does not match what was written. Check the file.");
     }
 
+    /**
+     * The inbox the user picked is a stored file address. When the Sources folder was moved (Sources to Knowledge/Sources) that address goes dead and
+     * every capture fails. If the stored inbox cannot be opened and the vault folder is writable, point it at the Inbox.md found in the vault now.
+     */
+    static void healInbox(Context c) {
+        try {
+            android.content.SharedPreferences prefs = c.getSharedPreferences("capture", 0);
+            String saved = prefs.getString("inbox", "");
+            if (saved.isEmpty() || !writable(c)) return;
+            try (java.io.InputStream in = c.getContentResolver().openInputStream(Uri.parse(saved))) { if (in != null) return; } catch (Exception dead) { /* fall through */ }
+            Uri tree = tree(c);
+            for (String path : new String[]{Layout.NEW + "/Inbox.md", Layout.OLD + "/Inbox.md"}) {
+                String id = find(c, tree, path);
+                if (id != null) { prefs.edit().putString("inbox", DocumentsContract.buildDocumentUriUsingTree(tree, id).toString()).putString("name", "Inbox.md").commit(); return; }
+            }
+        } catch (Exception unreadable) { }
+    }
+
     /** Deletes backups older than two weeks. */
     static void pruneBackups(Context c) {
         File[] runs = new File(c.getFilesDir(), "ingest-backup").listFiles();

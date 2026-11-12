@@ -11,6 +11,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -98,7 +99,48 @@ final class FeedScreen extends Screen {
         drawChips();
         drawBanner();
         refreshFromCache();
-        return root;
+        FrameLayout frame = new FrameLayout(ui.c);
+        frame.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        TextView plus = ui.text("+", 28, Ui.MEDIUM, ui.onAccent);
+        plus.setGravity(Gravity.CENTER);
+        plus.setBackground(ui.ripple(ui.round(ui.accent, 0, 28)));
+        plus.setContentDescription("Capture");
+        plus.setElevation(ui.dp(6));
+        plus.setOnClickListener(v -> captureMenu());
+        Ui.buttonRole(plus);
+        FrameLayout.LayoutParams at = new FrameLayout.LayoutParams(ui.dp(56), ui.dp(56), Gravity.BOTTOM | Gravity.END);
+        at.setMargins(0, 0, ui.dp(16), ui.dp(16));
+        frame.addView(plus, at);
+        return frame;
+    }
+
+    // ---- capture ----
+
+    private void captureMenu() {
+        new AlertDialog.Builder(host).setTitle("Capture").setItems(new String[]{"Link or text", "Voice note", "Photo or file"}, (d, which) -> {
+            if (which == 0) captureText();
+            else if (which == 1) host.startActivity(new Intent(host, QuickActivity.class).setAction(QuickActivity.VOICE));
+            else host.startActivityForResult(new Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), MainActivity.PICK_FILES);
+        }).show();
+    }
+
+    private void captureText() {
+        android.widget.EditText input = new android.widget.EditText(ui.c);
+        input.setHint("Paste a link or write a note");
+        input.setMinLines(3);
+        input.setGravity(Gravity.TOP);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); // autocorrect breaks pasted URLs
+        LinearLayout box = new LinearLayout(ui.c);
+        box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
+        box.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        AlertDialog d = new AlertDialog.Builder(host).setTitle("New capture").setView(box)
+            .setPositiveButton("Save", (dialog, w) -> {
+                String value = input.getText().toString().trim();
+                if (!value.isEmpty()) host.startActivity(new Intent(host, ShareActivity.class).setAction(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, value));
+            }).setNegativeButton("Cancel", null).create();
+        d.show();
+        input.requestFocus();
+        d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
     }
 
     @Override void onShow() {
@@ -430,7 +472,7 @@ final class FeedScreen extends Screen {
     }
 
     private void open(Feed.Item it) {
-        if (it.entry != null) return; // a capture with no note has no page of its own yet
+        if (it.entry != null) { host.push(new CaptureScreen(it.entry)); return; } // a capture with no note yet opens its own page
         host.openNote(it.path);
     }
 
