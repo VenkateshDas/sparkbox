@@ -126,6 +126,40 @@ public final class IngestText {
 
     public static String appendLine(String text, String line) { return text + (text.isEmpty() || text.endsWith("\n") ? "" : "\n") + line; }
 
+    // ---- entities ----
+
+    public static final String[] ENTITY_KINDS = {"model", "tool", "org", "dataset", "paper", "other"};
+
+    /** One of the entity kinds, "other" when the model named something else. */
+    public static String entityKind(String said) {
+        String k = said == null ? "" : said.trim().toLowerCase(java.util.Locale.ROOT);
+        for (String kind : ENTITY_KINDS) if (kind.equals(k)) return kind;
+        return "other";
+    }
+
+    /** A new Entity page: what it is, and the one source it appears in so far. */
+    public static String newEntity(String name, String kind, String what, String sourceLink, String today) {
+        return "---\ntype: entity\nkind: " + entityKind(kind) + "\nappears-in: ['" + sourceLink + "']\nlast-updated: " + today + "\n---\n\n# " + name + "\n\n## What it is\n"
+            + (what == null || what.trim().isEmpty() ? "A " + entityKind(kind) + " named in the captured sources." : what.replaceAll("\\s+", " ").trim()) + "\n\n## Where it appears\n- " + sourceLink + "\n";
+    }
+
+    /** The page with one more source: its link under "Where it appears" and in appears-in, last-updated moved. Unchanged when the source is already there. */
+    public static String updateEntity(String page, String sourceLink, String today) {
+        if (page.contains(sourceLink)) return page;
+        String out = page;
+        Matcher m = Pattern.compile("(?m)^appears-in:\\s*\\[(.*)\\]\\s*$").matcher(out);
+        if (m.find()) out = out.substring(0, m.start()) + "appears-in: [" + (m.group(1).trim().isEmpty() ? "" : m.group(1).trim() + ", ") + "'" + sourceLink + "']" + out.substring(m.end());
+        out = setFront(out, "last-updated", today);
+        return addBullets(out, "## Where it appears", java.util.Collections.singletonList("- " + sourceLink));
+    }
+
+    /** One line under "## Entities" in Knowledge/index.md (the section is created once); unchanged when the entity is already listed. */
+    public static String entityIndex(String index, String entityLink, String kind, String what) {
+        if (index.contains(entityLink)) return index;
+        String line = "- " + entityLink + " (" + entityKind(kind) + ")" + (what == null || what.trim().isEmpty() ? "" : " — " + what.replaceAll("\\s+", " ").trim());
+        return addBullets(index, "## Entities", java.util.Collections.singletonList(line));
+    }
+
     // ---- small Markdown helpers ----
 
     static String setFront(String page, String key, String value) {

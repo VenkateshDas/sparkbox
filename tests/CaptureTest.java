@@ -76,6 +76,7 @@ public class CaptureTest {
         feedChecks();
         noteEditChecks();
         citesChecks();
+        entityChecks();
         cardChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
@@ -173,6 +174,20 @@ public class CaptureTest {
         check(Feed.filter(items, "Sources").size() == 5 && Feed.filter(items, "Life").isEmpty());
         check(Feed.snippet("A long text about designing deterministic test harnesses before generating code in factories", "harnesses", 40).contains("harnesses") && Feed.snippet("short", "zzz", 40).isEmpty() && Feed.snippet("x harness y", "harness", 40).equals("x harness y"));
         check(Feed.age(java.time.LocalDateTime.of(2026, 11, 9, 0, 0), false, now).equals("3d ago") && Feed.age(java.time.LocalDateTime.of(2026, 11, 12, 0, 0), false, now).equals("Today"));
+    }
+
+    static void entityChecks() {
+        String link = "[[Knowledge/Sources/AI Systems/2026/2026-11-11 - A]]", link2 = "[[Knowledge/Sources/AI Systems/2026/2026-11-12 - B]]";
+        check(IngestText.entityKind("Tool").equals("tool") && IngestText.entityKind("gadget").equals("other") && IngestText.entityKind(null).equals("other"));
+        String page = IngestText.newEntity("Qwen Coder", "model", "A family of open coding models.", link, "2026-11-11");
+        check(page.startsWith("---\ntype: entity\nkind: model\nappears-in: ['" + link + "']\nlast-updated: 2026-11-11\n---\n\n# Qwen Coder\n\n## What it is\nA family of open coding models.\n\n## Where it appears\n- " + link + "\n"));
+        String two = IngestText.updateEntity(page, link2, "2026-11-12");
+        check(two.contains("appears-in: ['" + link + "', '" + link2 + "']") && two.contains("last-updated: 2026-11-12") && two.contains("- " + link + "\n- " + link2) && IngestText.updateEntity(two, link2, "2026-11-13").equals(two));
+        check(IngestText.newEntity("X", "tool", "", link, "d").contains("A tool named in the captured sources."));
+        String idx = IngestText.entityIndex("# Knowledge Index\n\nText\n", "[[Knowledge/Entities/Qwen Coder|Qwen Coder]]", "model", "Open coding models");
+        check(idx.endsWith("## Entities\n- [[Knowledge/Entities/Qwen Coder|Qwen Coder]] (model) — Open coding models\n") && IngestText.entityIndex(idx, "[[Knowledge/Entities/Qwen Coder|Qwen Coder]]", "model", "x").equals(idx));
+        String idx2 = IngestText.entityIndex(idx, "[[Knowledge/Entities/Rex|Rex]]", "tool", "");
+        check(idx2.contains("(model) — Open coding models\n- [[Knowledge/Entities/Rex|Rex]] (tool)"));
     }
 
     static void citesChecks() {

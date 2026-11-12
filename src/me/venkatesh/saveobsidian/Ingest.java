@@ -31,6 +31,7 @@ final class Ingest {
         + "\"topics\": [{\"title\": \"...\", \"core\": \"one sentence on what this topic is (needed for a new topic)\", \"claims\": [{\"claim\": \"...\", \"confidence\": \"...\"}] (1 to 4 about this topic), "
         + "\"related\": [\"existing topic titles\"], \"open_questions\": [\"...\"]}] (1 to 4), "
         + "\"people\": [{\"name\": \"...\", \"role\": \"field or role, from the page only\"}] (0 to 4: the author and people the page is about), "
+        + "\"entities\": [{\"name\": \"...\", \"kind\": \"model|tool|org|dataset|paper|other\", \"what\": \"one sentence on what it is, from the page only\"}] (0 to 4: named models, tools, companies, datasets or papers the page is mostly about; not topics, not people), "
         + CardPrompt.ASK + ", \"relevance_flags\": [\"how this connects to the user's Why or Ideas, if it does\"]}. "
         + "Use an existing topic or person name exactly when it is the same subject; create a new topic only when none fits. Confidence is low for a single source or an unverified claim. "
         + "Never invent facts, names or numbers that are not in the page. Titles are plain words: no slashes, colons or brackets.";
@@ -69,6 +70,7 @@ final class Ingest {
 
     private static final class Topic { String title, core = ""; List<String[]> claims = new ArrayList<>(); List<String> related = new ArrayList<>(), questions = new ArrayList<>(); }
     private static final class Person { String name, role = ""; }
+    private static final class Entity { String name, kind = "other", what = ""; }
 
     /** Existing page names by lowercase, so "rag" finds "RAG". */
     private static Map<String, String> stems(VaultStore.Snap snap, String folder) {
@@ -84,7 +86,7 @@ final class Ingest {
     private static void process(Context c, String key, InboxFile.Entry e, String ek, VaultStore.Snap snap) throws Exception {
         SharedPreferences prog = c.getSharedPreferences("ingest", 0);
         Set<String> done = new HashSet<>(prog.getStringSet(ek, new HashSet<String>()));
-        Map<String, String> topicNames = stems(snap, "Knowledge/Topics/"), peopleNames = stems(snap, "Knowledge/People/");
+        Map<String, String> topicNames = stems(snap, "Knowledge/Topics/"), peopleNames = stems(snap, "Knowledge/People/"), entityNames = stems(snap, "Knowledge/Entities/");
 
         // 1. ask the model once; the answer is kept so a retry does not pay again
         String saved = prog.getString("plan:" + ek, "");
@@ -92,7 +94,7 @@ final class Ingest {
         if (saved.isEmpty()) {
             String page = Content.load(c, e.url, PAGE_FOR_MODEL);
             if (page.isEmpty()) try { page = Enrich.pageText(PageTitle.html(e.url, true)); if (page.length() > PAGE_FOR_MODEL) page = page.substring(0, PAGE_FOR_MODEL); } catch (Exception none) { }
-            String user = "Existing topics: " + String.join("; ", topicNames.values()) + "\nExisting people: " + String.join("; ", peopleNames.values())
+            String user = "Existing topics: " + String.join("; ", topicNames.values()) + "\nExisting people: " + String.join("; ", peopleNames.values()) + "\nExisting entities: " + String.join("; ", entityNames.values())
                 + "\n\nTitle: " + e.heading + "\nURL: " + e.url.replaceFirst("[?#].*$", "") + "\nSummary: " + e.tldr + Enrich.notes(e.why, e.ideas) + "\nPage text:\n" + page;
             plan = parse(Model.complete(key, model(c), SYSTEM, user, 3500));
             prog.edit().putString("plan:" + ek, plan.toString()).apply();
@@ -137,6 +139,21 @@ final class Ingest {
             for (Person x : people) dup |= x.name.equals(p.name);
             if (!dup) people.add(p);
         }
+        List<Entity> entities = new ArrayList<>();
+        JSONArray es = plan.optJSONArray("entities");
+        for (int i = 0; es != null && i < es.length() && entities.size() < 4; i++) {
+            JSONObject o = es.optJSONObject(i);
+            if (o == null) continue;
+            String n = IngestText.safe(o.optString("name"));
+            if (n.isEmpty()) continue;
+            Entity x = new Entity();
+            x.name = entityNames.containsKey(n.toLowerCase(Locale.ROOT)) ? entityNames.get(n.toLowerCase(Locale.ROOT)) : n;
+            x.kind = IngestText.entityKind(o.optString("kind"));
+            x.what = o.optString("what").replaceAll("\\s+", " ").trim();
+            boolean dup = false;
+            for (Entity y : entities) dup |= y.name.equals(x.name);
+            if (!dup) entities.add(x);
+        }
         if (topics.isEmpty()) throw new IOException("The model found no topic for this capture");
         List<String> topicTitles = new ArrayList<>(), personNames = new ArrayList<>(), claims = new ArrayList<>(), flags = new ArrayList<>();
         for (Topic t : topics) topicTitles.add(t.title);
@@ -173,6 +190,18 @@ final class Ingest {
             else if (!page.contains(sourceLink)) VaultWrite.write(c, path, page, IngestText.updatePerson(page, sourceLink));
             step(prog, ek, done, name);
         }
+        for (Entity x : entities) { // each entity gets a page, or one more source on the page it already has; the index lists new ones once
+            String name = "entity:" + x.name, path = "Knowledge/Entities/" + x.name + ".md";
+            if (done.contains(name)) continue;
+            String page = VaultWrite.read(c, path), today1 = now;
+            if (page == null) { VaultWrite.write(c, path, null, IngestText.newEntity(x.name, x.kind, x.what, sourceLink, today1)); done.add("new:" + name); }
+            else if (!page.contains(sourceLink)) { VaultWrite.write(c, path, page, IngestText.updateEntity(page, sourceLink, today1)); done.add("upd:" + name); }
+            if (done.contains("new:" + name)) {
+                String index = VaultWrite.read(c, "Knowledge/index.md");
+                if (index != null) VaultWrite.write(c, "Knowledge/index.md", index, IngestText.entityIndex(index, "[[Knowledge/Entities/" + x.name + "|" + x.name + "]]", x.kind, x.what));
+            }
+            step(prog, ek, done, name);
+        }
         if (!done.contains("cards")) { // the curiosity question and recall cards, written into the note the "source" step made
             String before = VaultWrite.read(c, sourcePath);
             if (before != null) {
@@ -183,6 +212,7 @@ final class Ingest {
                 String after = CardPrompt.apply(before, plan.optString("curiosity_question"), CardPrompt.quality(raw.length()), CardPrompt.validate(sourcePath, proposed));
                 after = made(after, "topics", topics, done);
                 after = madePeople(after, people, done);
+                after = madeEntities(after, entities, done);
                 if (!after.equals(before)) VaultWrite.write(c, sourcePath, before, after);
             }
             step(prog, ek, done, "cards");
@@ -243,6 +273,15 @@ final class Ingest {
         String out = note;
         if (!fresh.isEmpty()) out = NoteEdit.setKey(out, "made-" + kind + "-new", "[" + String.join(", ", fresh) + "]");
         if (!touched.isEmpty()) out = NoteEdit.setKey(out, "made-" + kind + "-updated", "[" + String.join(", ", touched) + "]");
+        return out;
+    }
+
+    private static String madeEntities(String note, List<Entity> entities, Set<String> done) {
+        List<String> fresh = new ArrayList<>(), touched = new ArrayList<>();
+        for (Entity x : entities) { if (done.contains("new:entity:" + x.name)) fresh.add("\"[[" + x.name + "]]\""); else touched.add("\"[[" + x.name + "]]\""); }
+        String out = note;
+        if (!fresh.isEmpty()) out = NoteEdit.setKey(out, "made-entities-new", "[" + String.join(", ", fresh) + "]");
+        if (!touched.isEmpty()) out = NoteEdit.setKey(out, "made-entities-updated", "[" + String.join(", ", touched) + "]");
         return out;
     }
 
