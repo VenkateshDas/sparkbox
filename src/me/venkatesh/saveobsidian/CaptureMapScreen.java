@@ -62,7 +62,7 @@ final class CaptureMapScreen extends Screen {
         if (r[2].equals("new")) row.addView(ui.chip("New", 1));
         row.addView(ui.text("  ›", 17, Typeface.DEFAULT, ui.sub));
         if (to != null) {
-            row.setOnClickListener(v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, to.path)));
+            row.setOnClickListener(v -> host.openNote(to.path));
             Ui.buttonRole(row);
         }
         return row;

@@ -184,6 +184,21 @@ public final class Feed {
         return out;
     }
 
+    /** About `width` characters of the text around the first query word found, with an ellipsis on a cut side. "" when no word is found. */
+    public static String snippet(String text, String query, int width) {
+        String flat = text.replaceAll("\\s+", " ").trim(), low = flat.toLowerCase(Locale.ROOT);
+        int at = -1;
+        for (String w : query.toLowerCase(Locale.ROOT).split("\\s+")) {
+            if (w.isEmpty()) continue;
+            int i = low.indexOf(w);
+            if (i >= 0 && (at < 0 || i < at)) at = i;
+        }
+        if (at < 0) return "";
+        int from = Math.max(0, at - width / 3), to = Math.min(flat.length(), from + width);
+        from = Math.max(0, Math.min(from, to - width));
+        return (from > 0 ? "…" : "") + flat.substring(from, to).trim() + (to < flat.length() ? "…" : "");
+    }
+
     /** The items a filter chip shows: All, Craft, Life, Sources, Topics, People. People appear only under their own chip. */
     public static List<Item> filter(List<Item> items, String chip) {
         List<Item> out = new ArrayList<>();

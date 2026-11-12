@@ -7,6 +7,7 @@ import me.venkatesh.saveobsidian.Vault;
 import me.venkatesh.saveobsidian.Layout;
 import me.venkatesh.saveobsidian.Lane;
 import me.venkatesh.saveobsidian.Feed;
+import me.venkatesh.saveobsidian.NoteEdit;
 import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
@@ -68,6 +69,7 @@ public class CaptureTest {
         editFailureChecks();
         vaultChecks();
         feedChecks();
+        noteEditChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
@@ -162,7 +164,27 @@ public class CaptureTest {
         check(sources == 5 && topics == 1 && people == 1); // 4 notes + 1 capture; the duplicate capture is hidden; T1 has two fresh sources
         check(Feed.filter(items, "All").size() == 6 && Feed.filter(items, "People").size() == 1 && Feed.filter(items, "Topics").size() == 1 && Feed.filter(items, "Craft").size() == 5);
         check(Feed.filter(items, "Sources").size() == 5 && Feed.filter(items, "Life").isEmpty());
+        check(Feed.snippet("A long text about designing deterministic test harnesses before generating code in factories", "harnesses", 40).contains("harnesses") && Feed.snippet("short", "zzz", 40).isEmpty() && Feed.snippet("x harness y", "harness", 40).equals("x harness y"));
         check(Feed.age(java.time.LocalDateTime.of(2026, 11, 9, 0, 0), false, now).equals("3d ago") && Feed.age(java.time.LocalDateTime.of(2026, 11, 12, 0, 0), false, now).equals("Today"));
+    }
+
+    static void noteEditChecks() {
+        String note = "---\ntype: source\n---\n\n# T\n\n## Why I captured this\nBecause.\n\n## Raw Content\n```\n## not a heading\n```\ntext\n\n## Claude's Extraction\n- x\n";
+        String a = NoteEdit.setSection(note, "My ideas", "Mine\nline two", "Why I captured this");
+        check(a.contains("## Why I captured this\nBecause.\n\n## My ideas\nMine\nline two\n\n## Raw Content")); // added after Why, other sections untouched
+        check(NoteEdit.setSection(a, "My ideas", "Mine\nline two", "Why I captured this").equals(a)); // applying twice changes nothing
+        String b = NoteEdit.setSection(a, "My ideas", "Changed", "Why I captured this");
+        check(b.contains("## My ideas\nChanged\n\n## Raw Content") && !b.contains("line two") && b.contains("## not a heading"));
+        check(NoteEdit.setSection(b, "My ideas", "  ", "Why I captured this").equals(note)); // an empty body removes the section
+        check(NoteEdit.setSection(note, "My ideas", "Z").contains("- x\n\n## My ideas\nZ\n") && NoteEdit.setSection(note, "My ideas", "Z").endsWith("Z\n")); // no anchor: at the end
+        String crlf = NoteEdit.setSection(note.replace("\n", "\r\n"), "My ideas", "Q", "Why I captured this");
+        check(crlf.contains("## My ideas\r\nQ\r\n") && !crlf.replace("\r\n", "").contains("\n"));
+        String raw = NoteEdit.setSection("# T\n\n## Raw Content\n```\n## My ideas\n```\n", "My ideas", "Real");
+        check(raw.contains("```\n## My ideas\n```") && raw.endsWith("## My ideas\nReal\n")); // a heading inside a fence is not a section
+        String topic = NoteEdit.setSection("# T\n\n## Core Mechanism\nPlain.\n\n## Key Claims\n| a |\n", "My take", NoteEdit.takeBody("I think so.", "2026-11-12"), "Core Mechanism");
+        check(topic.contains("Plain.\n\n## My take\nI think so.\n\nEdited: 2026-11-12\n\n## Key Claims"));
+        String sec = "I think so.\n\nEdited: 2026-11-12";
+        check(NoteEdit.takeText(sec).equals("I think so.") && NoteEdit.takeEdited(sec).equals("2026-11-12") && NoteEdit.takeBody(" ", "2026-11-12").isEmpty());
     }
 
     static void inboxFileChecks() {

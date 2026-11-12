@@ -345,8 +345,7 @@ final class FeedScreen extends Screen {
 
     private void open(Feed.Item it) {
         if (it.entry != null) return; // a capture with no note has no page of its own yet
-        if (it.kind.equals(Feed.SOURCE)) host.push(new UnitScreen(it.path));
-        else host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, it.path)); // the Topic page arrives in Phase 2
+        host.openNote(it.path);
     }
 
     private View emptyState(String which) {

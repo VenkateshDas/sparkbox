@@ -22,7 +22,8 @@ final class UnitScreen extends Screen {
     private final Handler main = new Handler(Looper.getMainLooper());
     private Ui ui;
     private LinearLayout page;
-    private String text = "";
+    private String text = "", draft;
+    private boolean loadedMine;
 
     UnitScreen(String path) { this.path = path; }
 
@@ -114,8 +115,7 @@ final class UnitScreen extends Screen {
             page.addView(ui.text("Description", 17, Ui.BOLD, ui.ink), ui.lp(16));
             page.addView(ui.text(n.description, 15, Typeface.DEFAULT, ui.ink), ui.lp(8));
         }
-        String mine = Vault.section(text, "My ideas");
-        if (!mine.isEmpty()) { LinearLayout m = block("In my words"); m.addView(ui.text(Vault.plain(mine), 15, Typeface.DEFAULT, ui.ink), ui.lp(4)); page.addView(m, ui.lp(12)); }
+        addMine(n);
 
         addedFrom(n);
 
@@ -125,6 +125,43 @@ final class UnitScreen extends Screen {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         p.topMargin = ui.dp(16);
         page.addView(ask, p);
+    }
+
+    /** "In my words": the note's "## My ideas" section as a text box. Save shows only when the text changed. */
+    private void addMine(Vault.Note n) {
+        final String saved = Vault.section(text, "My ideas");
+        if (draft == null || !loadedMine) { draft = saved; loadedMine = !text.isEmpty(); }
+        LinearLayout box = block("In my words");
+        android.widget.EditText edit = new android.widget.EditText(ui.c);
+        edit.setText(draft);
+        edit.setHint("Add your own words");
+        edit.setHintTextColor(ui.sub);
+        edit.setTextColor(ui.ink);
+        edit.setTextSize(15);
+        edit.setBackground(null);
+        edit.setPadding(0, ui.dp(8), 0, ui.dp(8));
+        edit.setMinHeight(ui.dp(48));
+        edit.setGravity(Gravity.TOP);
+        edit.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        box.addView(edit);
+        TextView save = ui.button("Save", true, null);
+        save.setVisibility(draft.trim().equals(saved.trim()) ? View.GONE : View.VISIBLE);
+        edit.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable s) { draft = s.toString(); save.setVisibility(draft.trim().equals(saved.trim()) ? View.GONE : View.VISIBLE); }
+        });
+        save.setOnClickListener(v -> {
+            save.setEnabled(false);
+            Edits.section(ui.c, n.path, "My ideas", draft, new String[]{"Why I captured this"}, problem -> {
+                if (problem.isEmpty()) { Toast.makeText(ui.c, "Saved", Toast.LENGTH_SHORT).show(); text = Vault.clipLines(NoteEdit.setSection(text, "My ideas", draft, "Why I captured this")); draw(); }
+                else { save.setEnabled(true); Toast.makeText(ui.c, problem, Toast.LENGTH_LONG).show(); }
+            });
+        });
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.topMargin = ui.dp(8);
+        box.addView(save, p);
+        page.addView(box, ui.lp(12));
     }
 
     private String waiting() {

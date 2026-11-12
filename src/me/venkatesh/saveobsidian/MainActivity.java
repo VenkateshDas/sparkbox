@@ -45,7 +45,7 @@ public class MainActivity extends Activity {
     }
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
-    private Screen screen(int index) { return index == 0 ? new FeedScreen() : new Placeholder(NAMES[index]); }
+    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : new Placeholder(NAMES[index]); }
 
     @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); }
 
@@ -119,6 +119,13 @@ public class MainActivity extends Activity {
         if (built[tab] == null) built[tab] = tabs[tab].build(ui);
         show(built[tab]);
         tabs[tab].onShow();
+    }
+
+    /** Opens a note in the right screen: a Source in its Unit, a Topic on its page, anything else in the note reader. */
+    void openNote(String path) {
+        if (Layout.inSources(path)) push(new UnitScreen(path));
+        else if (path.startsWith("Knowledge/Topics/")) push(new TopicScreen(path));
+        else startActivity(new android.content.Intent(this, VaultActivity.class).putExtra(VaultActivity.OPEN, path));
     }
 
     /** Opens a detail screen over the current tab. Back closes it. */
