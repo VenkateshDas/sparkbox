@@ -28,16 +28,18 @@ public final class Vault {
         /** The first 160 characters of "Why I captured this", and the word count of "Raw Content". */
         public final String why;
         public final int words;
+        /** The "## Cards" section as written ("" when the note has none), for Cards.parse. */
+        public final String cardsText;
         /** index.md and log.md: browsable and readable, but left out of search ranking. */
         public final boolean catalog;
 
         Note(String path, long mtime, String title, String type, String description, String updated, String digest, List<String> topics, List<String> links) {
-            this(path, mtime, title, type, description, updated, digest, topics, links, new LinkedHashMap<String, String>(), "", 0);
+            this(path, mtime, title, type, description, updated, digest, topics, links, new LinkedHashMap<String, String>(), "", 0, "");
         }
 
         Note(String path, long mtime, String title, String type, String description, String updated, String digest, List<String> topics, List<String> links,
-             Map<String, String> meta, String why, int words) {
-            this.meta = meta; this.why = why; this.words = words;
+             Map<String, String> meta, String why, int words, String cardsText) {
+            this.meta = meta; this.why = why; this.words = words; this.cardsText = cardsText;
             this.path = path; this.mtime = mtime; this.title = title; this.type = type; this.description = description;
             this.updated = updated; this.digest = digest; this.topics = topics; this.links = links;
             String name = name(path);
@@ -216,7 +218,8 @@ public final class Vault {
         if (why.length() > 160) why = why.substring(0, 160);
         String raw = section(body, "Raw Content");
         int words = raw.isEmpty() ? 0 : raw.trim().split("\\s+").length;
-        return new Note(path, mtime, title, fm.containsKey("type") ? fm.get("type") : "", description, updated, digest, topics, links, meta, why, words);
+        String cards = section(body, "Cards");
+        return new Note(path, mtime, title, fm.containsKey("type") ? fm.get("type") : "", description, updated, digest, topics, links, meta, why, words, cards.isEmpty() ? "" : "## Cards\n" + cards + "\n");
     }
 
     /** Text with [[a|b]] shown as b and bold/code marks dropped, for titles, previews and embedding. */

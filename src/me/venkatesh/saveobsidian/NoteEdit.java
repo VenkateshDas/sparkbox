@@ -15,9 +15,9 @@ public final class NoteEdit {
 
     private static final Pattern EDITED = Pattern.compile("(?m)^Edited:\\s*(\\d{4}-\\d{2}-\\d{2})\\s*$");
 
-    private static boolean heading(String line) { return line.startsWith("## ") || line.equals("##"); }
+    static boolean heading(String line) { return line.startsWith("## ") || line.equals("##"); }
 
-    private static List<Boolean> fenced(List<String> lines) {
+    static List<Boolean> fenced(List<String> lines) {
         List<Boolean> out = new ArrayList<>();
         boolean in = false;
         for (String l : lines) {
@@ -30,14 +30,14 @@ public final class NoteEdit {
     }
 
     /** Index of the "## heading" line (case-insensitive), or -1. */
-    private static int find(List<String> lines, List<Boolean> fence, String heading) {
+    static int find(List<String> lines, List<Boolean> fence, String heading) {
         for (int i = 0; i < lines.size(); i++)
             if (!fence.get(i) && heading(lines.get(i)) && lines.get(i).substring(2).trim().equalsIgnoreCase(heading)) return i;
         return -1;
     }
 
     /** One past the last line of the section that starts at index i. */
-    private static int end(List<String> lines, List<Boolean> fence, int i) {
+    static int end(List<String> lines, List<Boolean> fence, int i) {
         int j = i + 1;
         while (j < lines.size() && !(heading(lines.get(j)) && !fence.get(j))) j++;
         return j;
@@ -97,4 +97,31 @@ public final class NoteEdit {
 
     /** A take body ready for setSection: the text and an Edited line, or "" when the text is empty. */
     public static String takeBody(String text, String isoDate) { return text.trim().isEmpty() ? "" : text.trim() + "\n\nEdited: " + isoDate; }
+
+    /**
+     * Sets one frontmatter key (added at the end of the frontmatter when missing, removed when value is null). A note with no frontmatter is returned
+     * unchanged: the app never invents one for a note it did not write.
+     */
+    public static String setKey(String text, String key, String value) {
+        boolean crlf = text.contains("\r\n");
+        List<String> lines = new ArrayList<>(Arrays.asList(text.replace("\r\n", "\n").split("\n", -1)));
+        if (lines.isEmpty() || !lines.get(0).equals("---")) return text;
+        int close = -1;
+        for (int i = 1; i < lines.size(); i++) if (lines.get(i).equals("---")) { close = i; break; }
+        if (close < 0) return text;
+        int at = -1, stop = -1;
+        for (int i = 1; i < close; i++) {
+            if (lines.get(i).startsWith(key + ":")) {
+                at = i;
+                stop = i + 1;
+                while (stop < close && (lines.get(stop).startsWith(" ") || lines.get(stop).startsWith("- "))) stop++; // a wrapped value or list under the key
+                break;
+            }
+        }
+        List<String> next = new ArrayList<>(lines.subList(0, at >= 0 ? at : close));
+        if (value != null) next.add(key + ": " + value.replace("\n", " "));
+        next.addAll(lines.subList(at >= 0 ? stop : close, lines.size()));
+        String out = String.join("\n", next);
+        return crlf ? out.replace("\n", "\r\n") : out;
+    }
 }

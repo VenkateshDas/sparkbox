@@ -58,7 +58,12 @@ final class VaultWrite {
      * Creates the file (before == null; missing folders are created) or replaces it, but only if it still holds exactly "before".
      * Throws Stale when it changed, and IOException when a new file's name is already taken.
      */
-    static void write(Context c, String path, String before, String after) throws Exception {
+    static void write(Context c, String path, String before, String after) throws Exception { write(c, path, before, after, true); }
+
+    /** Same checks as write, without the private backup. For edits that change one small block of a note, such as a graded card. */
+    static void writeNoBackup(Context c, String path, String before, String after) throws Exception { write(c, path, before, after, false); }
+
+    private static void write(Context c, String path, String before, String after, boolean backup) throws Exception {
         Uri tree = tree(c);
         android.content.ContentResolver resolver = c.getContentResolver();
         String[] parts = path.split("/");
@@ -83,9 +88,11 @@ final class VaultWrite {
             doc = DocumentsContract.buildDocumentUriUsingTree(tree, id);
             String now = VaultStore.text(c, doc);
             if (!now.equals(before)) throw new Stale(path);
-            File copy = new File(new File(c.getFilesDir(), "ingest-backup/" + RUN), path.replace('/', '_'));
-            copy.getParentFile().mkdirs();
-            Files.write(copy.toPath(), now.getBytes(StandardCharsets.UTF_8)); // the old text, in case an edit has to be undone by hand
+            if (backup) {
+                File copy = new File(new File(c.getFilesDir(), "ingest-backup/" + RUN), path.replace('/', '_'));
+                copy.getParentFile().mkdirs();
+                Files.write(copy.toPath(), now.getBytes(StandardCharsets.UTF_8)); // the old text, in case an edit has to be undone by hand
+            }
         }
         try (OutputStream out = resolver.openOutputStream(doc, "wt")) {
             if (out == null) throw new IOException("Vault unavailable");

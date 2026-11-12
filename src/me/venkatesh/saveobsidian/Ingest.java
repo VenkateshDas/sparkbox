@@ -31,7 +31,7 @@ final class Ingest {
         + "\"topics\": [{\"title\": \"...\", \"core\": \"one sentence on what this topic is (needed for a new topic)\", \"claims\": [{\"claim\": \"...\", \"confidence\": \"...\"}] (1 to 4 about this topic), "
         + "\"related\": [\"existing topic titles\"], \"open_questions\": [\"...\"]}] (1 to 4), "
         + "\"people\": [{\"name\": \"...\", \"role\": \"field or role, from the page only\"}] (0 to 4: the author and people the page is about), "
-        + "\"relevance_flags\": [\"how this connects to the user's Why or Ideas, if it does\"]}. "
+        + CardPrompt.ASK + ", \"relevance_flags\": [\"how this connects to the user's Why or Ideas, if it does\"]}. "
         + "Use an existing topic or person name exactly when it is the same subject; create a new topic only when none fits. Confidence is low for a single source or an unverified claim. "
         + "Never invent facts, names or numbers that are not in the page. Titles are plain words: no slashes, colons or brackets.";
 
@@ -173,6 +173,20 @@ final class Ingest {
             else if (!page.contains(sourceLink)) VaultWrite.write(c, path, page, IngestText.updatePerson(page, sourceLink));
             step(prog, ek, done, name);
         }
+        if (!done.contains("cards")) { // the curiosity question and recall cards, written into the note the "source" step made
+            String before = VaultWrite.read(c, sourcePath);
+            if (before != null) {
+                String raw = Content.load(c, e.url, 400000);
+                List<String[]> proposed = new ArrayList<>();
+                JSONArray rc = plan.optJSONArray("recall_cards");
+                for (int i = 0; rc != null && i < rc.length(); i++) { JSONObject o = rc.optJSONObject(i); if (o != null) proposed.add(new String[]{o.optString("q"), o.optString("a"), o.optString("basis"), o.optString("confidence")}); }
+                String after = CardPrompt.apply(before, plan.optString("curiosity_question"), CardPrompt.quality(raw.length()), CardPrompt.validate(sourcePath, proposed));
+                after = made(after, "topics", topics, done);
+                after = madePeople(after, people, done);
+                if (!after.equals(before)) VaultWrite.write(c, sourcePath, before, after);
+            }
+            step(prog, ek, done, "cards");
+        }
         if (!done.contains("kidx")) {
             String text = VaultWrite.read(c, "Knowledge/index.md");
             if (text != null) {
@@ -220,6 +234,25 @@ final class Ingest {
         prog.edit().remove(ek).remove("plan:" + ek).remove("tries:" + ek).apply();
         Usage.hit(c, "ingest");
         VaultStore.last = null; // the next scan picks up the new and changed notes
+    }
+
+    /** made-topics-new and made-topics-updated from what this run created or touched. */
+    private static String made(String note, String kind, List<Topic> topics, Set<String> done) {
+        List<String> fresh = new ArrayList<>(), touched = new ArrayList<>();
+        for (Topic t : topics) { if (done.contains("new:topic:" + t.title)) fresh.add("\"[[" + t.title + "]]\""); else if (done.contains("upd:topic:" + t.title)) touched.add("\"[[" + t.title + "]]\""); }
+        String out = note;
+        if (!fresh.isEmpty()) out = NoteEdit.setKey(out, "made-" + kind + "-new", "[" + String.join(", ", fresh) + "]");
+        if (!touched.isEmpty()) out = NoteEdit.setKey(out, "made-" + kind + "-updated", "[" + String.join(", ", touched) + "]");
+        return out;
+    }
+
+    private static String madePeople(String note, List<Person> people, Set<String> done) {
+        List<String> fresh = new ArrayList<>(), touched = new ArrayList<>();
+        for (Person p : people) { if (done.contains("new:person:" + p.name)) fresh.add("\"[[" + p.name + "]]\""); else touched.add("\"[[" + p.name + "]]\""); }
+        String out = note;
+        if (!fresh.isEmpty()) out = NoteEdit.setKey(out, "made-people-new", "[" + String.join(", ", fresh) + "]");
+        if (!touched.isEmpty()) out = NoteEdit.setKey(out, "made-people-updated", "[" + String.join(", ", touched) + "]");
+        return out;
     }
 
     private static void step(SharedPreferences prog, String ek, Set<String> done, String name) {
