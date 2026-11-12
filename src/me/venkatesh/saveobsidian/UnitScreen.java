@@ -95,7 +95,7 @@ final class UnitScreen extends Screen {
         List<String> claims = Vault.bullets(text, "Key claims");
         String summary = Vault.section(text, "Summary");
         if (processed) {
-            if (summary.isEmpty() && !claims.isEmpty()) summary = Vault.plain(claims.get(0)).replaceAll("\\s*\\((high|medium|low)\\)\\s*$", "");
+            if (summary.isEmpty() && !claims.isEmpty()) { summary = Vault.plain(claims.get(0)).replaceAll("\\s*\\((high|medium|low)\\)\\s*$", ""); claims = new ArrayList<>(claims.subList(1, claims.size())); } // the first claim became the summary, so it is not listed twice
             if (summary.isEmpty()) summary = n.description;
             if (!summary.isEmpty()) { LinearLayout s = block("Summary"); s.addView(ui.text(Vault.plain(summary), 15, Typeface.DEFAULT, ui.ink), ui.lp(4)); page.addView(s, ui.lp(12)); }
             if (!claims.isEmpty()) {
@@ -106,7 +106,7 @@ final class UnitScreen extends Screen {
                     LinearLayout row = new LinearLayout(ui.c);
                     row.setOrientation(LinearLayout.VERTICAL);
                     row.addView(ui.text(shown, 15, Typeface.DEFAULT, ui.ink));
-                    if (low) row.addView(ui.chip("low confidence", 2), ui.lp(4));
+                    if (low) { LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); cp.topMargin = ui.dp(4); row.addView(ui.chip("low confidence", 2), cp); }
                     page.addView(row, ui.lp(8));
                 }
             }

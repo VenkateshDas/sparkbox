@@ -334,6 +334,7 @@ final class FeedScreen extends Screen {
         if (!it.made.isEmpty()) card.addView(ui.text(it.made, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (it.entry == null) {
             TextView ask = ui.button("Ask", false, v -> host.startActivity(new Intent(host, AskActivity.class).putExtra(AskActivity.QUESTION, "Tell me about " + it.title)));
+            ask.setMinWidth(ui.dp(96));
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             p.topMargin = ui.dp(12);
             card.addView(ask, p);
