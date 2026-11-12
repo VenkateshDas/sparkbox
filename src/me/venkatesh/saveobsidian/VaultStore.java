@@ -65,7 +65,9 @@ final class VaultStore {
         long cacheMs = System.currentTimeMillis() - started;
         int[] counts = new int[2]; // re-read, kept
         String rootId = DocumentsContract.getTreeDocumentId(tree);
-        for (Row top : children(c, tree, rootId)) {
+        List<Row> tops = children(c, tree, rootId);
+        if (tops == null) throw new java.io.IOException("The vault folder cannot be read right now.");
+        for (Row top : tops) {
             boolean wanted = false;
             for (String r : ROOTS) wanted |= r.equals(top.name);
             if (top.dir && wanted) walk(c, tree, top, top.name, old, fresh, counts);
@@ -91,12 +93,17 @@ final class VaultStore {
                 r.modified = q.isNull(3) ? 0 : q.getLong(3); r.size = q.isNull(4) ? -1 : q.getLong(4);
                 if (r.name != null && !r.name.startsWith(".")) rows.add(r); // .obsidian, .git, .env stay unseen
             }
-        } catch (RuntimeException unreadable) { }
+        } catch (RuntimeException unreadable) { return null; } // null = could not list, which is not the same as empty
         return rows;
     }
 
     private static void walk(Context c, Uri tree, Row dir, String path, Map<String, Cached> old, Map<String, Cached> fresh, int[] counts) {
-        for (Row r : children(c, tree, dir.id)) {
+        List<Row> rows = children(c, tree, dir.id);
+        if (rows == null) { // keep what was known about this folder rather than dropping its notes
+            for (Map.Entry<String, Cached> e : old.entrySet()) if (e.getKey().startsWith(path + "/")) { fresh.put(e.getKey(), e.getValue()); counts[1]++; }
+            return;
+        }
+        for (Row r : rows) {
             String p = path + "/" + r.name;
             if (r.dir) { walk(c, tree, r, p, old, fresh, counts); continue; }
             if (!r.name.endsWith(".md") || Layout.conflict(r.name) || p.equals(Layout.NEW + "/Inbox.md") || p.equals(Layout.OLD + "/Inbox.md") || r.size > MAX_NOTE) continue;

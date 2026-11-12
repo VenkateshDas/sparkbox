@@ -248,6 +248,7 @@ public class CaptureTest {
         check(g1.interval == 1 && g1.reps == 1 && g1.due == n + DAYMS && g1.ease == 2.5);
         Cards.State g2 = Sched.next(g1, "good", n), g3 = Sched.next(g2, "good", n);
         check(g2.interval == 3 && g3.interval == 8 && g3.reps == 3); // 3 * 2.5 = 7.5, rounded
+        check(Sched.next(Sched.next(null, "easy", n), "good", n).interval >= 4); // Easy then Good never shrinks the interval
         check(Sched.next(null, "easy", n).interval == 4 && Sched.next(null, "hard", n).interval == 1 && Sched.next(g3, "easy", n).interval == 26 && Sched.next(g3, "easy", n).ease == 2.65);
         Cards.State hard = Sched.next(g3, "hard", n);
         check(hard.interval == 10 && Math.abs(hard.ease - 2.35) < 1e-9);

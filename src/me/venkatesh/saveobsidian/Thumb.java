@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 
 /** Thumbnail for a capture: the page's og:image, a YouTube frame, or the attached photo. A coloured letter tile stands in until (or unless) one exists. */
 final class Thumb {
+    static { System.setProperty("java.net.preferIPv6Addresses", "false"); System.setProperty("java.net.preferIPv4Stack", "true"); } // some mobile networks resolve IPv6 but cannot route it: the connect then stalls until it times out
     private static final ExecutorService POOL = Executors.newFixedThreadPool(3);
     private static final long RETRY_MS = 3L * 24 * 3600 * 1000; // a page with no image is asked again after 3 days
 
@@ -86,7 +87,7 @@ final class Thumb {
     static Bitmap get(Context c, InboxFile.Entry e) {
         String id = e.file.isEmpty() ? e.url : e.file;
         if (id.isEmpty() || e.text) return null;
-        File dir = new File(c.getCacheDir(), "thumbs6");
+        File dir = new File(c.getCacheDir(), "thumbs7");
         dir.mkdirs();
         String key = Long.toHexString(Index.key(id));
         File jpg = new File(dir, key + ".jpg"), none = new File(dir, key + ".none");
