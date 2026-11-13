@@ -98,22 +98,22 @@ private fun AskUi(s: AskState, a: AskActions) {
     LaunchedEffect(count, s.live.length / 200) { if (count > 0) list.animateScrollToItem(count - 1) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column {
-            TopBar("Ask", null) { if (s.items.any { it is Answer || it is Question } && !s.running) TextButton(onClick = { a.newChat() }) { Text("New chat") } }
+            TopBar("Scout", null) { if (s.items.any { it is Answer || it is Question } && !s.running) TextButton(onClick = { a.newChat() }) { Text("New chat") } }
             if (s.subtitle.isNotEmpty()) Text(s.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, top = 6.dp))
-            if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Ask needs a network connection.", false)) }
+            if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Scout needs a network connection.", false)) }
             LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(s.items) { _, it -> Item(it, a) }
                 if (s.running) item { Running(s, a) }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                val send = { val q = s.input.trim(); if (q.isNotEmpty() && !s.running && !s.offline) a.ask(q) }
+                val send = { val q = s.input.trim(); if (q.isNotEmpty() && !s.offline) a.ask(q) } // while it runs, a message steers Scout
                 OutlinedTextField(value = s.input, onValueChange = { s.input(it); a.draft(it) }, enabled = !s.offline,
-                    placeholder = { Text(if (s.offline) "You are offline" else "Ask your vault") }, maxLines = 4, shape = RoundedCornerShape(24.dp),
+                    placeholder = { Text(if (s.offline) "You are offline" else if (s.running) "Steer Scout…" else "Ask Scout") }, maxLines = 4, shape = RoundedCornerShape(24.dp),
                     textStyle = MaterialTheme.typography.bodyLarge,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { send() }), modifier = Modifier.weight(1f))
-                FilledIconButton(onClick = send, enabled = !s.running && !s.offline && s.input.isNotBlank(), modifier = Modifier.padding(start = 8.dp).size(48.dp)) {
+                FilledIconButton(onClick = send, enabled = !s.offline && s.input.isNotBlank(), modifier = Modifier.padding(start = 8.dp).size(48.dp)) {
                     Text("↑", style = MaterialTheme.typography.titleLarge)
                 }
             }
@@ -151,7 +151,7 @@ private fun Item(it: AskItem, a: AskActions) {
             Surface(shape = RoundedCornerShape(14.dp), color = cs.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Not in your knowledge base", style = MaterialTheme.typography.titleMedium)
-                    Text("No notes cover this. Ask does not guess.", style = MaterialTheme.typography.bodyLarge, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    Text("No notes cover this. Scout does not guess.", style = MaterialTheme.typography.bodyLarge, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                     Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { a.searchVault() }, modifier = Modifier.weight(1f)) { Text("Search vault") }
                         OutlinedButton(onClick = { a.addNote() }, modifier = Modifier.weight(1f)) { Text("Add a note") }

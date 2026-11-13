@@ -400,7 +400,7 @@ public final class Agent {
     /** Never throws: an error, an exception or a stop becomes an error result the model can read. */
     private void run(Call c) {
         try {
-            emit("tool_execution_start", new JSONObject().put("id", c.id).put("name", c.name));
+            emit("tool_execution_start", new JSONObject().put("id", c.id).put("name", c.name).put("args", c.args == null ? new JSONObject() : c.args));
             if (c.error != null) c.result = Tool.Result.error(c.error);
             else if (cancel.stopped()) c.result = Tool.Result.error("Operation aborted");
             else {

@@ -30,6 +30,8 @@ public final class VaultTools {
         void write(String path, String before, String after) throws Exception;
         /** Notes by meaning and keywords, formatted for the model. */
         String search(String query) throws Exception;
+        /** False for notes the app manages itself (the inbox): shown to the model as read-only. */
+        default boolean canWrite(String path) { return true; }
     }
 
     /** Asked before every change; false means the user said no. May block on the user. */
@@ -283,7 +285,7 @@ public final class VaultTools {
     // ---- edit and write ----
 
     private boolean writable(String path) {
-        if (!path.toLowerCase(Locale.ROOT).endsWith(".md") || path.contains("..") || path.contains("//")) return false;
+        if (!path.toLowerCase(Locale.ROOT).endsWith(".md") || path.contains("..") || path.contains("//") || !fs.canWrite(path)) return false;
         for (String r : roots) if (path.startsWith(r + "/")) return true;
         return false;
     }

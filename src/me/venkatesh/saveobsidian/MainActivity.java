@@ -18,7 +18,7 @@ import java.util.List;
  */
 public class MainActivity extends androidx.activity.ComponentActivity {
     static final String TAB = "tab";
-    private static final String[] NAMES = {"Feed", "Spark", "Search", "Ask"};
+    private static final String[] NAMES = {"Feed", "Spark", "Search", "Scout"};
     private static final int[] ICONS = {R.drawable.ic_nav_feed, R.drawable.ic_nav_spark, R.drawable.ic_nav_search, R.drawable.ic_nav_ask};
 
     private Ui ui;

@@ -79,7 +79,7 @@ final class SettingsScreen extends Screen {
         boolean keySaved = !Model.key(ui.c).isEmpty();
         ai.add(row("OpenRouter key", keySaved ? "Saved" : "Not set", () -> keyDialog()));
         ai.add(row("Tagging model", prefs().getString("aiModel", Model.DEFAULT), () -> modelDialog("Model for tags", "An OpenRouter model id.", "aiModel", prefs().getString("aiModel", Model.DEFAULT), Model.DEFAULT)));
-        ai.add(row("Ask model", Ask.model(ui.c), () -> modelDialog("Model for Ask", "It must support tool calls.", "askModel", Ask.model(ui.c), Ask.DEFAULT)));
+        ai.add(row("Scout model", Ask.model(ui.c), () -> modelDialog("Model for Scout", "It must support tool calls.", "askModel", Ask.model(ui.c), Ask.DEFAULT)));
         ai.add(row("Card model", CardGen.model(ui.c), () -> modelDialog("Model for cards", "An OpenRouter model id.", "cardModel", CardGen.model(ui.c), CardGen.DEFAULT_MODEL)));
         if (keySaved) {
             boolean describe = prefs().getBoolean("describe", false);
