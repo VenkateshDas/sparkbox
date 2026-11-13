@@ -16,17 +16,20 @@ Measured 2026-11-13 on the OnePlus phone (USB, `3C167D00FY000000`), build.py APK
 
 Memory is high for a list app: almost all of it is decoded images (heap plus native bitmaps) of the Feed cards. Worth watching in Milestone 4 (Coil with sized requests).
 
-## Not yet measured (needs a capture, which writes to the real inbox and vault)
+## Measured with real captures
 
-- Feed scroll jank **while an ingest runs** (gate b). Idle numbers above are the stand-in until then.
-- Gate c (kill during processing, restart, capture resumes and is intact).
-- Screenshots of failed processing and of an interrupted Ask answer (an answer costs a model call).
+Three Wikipedia links were shared into the real inbox. The vault was copied off the phone first and restored byte for byte afterwards. 11 new notes were deleted, 5 index and log files were put back, and a diff against the copy shows no change.
 
-Both need a test link shared into the real inbox, processed into real notes, then removed. Run them once the owner agrees to that, or against a throwaway vault.
+| What | Value |
+|---|---|
+| Ingest time per capture | 8.3 s, 20.9 s, 39.3 s |
+| Feed scroll **while an ingest runs** | 1141 frames, **0.35 % janky**, p50 5 ms, p90 7 ms, p99 10 ms, 4 deadline misses |
+| Kill during processing (gate c) | **Failed at first.** A force-stop cancels the app's scheduled jobs, and opening the app never scheduled processing again, so the capture sat in the inbox until the next share. **Fixed:** MainActivity now schedules the background job on open. After the fix, reopening resumed the capture and it finished in 39 s; the capture stayed intact in the inbox until filed. |
+| Ask cancel | The answer stopped and showed "Cancelled."; with the per-request token it no longer touches background work |
 
 ## Screenshots
 
-`docs/baseline/` holds 21 screenshots, sized to 1000 px: `{dark,light,light-font130}-{feed,spark,search,search-empty,ask,source,settings}.jpg`. `light-font130` is the system font scale at 1.3.
+`docs/baseline/` holds 23 screenshots, sized to 1000 px: `{dark,light,light-font130}-{feed,spark,search,search-empty,ask,source,settings}.jpg`. `light-font130` is the system font scale at 1.3. Also `dark-feed-attention.jpg` (a capture that failed processing) and `dark-ask-stopped.jpg` (an answer cancelled mid-way).
 
 What they show:
 - Light and dark both readable; no content under the status or navigation bars.
@@ -36,7 +39,7 @@ What they show:
 ## Release gates for Milestones 3 to 6
 
 a. Cold start to usable Feed: median of 5 warm-cache runs must stay within **+15 %** of 253 ms (so at most 291 ms), and first frame within +15 % of 296 ms (at most 340 ms).
-b. Feed scroll jank while ingest runs must not get worse than the measured baseline (to be recorded; until then, idle jank at most 1 %).
+b. Feed scroll jank while an ingest runs must stay at most 1 % janky frames and p99 at most 16 ms (baseline 0.35 %, 10 ms).
 c. A captured link is never lost when the app is killed during processing: kill, restart, it resumes and the original capture is intact.
 
 APK size is recorded, not a gate.

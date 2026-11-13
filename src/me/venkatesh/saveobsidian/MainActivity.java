@@ -39,6 +39,7 @@ public class MainActivity extends Activity {
         draw();
         CardGen.resume(this);
         Reminder.schedule(this);
+        BackgroundJob.schedule(this); // a force-stop or crash drops scheduled jobs: opening the app picks up unfinished captures
         if (state == null) handleIntent(getIntent());
     }
 
