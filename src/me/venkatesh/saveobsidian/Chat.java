@@ -69,7 +69,7 @@ public final class Chat {
                 continue;
             }
             boolean corrected = i + 1 < messages.size() && messages.get(i + 1).optString("content").startsWith(CHECK);
-            if (!content.isEmpty() && m.optString("stopReason", "stop").equals("stop") && !corrected) {
+            if (!content.isEmpty() && (m.optString("stopReason", "stop").equals("stop") || m.optString("stopReason").equals("length")) && !corrected) {
                 long end = m.optLong("ts");
                 if (!steps.isEmpty()) out.add(new Row("work", String.join("\n", steps), userAt > 0 && end >= userAt ? (end - userAt) / 1000 : UNKNOWN));
                 steps.clear();

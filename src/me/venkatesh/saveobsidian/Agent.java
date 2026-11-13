@@ -63,7 +63,7 @@ public final class Agent {
     private final List<String> steering = new ArrayList<>(), followUps = new ArrayList<>();
     private final java.util.concurrent.CopyOnWriteArrayList<Listener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     public Hooks hooks = new Hooks() { };
-    public int maxTokens = 1800, maxTurns = 8;
+    public int maxTokens = 3000, maxTurns = 8;
     /** Applied to the text of a final answer (no tool calls) before it is stored and shown: the place to drop what cannot be verified. */
     public java.util.function.UnaryOperator<String> polish = t -> t;
     /** Queue modes (Pi's steeringMode / followUpMode): false delivers one queued message per turn, true delivers all of them. */
@@ -181,7 +181,7 @@ public final class Agent {
             answerInterruptedCalls();
             JSONObject end = messages.get(messages.size() - 1);
             String stop = end.optString("stopReason");
-            if (end.optString("role").equals("assistant") && !(stop.equals("error") || stop.equals("aborted") || stop.equals("max-steps"))) {
+            if (end.optString("role").equals("assistant") && !(stop.equals("error") || stop.equals("aborted") || stop.equals("max-steps") || stop.equals("length"))) {
                 List<String> next = drain(steering, steerAll);
                 if (next.isEmpty()) next = drain(followUps, followUpAll);
                 if (next.isEmpty()) throw new IllegalStateException("Cannot continue after a finished answer; queue a message first");
@@ -211,6 +211,8 @@ public final class Agent {
         JSONObject last = null;
         int turns = 0;
         List<String> pending = drain(steering, steerAll); // typed while idle or before the run started
+        final int budget = maxTokens;
+        boolean grown = false;
         outer:
         while (true) {
             boolean more = true;
@@ -228,6 +230,9 @@ public final class Agent {
                 }
                 pending = new ArrayList<>();
                 last = streamAssistant(turns == maxTurns);
+                if (last.optString("stopReason").equals("length") && last.optJSONArray("tool_calls") == null && !grown) { // the budget went on thinking or the answer was cut: once more with double, the cut one is dropped
+                    grown = true; maxTokens = budget * 2; turns--; more = true; continue;
+                }
                 if (last.optString("stopReason").equals("stop") && last.optJSONArray("tool_calls") == null) try { last.put("content", polish.apply(last.optString("content"))); } catch (Exception keep) { }
                 add(last);
                 emit("message_end", wrap("message", last));
@@ -250,6 +255,7 @@ public final class Agent {
             pending = drain(followUps, followUpAll); // the agent would stop here
             if (pending.isEmpty()) break;
         }
+        maxTokens = budget;
         emit("agent_end", new JSONObject());
         return last;
     }

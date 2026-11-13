@@ -110,6 +110,13 @@ final class AgentTest {
         a.prompt("go");
         check(ran[0] == 0 && a.messages().get(2).getString("content").contains("token limit") && a.messages().get(1).getString("stopReason").equals("length"));
 
+        // an answer cut by the token limit is asked again once with double the budget; the cut one is not kept, and the budget returns
+        f = new Faux().then(new JSONObject().put("content", "").put("finish_reason", "length"), say("whole"));
+        a = agent(f, new Cancel());
+        int base = a.maxTokens;
+        a.prompt("go");
+        check(f.requests.get(1).getInt("max_tokens") == base * 2 && a.messages().size() == 2 && a.messages().get(1).getString("content").equals("whole") && a.maxTokens == base);
+
         // prepareArguments shim runs before validation; coercion turns "5" into 5
         Tool shim = new Tool("shim", "shim", schema("count", "integer"), false) {
             public JSONObject prepareArguments(JSONObject args) throws org.json.JSONException { if (args.has("n")) args.put("count", args.remove("n")); return args; }

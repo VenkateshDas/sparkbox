@@ -25,7 +25,7 @@ public class ScoutService extends Service {
         nm.createNotificationChannel(new NotificationChannel(CHANNEL, "Scout is working", NotificationManager.IMPORTANCE_LOW));
         Notification n = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.notification_icon).setContentTitle("Scout is working")
             .setContentText("Your chats keep running while you are away").setOngoing(true).build();
-        startForeground(5, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        if (android.os.Build.VERSION.SDK_INT >= 29) startForeground(5, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); else startForeground(5, n);
         if (ScoutRuns.active() == 0) stopSelf();
         return START_NOT_STICKY;
     }

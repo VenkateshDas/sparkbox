@@ -134,8 +134,23 @@ class AskState {
 
 object AskView {
     @JvmStatic fun create(c: Context, ui: Ui, state: AskState, a: AskActions): View = ComposeView(c).apply {
+        mdUi = ui
         setContent { SparkTheme(ui) { AskUi(state, a) } }
     }
+}
+
+private var mdUi: Ui? = null
+
+/** The answer's Markdown (headings, lists, tables, bold, code, links) drawn by the same renderer as the note viewer. */
+@Composable
+private fun Markdown(text: String) {
+    val ui = mdUi
+    if (ui == null) { Text(text, style = MaterialTheme.typography.bodyLarge); return }
+    androidx.compose.ui.viewinterop.AndroidView(modifier = Modifier.fillMaxWidth(), factory = { android.widget.TextView(it) }, update = { t ->
+        t.setTextColor(ui.ink); t.textSize = 15f; t.setLineSpacing(0f, 1.35f)
+        t.text = Md.render(ui, text, object : Md.Open { override fun open(rawTarget: String) {} }) // ponytail: note links are shown, not opened; Sources below open notes
+        t.movementMethod = android.text.method.LinkMovementMethod.getInstance()
+    })
 }
 
 @Composable
@@ -311,7 +326,7 @@ private fun Item(it: AskItem, a: AskActions) {
             Surface(shape = RoundedCornerShape(14.dp), color = cs.surfaceContainerLow, border = androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant)) {
                 Column(Modifier.padding(16.dp)) {
                     if (it.singleSource) Box(Modifier.padding(bottom = 10.dp)) { BlockUi(Banner("Single source: 1 note supports this.", false)) }
-                    SelectionContainer { Text(rich(it.text, cs.primary), style = MaterialTheme.typography.bodyLarge) }
+                    Markdown(it.text)
                 }
             }
             Sources("Sources", it.sources)
