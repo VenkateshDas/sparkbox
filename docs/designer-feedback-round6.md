@@ -1,5 +1,7 @@
 # Sparkbox: final design round
 
+> Historical: final design round notes. Palette and type decisions live on in `SparkTheme.kt`; type sizes were later reduced.
+
 Direction is fixed: your palette, system font. Deliver one clean folder. When every item below is done, we build.
 
 ## Approved. Do not change.

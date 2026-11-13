@@ -1,5 +1,7 @@
 # Sparkbox v1: implementation spec (rev 2)
 
+> Historical: the v1 build spec. It predates the Compose UI, Gradle and the concurrency rules; current structure is in [architecture.md](architecture.md).
+
 Status: ready to build. Audience: the engineer (or Claude session) who implements v1.
 Inputs: the approved screens (Claude Design canvas, 12 boards, dark and light), `docs/designer-feedback-round6.md`, `docs/product-brief.md`, the current code in `src/`, and the real vault "Tiny experiments".
 

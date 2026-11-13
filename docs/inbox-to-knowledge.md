@@ -1,5 +1,7 @@
 # Dropping the inbox: design
 
+> Historical: the design for capturing straight into Knowledge. Implemented as Ingest; see [architecture.md](architecture.md) → Background run.
+
 Request: capture straight into Knowledge instead of a staging inbox, and process the whole page at capture time so nothing waits for `Process inbox`.
 
 ## What exists today

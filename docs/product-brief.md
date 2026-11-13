@@ -1,5 +1,7 @@
 # Sparkbox product brief and data schema
 
+> Historical: the product brief given to the designer before v1. The product and data model it describes were built; current behaviour is in the [README](../README.md) and [architecture.md](architecture.md).
+
 For the product designer. Companion to the design canvas: https://claude.ai/artifact/YDW2SdgL3eqCPC8aCHPfsr (eight draft screens, sample data).
 
 ## 1. What Sparkbox is

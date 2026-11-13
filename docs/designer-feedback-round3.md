@@ -1,5 +1,7 @@
 # Sparkbox: feedback on design round 3
 
+> Historical: design review notes from round 3. The shipped screens are the Compose versions in `src/*View.kt`.
+
 For the product designer. Screens reviewed: Feed, Ask, Spark (question), Spark (revealed), plus DESIGN.md.
 
 ## Overall
