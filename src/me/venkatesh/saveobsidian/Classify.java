@@ -29,7 +29,7 @@ final class Classify {
             String user = "Title: " + title + "\nSource: " + Feed.host(url) + "\nSummary: " + summary + Enrich.notes(why, ideas)
                 + (guess.isEmpty() ? "" : "\nAnother reader guessed the folder: " + guess)
                 + "\nStart of the text:\n" + (page.length() > 2500 ? page.substring(0, 2500) : page);
-            JSONObject o = Model.completeJson(key, model(c), SYSTEM, user, 400);
+            JSONObject o = Model.completeJson(key, model(c), SYSTEM, user, 400, "lane_choice", Schemas.lane(), null);
             prefs.edit().remove("classifyProblem").apply();
             return Lane.pick(o.optString("lane"), o.optString("category"));
         } catch (Exception failed) {

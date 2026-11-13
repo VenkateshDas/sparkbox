@@ -79,7 +79,7 @@ final class Tagger {
             String[] result;
             try { result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page)); }
             catch (Exception failed) {
-                if (String.valueOf(failed.getMessage()).startsWith("Smart tags paused: OpenRouter answered 40")) throw failed; // bad key or no credit: every call would fail
+                if (String.valueOf(failed.getMessage()).startsWith("Smart tags paused: OpenRouter answered 40") || Net.offline(failed)) throw failed; // bad key or no credit: every call would fail
                 result = null; // a dropped connection or a refusal for this one capture: the others still get their turn
             }
             calls++;

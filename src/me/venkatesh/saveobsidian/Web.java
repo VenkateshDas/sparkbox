@@ -55,7 +55,8 @@ final class Web {
                 Reply r = once(address, attempt == 0 ? MOBILE : DESKTOP);
                 if (r.code == 403 || r.code == 401 || r.code == 429 || r.code >= 500) { last = new IOException("The site answered " + r.code); if (attempt < 2) { pause(700L * (attempt + 1)); continue; } return r; }
                 return r;
-            } catch (java.net.UnknownHostException | java.net.MalformedURLException final_) { throw final_; }
+            } catch (java.net.MalformedURLException final_) { throw final_; }
+            catch (java.net.UnknownHostException missing) { if (Net.online()) throw missing; last = missing; if (attempt < 2) pause(2000L * (attempt + 1)); } // a real dead address fails at once; a flaky lookup is tried again
             catch (IOException failed) { last = failed; if (attempt < 2) pause(700L * (attempt + 1)); }
         }
         throw last == null ? new IOException("Could not fetch the page") : last;

@@ -23,7 +23,11 @@ public class BackgroundJob extends JobService {
     static void now(Context c) {
         schedule(c);
         final Context app = c.getApplicationContext();
-        new Thread(() -> Tagger.run(app)).start();
+        new Thread(() -> {
+            Tagger.run(app);
+            long wait = Ingest.retryDelay(app); // an offline or failed capture comes back by itself, even when no job is running
+            if (wait >= 0) scheduleLater(app, wait, RETRY + 2);
+        }).start();
     }
 
     /** Comes back after a wait, for a capture whose processing failed and is due for another try. Replaces an earlier wait. */
