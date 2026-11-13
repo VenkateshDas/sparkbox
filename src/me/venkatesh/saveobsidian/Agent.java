@@ -192,6 +192,9 @@ public final class Agent {
         } finally { finish(last); }
     }
 
+    /** The start of an answer cut by the token limit, sent back with a request to go on (not stored on its own). */
+    private String carry = "";
+
     private void begin() {
         synchronized (lock) {
             if (running) throw new IllegalStateException("Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.");
@@ -213,6 +216,8 @@ public final class Agent {
         List<String> pending = drain(steering, steerAll); // typed while idle or before the run started
         final int budget = maxTokens;
         boolean grown = false;
+        int carries = 0;
+        carry = "";
         outer:
         while (true) {
             boolean more = true;
@@ -230,9 +235,14 @@ public final class Agent {
                 }
                 pending = new ArrayList<>();
                 last = streamAssistant(turns == maxTurns);
-                if (last.optString("stopReason").equals("length") && last.optJSONArray("tool_calls") == null && !grown) { // the budget went on thinking or the answer was cut: once more with double, the cut one is dropped
+                boolean cut = last.optString("stopReason").equals("length") && last.optJSONArray("tool_calls") == null;
+                if (cut && !last.optString("content").isEmpty() && carries++ < 4) { // the answer hit the token limit: keep what came, ask the model to go on, and store one joined answer
+                    carry += last.optString("content"); turns--; more = true; continue;
+                }
+                if (cut && last.optString("content").isEmpty() && !grown) { // the whole budget went on thinking: once more with double
                     grown = true; maxTokens = budget * 2; turns--; more = true; continue;
                 }
+                if (!carry.isEmpty()) try { last.put("content", carry + last.optString("content")); carry = ""; } catch (Exception impossible) { throw new IllegalStateException(impossible); }
                 if (last.optString("stopReason").equals("stop") && last.optJSONArray("tool_calls") == null) try { last.put("content", polish.apply(last.optString("content"))); } catch (Exception keep) { }
                 add(last);
                 emit("message_end", wrap("message", last));
@@ -307,6 +317,7 @@ public final class Agent {
         try {
             JSONArray llm = convertToLlm();
             if (finalTurn && !tools.isEmpty()) llm.put(new JSONObject().put("role", "user").put("content", "Answer now with what you have found."));
+            if (!carry.isEmpty()) llm.put(new JSONObject().put("role", "assistant").put("content", carry)).put(new JSONObject().put("role", "user").put("content", "Your answer was cut off. Continue exactly where it stopped, without repeating anything."));
             request.put("model", model).put("max_tokens", maxTokens).put("messages", llm);
             if (!tools.isEmpty() && !finalTurn) { JSONArray specs = new JSONArray(); for (Tool t : tools) specs.put(t.spec()); request.put("tools", specs); }
             hooks.prepareRequest(request);

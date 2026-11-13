@@ -117,6 +117,14 @@ final class AgentTest {
         a.prompt("go");
         check(f.requests.get(1).getInt("max_tokens") == base * 2 && a.messages().size() == 2 && a.messages().get(1).getString("content").equals("whole") && a.maxTokens == base);
 
+        // an answer cut mid-way is continued: the model is shown its own start, and one joined answer is stored
+        f = new Faux().then(new JSONObject().put("content", "one two ").put("finish_reason", "length"), say("three"));
+        a = agent(f, new Cancel());
+        a.prompt("go");
+        JSONArray cont = f.requests.get(1).getJSONArray("messages");
+        check(a.messages().size() == 2 && a.messages().get(1).getString("content").equals("one two three") && a.messages().get(1).getString("stopReason").equals("stop")
+            && cont.getJSONObject(cont.length() - 2).getString("content").equals("one two ") && cont.getJSONObject(cont.length() - 1).getString("role").equals("user"));
+
         // prepareArguments shim runs before validation; coercion turns "5" into 5
         Tool shim = new Tool("shim", "shim", schema("count", "integer"), false) {
             public JSONObject prepareArguments(JSONObject args) throws org.json.JSONException { if (args.has("n")) args.put("count", args.remove("n")); return args; }
