@@ -69,3 +69,14 @@ The first Compose Feed was slower (first frame 420 ms, usable 370 ms): the vault
 "Feed usable" is now logged when the rows are handed to Compose, one frame before they are drawn.
 
 Not re-run in this milestone: scroll jank during an ingest and the kill test (gate c). Ingest, capture and processing code are unchanged; the Feed only reads their state.
+
+## Milestone 5 (Source, Topic, notes list, Ask, Spark, Search in Compose)
+
+| What | Value | Gate |
+|---|---|---|
+| APK size | 1.72 MB | recorded |
+| First frame, median of 5 | 142 ms | a: pass |
+| Usable Feed, median of 5 | 208 ms | a: pass |
+| Feed scroll, idle | 0.00 % janky, p99 10 ms | b (idle): pass |
+
+Still on Views (they use Ui.java): Profile, Cards list, Make cards, Capture map, Capture detail, the vault browser (VaultActivity), Dashboard and the Quick capture sheet, plus the card editor and capture dialogs. Ui.java stays until those move. Link preview images still come from Thumb (a View inside Compose); Coil is not added yet.
