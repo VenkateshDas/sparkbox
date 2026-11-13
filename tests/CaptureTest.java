@@ -21,6 +21,9 @@ import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
+import me.venkatesh.saveobsidian.VaultLock;
+import me.venkatesh.saveobsidian.Cancel;
+import me.venkatesh.saveobsidian.RunGate;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -28,6 +31,7 @@ import java.util.Arrays;
 public class CaptureTest {
     static int count;
     public static void main(String[] args) throws Exception {
+        concurrency();
         check(Capture.firstUrl("A caption\nhttps://example.com/post?a=1&b=two+three\nRead it").equals("https://example.com/post?a=1&b=two+three"));
         check(Capture.firstUrl("https://youtu.be/Abc?t=42").equals("https://youtu.be/Abc?t=42"));
         check(Capture.pageTitle("<HTML><TITLE class='x'>You don&#x27;t\nneed long context</TITLE></HTML>").equals("You don&#x27;t\nneed long context"));
@@ -594,4 +598,77 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
     }
 
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("check #" + count); }
+
+    static void concurrency() throws Exception {
+        // cancel isolation: stopping Ask's token leaves background work running, and the reverse
+        Cancel ask = new Cancel(), background = new Cancel();
+        ask.stop();
+        check(ask.stopped() && !background.stopped());
+        Cancel ask2 = new Cancel(); background.stop();
+        check(background.stopped() && !ask2.stopped());
+        check(!Cancel.current().stopped()); // a thread with no run is never stopped
+        Cancel.current().halt();
+        check(!Cancel.current().stopped()); // and cannot be stopped by accident
+
+        // halt isolation: halting one run stops that run only; a new run gets a fresh switch, children inherit their run's
+        RunGate gate = new RunGate();
+        final Cancel[] first = new Cancel[1];
+        final boolean[] childSaw = new boolean[1];
+        java.util.concurrent.CountDownLatch in = new java.util.concurrent.CountDownLatch(1);
+        Thread a = new Thread(() -> {
+            try {
+                first[0] = gate.enter(60000, 1000);
+                in.countDown();
+                while (!Cancel.current().stopped()) Thread.sleep(5);
+                Thread child = new Thread(() -> childSaw[0] = Cancel.current().stopped());
+                child.start(); child.join();
+                gate.exit();
+            } catch (InterruptedException e) { }
+        });
+        a.start(); in.await();
+        check(gate.enter(60000, 1000) == null && gate.again); // busy, not hung: no second run
+        gate.halt();
+        a.join(2000);
+        check(first[0].stopped() && childSaw[0] && !a.isAlive());
+        Cancel second = gate.enter(60000, 1000);
+        check(second != null && second != first[0] && !second.stopped());
+        gate.exit();
+
+        // the hung-run escape stops the old run and waits; it never runs two at once
+        RunGate g2 = new RunGate();
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicBoolean overlap = new java.util.concurrent.atomic.AtomicBoolean(), inside = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread stuck = new Thread(() -> {
+            try { g2.enter(0, 0); inside.set(true); held.countDown(); while (!Cancel.current().stopped()) Thread.sleep(5); Thread.sleep(50); inside.set(false); g2.exit(); } catch (InterruptedException e) { }
+        });
+        stuck.start(); held.await();
+        Cancel next = g2.enter(0, 2000);
+        overlap.set(inside.get());
+        check(next != null && !overlap.get() && !stuck.isAlive());
+        g2.exit();
+        Thread deaf = new Thread(() -> { try { g2.enter(0, 0); Thread.sleep(400); g2.exit(); } catch (InterruptedException e) { } }); // ignores the stop
+        deaf.start(); Thread.sleep(50);
+        check(g2.enter(0, 50) == null); // still alive after the wait: skip, do not run beside it
+        deaf.join();
+
+        // lock serialization: two writers doing read, compute, write never lose an update
+        final int[] file = {0};
+        Runnable writer = () -> { for (int i = 0; i < 500; i++) { VaultLock.L.lock(); try { int read = file[0]; Thread.yield(); file[0] = read + 1; } finally { VaultLock.L.unlock(); } } };
+        Thread w1 = new Thread(writer), w2 = new Thread(writer);
+        w1.start(); w2.start(); w1.join(); w2.join();
+        check(file[0] == 1000);
+        // VerifiedEdit holds the same lock: another writer cannot slip in between its compare and its write
+        final byte[][] disk = {"a".getBytes(StandardCharsets.UTF_8)};
+        VaultLock.L.lock();
+        Thread edit = new Thread(() -> { try { VerifiedEdit.apply(disk[0], "b".getBytes(StandardCharsets.UTF_8), () -> disk[0], b -> disk[0] = b, (x, y) -> { }); } catch (Exception e) { } });
+        edit.start(); Thread.sleep(50);
+        check(edit.isAlive() && Arrays.equals(disk[0], "a".getBytes(StandardCharsets.UTF_8)));
+        VaultLock.L.unlock(); edit.join();
+        check(Arrays.equals(disk[0], "b".getBytes(StandardCharsets.UTF_8)));
+
+        // input hash: a result for older Why/Ideas is discarded; legacy plans without a hash are kept
+        check(IngestText.samePlanInputs("abc", "abc"));
+        check(!IngestText.samePlanInputs("abc", "def"));
+        check(IngestText.samePlanInputs("", "def") && IngestText.samePlanInputs(null, "def"));
+    }
 }

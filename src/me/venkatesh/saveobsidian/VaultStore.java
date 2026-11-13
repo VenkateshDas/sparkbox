@@ -208,7 +208,7 @@ final class VaultStore {
         List<String> all = digests(snap);
         index.retainTexts(all);
         List<String> todo = index.missingTexts(all);
-        for (int i = 0; i < Math.min(todo.size(), 640) && !Tagger.halt; i += 32) {
+        for (int i = 0; i < Math.min(todo.size(), 640) && !Tagger.halt(); i += 32) {
             List<String> batch = new ArrayList<>(todo.subList(i, Math.min(i + 32, todo.size())));
             List<float[]> vectors = Model.embed(key, batch);
             for (int j = 0; j < batch.size(); j++) index.put(batch.get(j), vectors.get(j));

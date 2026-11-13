@@ -105,11 +105,10 @@ final class Model {
     }
 
     /** Streamed chat completion: calls live with the text so far, returns the assembled message {content, tool_calls?}. */
-    /** Set by the Ask screen to stop a running answer: the stream ends and what has arrived so far is the reply. */
-    static volatile boolean cancel;
-
-    static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live) throws Exception {
+    /** cancel is this answer's own switch: stopping it ends the stream (what arrived so far is the reply) and never touches background work. */
+    static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
+        cancel.attach(connection);
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(90000);
@@ -124,7 +123,7 @@ final class Model {
             JSONArray calls = new JSONArray();
             try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = in.readLine()) != null; ) {
-                    if (cancel) { calls = new JSONArray(); break; }
+                    if (cancel.stopped()) { calls = new JSONArray(); break; }
                     if (!line.startsWith("data:")) continue; // blank lines and ": OPENROUTER PROCESSING" keep-alives
                     String data = line.substring(5).trim();
                     if (data.equals("[DONE]")) break;
@@ -151,7 +150,10 @@ final class Model {
             JSONObject message = new JSONObject().put("content", text.toString());
             if (calls.length() > 0) message.put("tool_calls", calls);
             return message;
-        } finally { connection.disconnect(); }
+        } catch (IOException dropped) {
+            if (cancel.stopped()) return new JSONObject().put("content", ""); // our own disconnect
+            throw dropped;
+        } finally { cancel.detach(connection); connection.disconnect(); }
     }
 
     /** One non-streamed completion; the reply text. */
@@ -282,6 +284,9 @@ final class Model {
             connection.setDoOutput(true);
             connection.setRequestProperty("Authorization", "Bearer " + key);
             connection.setRequestProperty("Content-Type", "application/json");
+            Cancel cancel = Cancel.current();
+            if (cancel.stopped() && attempt > 0) throw last; // told to stop: no further tries
+            cancel.attach(connection);
             try {
                 try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
                 int code = connection.getResponseCode();
@@ -299,7 +304,7 @@ final class Model {
                 last = again;
                 android.util.Log.i("Sparkbox", "model call attempt " + (attempt + 1) + " failed: " + again);
                 if (!Net.offline(again) && (attempt >= 2 || (again instanceof java.net.SocketTimeoutException && attempt >= 1))) break; // other trouble gets three tries, a slow answer only one more
-            } finally { connection.disconnect(); }
+            } finally { cancel.detach(connection); connection.disconnect(); }
         }
         if (last != null && Net.offline(last)) throw new Net.Offline("Smart tags paused: no connection to OpenRouter (" + last.getMessage() + ")");
         throw new IOException("Smart tags paused: " + (last == null ? "connection failed" : last.getMessage()));

@@ -66,6 +66,11 @@ final class VaultWrite {
     static void writeNoBackup(Context c, String path, String before, String after) throws Exception { write(c, path, before, after, false); }
 
     private static void write(Context c, String path, String before, String after, boolean backup) throws Exception {
+        VaultLock.L.lock();
+        try { locked(c, path, before, after, backup); } finally { VaultLock.L.unlock(); }
+    }
+
+    private static void locked(Context c, String path, String before, String after, boolean backup) throws Exception {
         Uri tree = tree(c);
         android.content.ContentResolver resolver = c.getContentResolver();
         String[] parts = path.split("/");
@@ -108,6 +113,11 @@ final class VaultWrite {
      * Only if the note still holds exactly "before". A private copy is kept too. A note that is already gone counts as deleted.
      */
     static void trash(Context c, String path, String before) throws Exception {
+        VaultLock.L.lock();
+        try { trashLocked(c, path, before); } finally { VaultLock.L.unlock(); }
+    }
+
+    private static void trashLocked(Context c, String path, String before) throws Exception {
         Uri tree = tree(c);
         String id = find(c, tree, path);
         if (id == null) return;

@@ -10,6 +10,11 @@ public final class VerifiedEdit {
     public interface Backup { void save(byte[] before, byte[] after) throws Exception; }
 
     public static void apply(byte[] expected, byte[] after, Read read, Write write, Backup backup) throws Exception {
+        VaultLock.L.lock();
+        try { checked(expected, after, read, write, backup); } finally { VaultLock.L.unlock(); }
+    }
+
+    private static void checked(byte[] expected, byte[] after, Read read, Write write, Backup backup) throws Exception {
         if (!Arrays.equals(expected, read.get())) throw new IOException("Inbox changed. Refresh and try again. Your draft is kept.");
         if (Arrays.equals(expected, after)) return;
         backup.save(expected, after);

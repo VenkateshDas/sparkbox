@@ -37,6 +37,7 @@ final class AskScreen extends Screen {
     private EditText input;
     private TextView send, subtitle, status, live, newChat;
     private boolean busy;
+    private Cancel asking;
     private String lastQuestion = "", pendingQuestion;
     private LinearLayout running;
 
@@ -188,7 +189,7 @@ final class AskScreen extends Screen {
         ((android.view.inputmethod.InputMethodManager) ui.c.getSystemService(Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(input.getWindowToken(), 0);
         busy = true;
         lastQuestion = question;
-        Model.cancel = false;
+        final Cancel cancel = asking = new Cancel();
         send.setAlpha(0.4f);
         if (!again) thread.addView(bubble(question), ui.lp(thread.getChildCount() == 0 ? 0 : 20));
         running = new LinearLayout(ui.c);
@@ -199,7 +200,7 @@ final class AskScreen extends Screen {
         live.setLineSpacing(0, 1.3f);
         live.setVisibility(View.GONE);
         running.addView(live, ui.lp(8));
-        running.addView(ui.button("Cancel", false, v -> { Model.cancel = true; status.setText("Cancelling…"); }), ui.lp(12));
+        running.addView(ui.button("Cancel", false, v -> { cancel.stop(); status.setText("Cancelling…"); }), ui.lp(12));
         thread.addView(running, ui.lp(12));
         down();
         JSONArray sent;
@@ -212,7 +213,7 @@ final class AskScreen extends Screen {
             String answer = null, error = null;
             try {
                 answer = Ask.run(ui.c, snap, key, messages, line -> main.post(() -> { if (status != null) status.setText(line); }),
-                    soFar -> main.post(() -> { if (live != null) { live.setText(soFar); live.setVisibility(soFar.isEmpty() ? View.GONE : View.VISIBLE); down(); } }));
+                    soFar -> main.post(() -> { if (live != null) { live.setText(soFar); live.setVisibility(soFar.isEmpty() ? View.GONE : View.VISIBLE); down(); } }), cancel);
             } catch (Exception e) { error = String.valueOf(e.getMessage()).replace("Smart tags paused: ", ""); }
             final String a = answer, e = error;
             main.post(() -> finish(question, a, e));
@@ -221,8 +222,8 @@ final class AskScreen extends Screen {
 
     private void finish(String question, String answer, String error) {
         busy = false;
-        boolean cancelled = Model.cancel;
-        Model.cancel = false;
+        boolean cancelled = asking != null && asking.stopped();
+        asking = null;
         String partial = live == null ? "" : live.getText().toString();
         thread.removeView(running);
         running = null; status = null; live = null;

@@ -223,6 +223,8 @@ final class CardStore {
         for (Map.Entry<String, List<JSONObject>> e : byPath.entrySet()) {
             String path = e.getKey();
             boolean saved = false;
+            VaultLock.L.lock(); // read, transform and write as one step against other in-app writers
+            try {
             for (int attempt = 0; attempt < 3 && !saved; attempt++) {
                 String before = VaultWrite.read(c, path);
                 if (before == null) {
@@ -243,6 +245,7 @@ final class CardStore {
                     saved = true;
                 } catch (VaultWrite.Stale changed) { /* the file changed under us: read it again and re-apply */ }
             }
+            } finally { VaultLock.L.unlock(); }
             if (saved) done.addAll(e.getValue());
         }
         synchronized (LOCK) {
