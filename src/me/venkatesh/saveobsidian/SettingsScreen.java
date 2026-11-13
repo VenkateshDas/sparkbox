@@ -179,7 +179,7 @@ final class SettingsScreen extends Screen {
         new android.app.AlertDialog.Builder(host).setTitle("Add an MCP server").setMessage("Scout sends a tool call's arguments to this server, and its results come back as untrusted text. Each call asks you first.").setView(box)
             .setPositiveButton("Add", (d, w) -> {
                 String n = name.getText().toString().trim().replaceAll("[^A-Za-z0-9_-]", "_"), u = url.getText().toString().trim();
-                if (n.isEmpty() || !u.startsWith("https://") && !u.startsWith("http://")) { android.widget.Toast.makeText(ui.c, "Needs a name and an http(s) address", android.widget.Toast.LENGTH_SHORT).show(); return; }
+                if (n.isEmpty() || !u.startsWith("https://")) { android.widget.Toast.makeText(ui.c, "Needs a name and an https:// address (plain http is blocked)", android.widget.Toast.LENGTH_SHORT).show(); return; }
                 try {
                     if (!token.getText().toString().trim().isEmpty()) Model.seal(ui.c, "mcpToken:" + n, token.getText().toString().trim());
                     org.json.JSONArray list = Scout.serverList(ui.c);
