@@ -338,7 +338,7 @@ public class VaultActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         page.addView(box, ui.lp(16));
         for (Map.Entry<String, Integer> f : folders.entrySet()) box.addView(folderRow(f.getKey(), prefix + f.getKey(), f.getValue()));
-        if (path.startsWith("Sources")) notes.sort((a, b) -> { int c = dayOf(b).compareTo(dayOf(a)); return c != 0 ? c : a.title.compareToIgnoreCase(b.title); });
+        if (Layout.inSources(path + "/") || path.startsWith("Sources")) notes.sort((a, b) -> { int c = dayOf(b).compareTo(dayOf(a)); return c != 0 ? c : a.title.compareToIgnoreCase(b.title); });
         else notes.sort((a, b) -> a.title.compareToIgnoreCase(b.title));
         list(box, notes, false);
     }

@@ -7,7 +7,7 @@ import java.util.Locale;
 
 /** Pure helpers for model tagging: prompt, page text, and forcing model output into a safe one-line shape. */
 public final class Enrich {
-    private static final List<String> TYPES = Arrays.asList("article", "video", "repo", "paper", "tool", "idea", "question", "todo", "note", "image", "document", "other");
+    static final List<String> TYPES = Arrays.asList("article", "video", "repo", "paper", "tool", "idea", "question", "todo", "note", "image", "document", "other");
     static final List<String> IMAGES = Arrays.asList("jpg", "jpeg", "png", "webp");
     /** File extension to the audio format name OpenRouter accepts. Anything else is stored as a plain file. */
     public static final java.util.Map<String, String> AUDIO = new java.util.HashMap<>();

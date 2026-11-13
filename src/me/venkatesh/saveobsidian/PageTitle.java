@@ -52,7 +52,8 @@ final class PageTitle {
         try {
             for (java.net.InetAddress a : java.net.InetAddress.getAllByName(host))
                 if (a.isAnyLocalAddress() || a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress() || a.isMulticastAddress()
-                    || (a.getAddress().length == 16 && (a.getAddress()[0] & 0xfe) == 0xfc)) return false; // fc00::/7 unique-local
+                    || (a.getAddress().length == 16 && (a.getAddress()[0] & 0xfe) == 0xfc) // fc00::/7 unique-local
+                    || (a.getAddress().length == 4 && (a.getAddress()[0] & 0xff) == 100 && (a.getAddress()[1] & 0xc0) == 64)) return false; // 100.64.0.0/10 carrier-grade NAT
             return true;
         } catch (java.net.UnknownHostException | RuntimeException unknown) { return false; }
     }
@@ -60,9 +61,10 @@ final class PageTitle {
     /** Bounded HTTPS image download (2 MB max, same host and redirect rules as html()), or null. */
     static byte[] image(String original) throws Exception {
         URL current = new URL(original);
-        long deadline = System.currentTimeMillis() + 8000;
+        long deadline = System.currentTimeMillis() + 20000; // the host look-ups can take seconds on a slow network
         for (int redirects = 0; redirects <= 4; redirects++) {
-            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null || !publicHost(current.getHost())) return null;
+            boolean known = current.getHost().endsWith(".ytimg.com"); // YouTube's own image host: no need to resolve it twice to prove it is public
+            if (!"https".equalsIgnoreCase(current.getProtocol()) || current.getUserInfo() != null || (!known && !publicHost(current.getHost()))) return null;
             HttpURLConnection connection = (HttpURLConnection) current.openConnection();
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(2500);

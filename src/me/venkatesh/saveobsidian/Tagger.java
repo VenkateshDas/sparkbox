@@ -17,28 +17,49 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Background work: tag untagged links, then embed whatever has no vector yet. Blocking; runs inside BackgroundJob. */
 final class Tagger {
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
+    /** When the current run began, and whether a capture arrived while it ran (then it goes round again). A run silent for 20 minutes is taken as hung and replaced. */
+    private static volatile long began;
+    private static volatile boolean again;
     /** Set when Android stops the job: the loops end after the call in flight instead of working on unseen. */
     static volatile boolean halt;
 
     /** Provider and inbox errors end the run and are kept in prefs for Settings; the next job retries. */
     static void run(Context c) {
         String key = Model.key(c);
-        if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty() || !RUNNING.compareAndSet(false, true)) return;
+        if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
+        if (!RUNNING.compareAndSet(false, true)) {
+            if (System.currentTimeMillis() - began < 20 * 60000L) { again = true; return; } // working: it will look again when done
+            // a hung call held the lock: carry on regardless, so processing never stays stuck
+        }
+        began = System.currentTimeMillis();
+        again = false;
         halt = false;
+        String problem = "";
         try {
-            CaptureService.sweep(c);
-            transcribe(c, key);
-            tag(c, key);
-            backfill(c);
-            if (Ingest.ready(c)) Ingest.run(c, key); else fileNotes(c); // ingest files each capture into Knowledge; the Captures folder is the lighter option
-            describe(c, key);
-            embed(c, key);
-            VaultStore.embed(c, key);
-            c.getSharedPreferences("capture", 0).edit().remove("aiProblem").apply();
-        } catch (Exception stop) {
-            String m = String.valueOf(stop.getMessage()); // only provider trouble is worth showing; inbox contention clears itself
-            c.getSharedPreferences("capture", 0).edit().putString("aiProblem", m.startsWith("Smart tags") ? m : "").apply();
-        } finally { RUNNING.set(false); }
+            // Each stage stands alone: a tagging failure must not stop ingest, and a dead network in one must not hide what another could still do.
+            String[] stages = {"sweep", "transcribe", "tag", "backfill", "file", "cards", "describe", "embed"};
+            for (String stage : stages) {
+                try {
+                    switch (stage) {
+                        case "sweep": CaptureService.sweep(c); break;
+                        case "transcribe": transcribe(c, key); break;
+                        case "tag": tag(c, key); break;
+                        case "backfill": backfill(c); break;
+                        case "file": if (Ingest.ready(c)) Ingest.run(c, key); else fileNotes(c); break; // ingest files each capture into Knowledge; the Captures folder is the lighter option
+                        case "cards": if (CardGen.on(c)) CardGen.run(c); break; // a batch of cards for existing notes, when the owner started it
+                        case "describe": describe(c, key); break;
+                        default: embed(c, key); VaultStore.embed(c, key);
+                    }
+                } catch (Exception stop) {
+                    String m = String.valueOf(stop.getMessage()); // only provider trouble is worth showing; inbox contention clears itself
+                    if (m.startsWith("Smart tags") && problem.isEmpty()) problem = m;
+                }
+            }
+        } finally {
+            c.getSharedPreferences("capture", 0).edit().putString("aiProblem", problem).apply();
+            RUNNING.set(false);
+        }
+        if (again && !halt) run(c); // a capture arrived while this run was busy
     }
 
     private static void tag(Context c, String key) throws Exception {
@@ -50,24 +71,49 @@ final class Tagger {
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
             for (int i = all.size() - 1; i >= 0 && next == null; i--) {
                 InboxFile.Entry e = all.get(i);
-                boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty(); // a three-word note needs no summary
+                boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty() && !Ingest.ready(c); // a three-word note needs no summary; with processing on, links are tagged by the ingest call itself
                 if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title) || stale(c, e)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
             }
             if (next == null) return;
             String pageUrl = next.url;
-            String[] result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
+            String[] result;
+            try { result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page)); }
+            catch (Exception failed) {
+                if (String.valueOf(failed.getMessage()).startsWith("Smart tags paused: OpenRouter answered 40")) throw failed; // bad key or no credit: every call would fail
+                result = null; // a dropped connection or a refusal for this one capture: the others still get their turn
+            }
             calls++;
-            if (result == null) { skipped.add(next.raw); continue; }
+            if (result == null) {
+                skipped.add(next.raw);
+                android.content.SharedPreferences seen = c.getSharedPreferences("enriched", 0);
+                int failures = seen.getInt("tagfail:" + notesKey(next), 0) + 1;
+                seen.edit().putInt("tagfail:" + notesKey(next), failures).apply();
+                if (failures >= 2 && !next.text && !next.url.isEmpty() && next.type.isEmpty()) { // the model cannot tag it: give it a plain type so processing can go ahead
+                    final String raw = next.raw, kind = guessType(next.url), clean = Capture.clean(next.title), heading = clean.isEmpty() ? Feed.host(next.url) : clean;
+                    CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, kind, "", "", heading));
+                    c.sendBroadcast(new Intent(CaptureService.CHANGED).setPackage(c.getPackageName()));
+                }
+                continue;
+            }
             c.getSharedPreferences("enriched", 0).edit().putString(notesKey(next), notesHash(next)).apply(); // this Why and Ideas are now reflected, so it is not redone
             if (result[3].isEmpty() && !next.type.isEmpty()) { skipped.add(next.raw); continue; } // already tagged and the model gave no title: leave it, retry next run
-            String raw = next.raw, heading = result[3];
-            CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, result[0], result[1], result[2], heading));
+            final String raw = next.raw, heading = result[3];
+            final String[] tagged = result;
+            CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.setEnrich(text, raw, tagged[0], tagged[1], tagged[2], heading));
             c.sendBroadcast(new Intent(CaptureService.CHANGED).setPackage(c.getPackageName()));
         }
     }
 
-    private static String notesKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.url + "|" + (e.text ? e.body : ""))); }
-    private static String notesHash(InboxFile.Entry e) { return Long.toHexString(Index.key(e.why.trim() + "\n" + e.ideas.trim())); }
+    static String notesKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.url + "|" + (e.text ? e.body : ""))); }
+    private static String guessType(String url) {
+        String host = Feed.host(url);
+        if (!Transcript.videoId(url).isEmpty() || host.equals("vimeo.com")) return "video";
+        if (host.equals("github.com") || host.equals("gitlab.com")) return "repo";
+        if (host.equals("arxiv.org")) return "paper";
+        return "article";
+    }
+
+    static String notesHash(InboxFile.Entry e) { return Long.toHexString(Index.key(e.why.trim() + "\n" + e.ideas.trim())); }
 
     /** Tagged before you wrote a Why or Idea (or changed it since): summarise once more so the summary follows your instructions. */
     static boolean stale(Context c, InboxFile.Entry e) {
@@ -88,14 +134,11 @@ final class Tagger {
         int fetched = 0;
         for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
             if (fetched >= 10 || halt || SetupActivity.editing) return;
-            String mark = "page:" + Long.toHexString(Index.key(e.url.replaceFirst("[?#].*$", "")));
+            String mark = "page:" + Long.toHexString(Index.key(Capture.identity(e.url)));
             if (e.text || e.url.isEmpty() || e.type.isEmpty() || Content.has(c, e.url) || tried.getBoolean(mark, false)) continue;
             fetched++;
-            String host = e.url.replaceFirst("^[a-z]+://", "").replaceFirst("[/?#].*$", "").toLowerCase(java.util.Locale.ROOT);
-            boolean youtube = host.equals("youtu.be") || host.equals("youtube.com") || host.endsWith(".youtube.com"); // serves a consent page, not the video
-            if (youtube) { tried.edit().putBoolean(mark, true).apply(); continue; }
             try {
-                String page = Enrich.pageText(PageTitle.html(e.url, true));
+                String page = Fetch.content(e.url, "", false);
                 if (!page.isEmpty()) Content.save(c, e.url, page);
                 tried.edit().putBoolean(mark, true).apply(); // answered (even with nothing usable): do not ask again. A network error is retried next run.
             } catch (Exception offline) { }

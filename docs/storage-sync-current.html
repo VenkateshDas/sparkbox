@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sparkbox Storage Today</title>
+<style>
+:root{--bg:#f6f6f3;--panel:#ecece7;--box:#fff;--ink:#1c1c1e;--mute:#62625f;--line:#8a8a85;--acc:#17805a;--bad:#c2362b;--edge:#cfcfc8}
+@media (prefers-color-scheme:dark){:root{--bg:#141415;--panel:#1c1c1e;--box:#262628;--ink:#ededed;--mute:#a3a3a0;--line:#85858a;--acc:#4cc38a;--bad:#ff6b5e;--edge:#3a3a3d}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+main{max-width:1160px;margin:auto;padding:24px 16px}h1{font-size:26px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px}p{margin:0;color:var(--mute)}
+.scroll{overflow-x:auto;margin-top:18px}svg{display:block;width:100%;min-width:900px;height:auto}
+.panel{fill:var(--panel);stroke:var(--edge)}.box{fill:var(--box);stroke:var(--edge)}.hot{stroke:var(--bad);stroke-width:2}
+text{fill:var(--ink);font-size:13px}.t{font-weight:600;font-size:14px}.h{font-weight:700;font-size:16px}.s{fill:var(--mute);font-size:12px}
+.l{fill:none;stroke:var(--line);stroke-width:1.6}.g{fill:none;stroke:var(--acc);stroke-width:2.2}.d{stroke-dasharray:5 5}
+.m{fill:var(--bad)}.mt{fill:#fff;font-size:12px;font-weight:700;text-anchor:middle}
+ol{margin:0;padding-left:22px}li{margin:6px 0}
+nav{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}button{font:inherit;padding:8px 14px;min-height:44px;border:1px solid var(--edge);border-radius:8px;background:var(--box);color:var(--ink);cursor:pointer}button[aria-selected=true]{border-color:var(--acc);color:var(--acc);font-weight:600}
+pre{background:var(--panel);padding:12px;border-radius:8px;overflow-x:auto;font-size:13px}table{border-collapse:collapse;width:100%;min-width:620px}th,td{text-align:left;padding:9px;border-bottom:1px solid var(--edge)}a{color:var(--acc)}
+</style></head><body><svg aria-hidden="true" style="position:absolute;width:0;height:0;min-width:0"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--line)"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--acc)"/></marker></defs></svg><main>
+<nav><button data-tab="today" aria-selected="true">Your setup today</button><button data-tab="how" aria-selected="false">How Notion and Obsidian do it</button><button data-tab="spec" aria-selected="false">Sync spec</button></nav>
+<section id="today">
+<h1>Sparkbox storage and sync today</h1>
+<p>Two full copies of the vault, joined through Google Drive. Only Obsidian moves files between them.</p>
+<div class="scroll"><svg viewBox="0 0 1100 640" role="img" aria-label="Android and Mac vault copies synced by GSync through Google Drive">
+<rect class="panel" x="10" y="10" width="410" height="620" rx="14"/><text class="h" x="30" y="40">Android phone (OnePlus)</text>
+<rect class="panel" x="680" y="10" width="410" height="530" rx="14"/><text class="h" x="700" y="40">Mac</text>
+
+<rect class="box" x="30" y="60" width="370" height="60" rx="9"/><text class="t" x="46" y="84">Capture inputs</text><text class="s" x="46" y="104">Share sheet, widget, Quick Settings tiles, voice</text>
+<rect class="box" x="30" y="160" width="370" height="130" rx="9"/><text class="t" x="46" y="184">Sparkbox</text>
+<text x="46" y="206">Private queue: files/pending/</text><text x="46" y="226">Background tagger, Ask, search</text><text x="46" y="246">Private caches: vault.json, vault.bin, index.bin</text><text class="s" x="46" y="272">No cloud upload of its own</text>
+<rect class="box hot" x="30" y="340" width="370" height="130" rx="9"/><text class="t" x="46" y="364">Local vault copy</text><text class="s" x="46" y="382">Documents/Obsidian/Tiny experiments</text>
+<text x="46" y="406">Sources/Inbox.md</text><text x="46" y="426">Sources/Attachments/</text><text x="46" y="446">Knowledge/, Sources/, other folders</text>
+<rect class="box" x="30" y="520" width="370" height="90" rx="9"/><text class="t" x="46" y="544">Obsidian + GSync plugin</text><text x="46" y="566">Sync on startup and 1-minute timer</text><text class="s" x="46" y="588">Runs only while Obsidian is active</text>
+
+<rect class="box" x="470" y="170" width="160" height="80" rx="9"/><text class="t" x="486" y="196">OpenRouter</text><text class="s" x="486" y="216">Tags, embeddings,</text><text class="s" x="486" y="232">transcripts, Ask</text>
+<rect class="box hot" x="470" y="490" width="160" height="110" rx="9"/><text class="t" x="486" y="516">Google Drive</text><text class="s" x="486" y="536">Obsidian/</text><text class="s" x="486" y="552">Tiny experiments</text><text class="s" x="486" y="578">Whole-file copies</text>
+
+<rect class="box" x="700" y="60" width="370" height="80" rx="9"/><text class="t" x="716" y="84">Claude / Codex</text><text x="716" y="106">Process inbox, write Sources and Knowledge</text><text class="s" x="716" y="126">Edit local files directly</text>
+<rect class="box hot" x="700" y="200" width="370" height="130" rx="9"/><text class="t" x="716" y="224">Local vault copy</text><text class="s" x="716" y="242">~/Obsidian Vaults/Tiny experiments</text>
+<text x="716" y="266">Sources/Inbox.md</text><text x="716" y="286">Sources/Attachments/</text><text x="716" y="306">Knowledge/, Sources/, Daily/, other folders</text>
+<rect class="box" x="700" y="410" width="280" height="100" rx="9"/><text class="t" x="716" y="434">Obsidian</text><text x="716" y="456">GSync plugin</text><text x="716" y="476">telegram-sync plugin</text><text class="s" x="716" y="496">Run only while Obsidian is open</text>
+<rect class="box" x="700" y="570" width="170" height="60" rx="9"/><text class="t" x="716" y="594">Telegram</text><text class="s" x="716" y="614">Second capture path</text>
+<rect class="box" x="900" y="570" width="190" height="60" rx="9"/><text class="t" x="916" y="594">GitHub repo</text><text class="s" x="916" y="614">Manual, not used for sync</text>
+
+<path class="l" marker-end="url(#a)" d="M215 120V158"/>
+<path class="l" marker-end="url(#a)" d="M170 290V338"/><text class="s" x="62" y="318">Append, verified edit</text>
+<path class="l d" marker-end="url(#a)" d="M270 338V292"/><text class="s" x="280" y="318">Read only</text>
+<path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M215 472V518"/>
+<path class="l d" marker-start="url(#a)" marker-end="url(#a)" d="M402 225H468"/>
+<path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M402 565H468"/><text class="s" x="412" y="552">GSync</text>
+<path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M632 545H660V460H698"/><text class="s" x="636" y="448">GSync</text>
+<path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M885 142V198"/>
+<path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M840 332V408"/>
+<path class="l" marker-end="url(#a)" d="M785 568V512"/>
+<path class="l d" marker-end="url(#a)" d="M1030 332V568"/><text class="s" x="1000" y="452" text-anchor="end"></text>
+
+<g><circle class="m" cx="400" cy="340" r="11"/><text class="mt" x="400" y="344">1</text></g>
+<g><circle class="m" cx="400" cy="520" r="11"/><text class="mt" x="400" y="524">2</text></g>
+<g><circle class="m" cx="630" cy="490" r="11"/><text class="mt" x="630" y="494">3</text></g>
+<g><circle class="m" cx="1070" cy="200" r="11"/><text class="mt" x="1070" y="204">4</text></g>
+</svg></div>
+<h2>Where it breaks</h2>
+<ol>
+<li>"Added" in Sparkbox confirms a local write only. The capture has not left the phone.</li>
+<li>GSync has no background service. Captures wait until Obsidian is active on Android.</li>
+<li>Drive holds whole files with no merge. On 5 Nov 2026 the Android inbox was 7,645 bytes and the Mac and Drive inbox 5,813 bytes, and a manual merge fixed it.</li>
+<li><code>Inbox.md</code> has several writers: Sparkbox, Telegram, and agents that empty it. Each copy can change before the other arrives.</li>
+</ol>
+<h2>Line key</h2>
+<p>Green: GSync. Solid grey: local writes or reads. Dashed grey: optional or manual. iPhone is not shown because its sync path is unconfirmed.</p>
+</section>
+<section id="how" hidden>
+<h1>How Notion and Obsidian Sync do it</h1>
+<p>Both keep a copy on each device and use one always-on service built for syncing. The service tells devices what changed, so they do not need to re-scan every file.</p>
+<div class="scroll"><svg viewBox="0 0 1100 430" role="img" aria-label="Devices keep local copies and exchange small changes through one sync service">
+<rect class="panel" x="380" y="20" width="340" height="390" rx="14"/><text class="h" x="400" y="50">Sync service (always on)</text>
+<rect class="box" x="400" y="70" width="300" height="80" rx="9"/><text class="t" x="416" y="96">Receives changes</text><text class="s" x="416" y="118">Decides current version</text><text class="s" x="416" y="136">Handles clashes</text>
+<rect class="box" x="400" y="170" width="300" height="80" rx="9"/><text class="t" x="416" y="196">Stores data and history</text><text class="s" x="416" y="218">The shared copy every device follows</text>
+<rect class="box" x="400" y="270" width="300" height="110" rx="9"/><text class="t" x="416" y="296">Tells other devices</text><text class="s" x="416" y="318">"This changed, fetch it"</text><text class="s" x="416" y="336">No full scan of every folder</text>
+<rect class="box" x="30" y="70" width="270" height="110" rx="9"/><text class="t" x="46" y="96">Phone</text><text x="46" y="120">App + local copy</text><text class="s" x="46" y="142">Saves locally first</text><text class="s" x="46" y="160">Sends change when online</text>
+<rect class="box" x="30" y="250" width="270" height="110" rx="9"/><text class="t" x="46" y="276">Laptop</text><text x="46" y="300">App + local copy</text><text class="s" x="46" y="322">Saves locally first</text><text class="s" x="46" y="340">Sends change when online</text>
+<rect class="box" x="800" y="160" width="270" height="110" rx="9"/><text class="t" x="816" y="186">Another device</text><text x="816" y="210">Receives update</text><text class="s" x="816" y="232">Updates local copy</text><text class="s" x="816" y="250">Screen refreshes</text>
+<path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M302 125H398"/><path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M302 305H398"/><path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M702 215H798"/>
+</svg></div>
+<h2>Notion: a database of small pieces</h2>
+<ol><li>Devices keep pages in a local SQLite store.</li><li>When Notion applies updates, the server sends a message on that page's channel.</li><li>Devices listening to that page fetch its latest changes.</li><li>After being offline, devices re-fetch only pages with a newer server version.</li><li>Offline-enabled pages use a CRDT, a data format built to combine edits from several devices.</li></ol>
+<h2>Obsidian Sync: files, with a dedicated sync service</h2>
+<ol><li>Your notes stay as files on each device.</li><li>Obsidian's own service carries changes and keeps version history.</li><li>When two devices change a Markdown note, it merges them with diff-match-patch.</li><li>Other file types use "last modified wins".</li><li>You can choose a conflict copy instead of auto-merge on each device.</li><li>Forum reports say sync runs only while the mobile app is in the foreground. This is not official documentation.</li></ol>
+<h2>Compared with your setup</h2>
+<div class="scroll"><table><tr><th></th><th>Notion</th><th>Obsidian Sync</th><th>Your setup</th></tr>
+<tr><td>Stored as</td><td>Database records</td><td>Files</td><td>Files</td></tr>
+<tr><td>Same edit on two devices</td><td>CRDT on offline pages</td><td>Merges Markdown</td><td>No merge</td></tr>
+<tr><td>Finding changes</td><td>Server message per page</td><td>Dedicated sync service</td><td>GSync scans folders</td></tr>
+<tr><td>Sparkbox capture while Obsidian is closed</td><td>Not applicable</td><td>Likely waits for Obsidian</td><td>Waits for Obsidian</td></tr></table></div>
+<h2>The main lesson</h2>
+<p>The speed comes from a sync service that knows exactly what changed, plus a clear rule for clashes. Google Drive stores your files, but GSync must still find changes and has no merge rule.</p>
+<h2>Sources</h2>
+<p><a href="https://www.notion.com/en-gb/blog/how-we-made-notion-available-offline">Notion: how we made Notion available offline</a><br><a href="https://obsidian.md/help/sync/troubleshoot">Obsidian Help: troubleshoot Sync</a><br><a href="https://forum.obsidian.md/t/obsidian-sync-incorrectly-duplicates-sections-of-files/94732?page=5">Obsidian forum: mobile foreground report</a></p>
+</section>
+<section id="spec" hidden>
+<h1>Small sync service: draft spec</h1>
+<p>Goal: a capture reaches every device without opening Obsidian, and Obsidian on Android stays your editor. Status: for review. Nothing is built.</p>
+<div class="scroll"><svg viewBox="0 0 1100 520" role="img" aria-label="Sparkbox, Android Obsidian plugin and Mac agent connect to a Cloudflare Worker backed by D1 and R2">
+<rect class="panel" x="10" y="10" width="340" height="370" rx="14"/><text class="h" x="30" y="40">Android</text>
+<rect class="box" x="30" y="60" width="300" height="130" rx="9"/><text class="t" x="46" y="86">Sparkbox (Java)</text><text x="46" y="110">Keeps its private retry queue</text><text x="46" y="130">Sends captures and inbox edits</text><text class="s" x="46" y="152">Runs without Obsidian</text><text class="s" x="46" y="170">Knowledge reads stay local</text>
+<rect class="box" x="30" y="220" width="300" height="130" rx="9"/><text class="t" x="46" y="246">Obsidian + new plugin (TypeScript)</text><text x="46" y="270">Pulls on open and every 30 s</text><text x="46" y="290">Sends your edits</text><text class="s" x="46" y="312">Runs only while Obsidian is open</text><text class="s" x="46" y="330">Replaces GSync</text>
+<rect class="panel" x="400" y="10" width="300" height="370" rx="14"/><text class="h" x="420" y="40">Cloudflare</text>
+<rect class="box" x="420" y="60" width="260" height="90" rx="9"/><text class="t" x="436" y="86">Worker (TypeScript)</text><text class="s" x="436" y="108">Four endpoints, device tokens</text><text class="s" x="436" y="126">Accepts or rejects each change</text>
+<rect class="box" x="420" y="175" width="260" height="85" rx="9"/><text class="t" x="436" y="201">D1 database</text><text class="s" x="436" y="223">Path, hash, version, deleted flag</text><text class="s" x="436" y="241">Decides current version</text>
+<rect class="box" x="420" y="280" width="260" height="80" rx="9"/><text class="t" x="436" y="306">R2 bucket</text><text class="s" x="436" y="328">File contents named by SHA-256</text><text class="s" x="436" y="346">Old contents stay, so history is free</text>
+<rect class="panel" x="750" y="10" width="340" height="370" rx="14"/><text class="h" x="770" y="40">Mac</text>
+<rect class="box" x="770" y="60" width="300" height="110" rx="9"/><text class="t" x="786" y="86">Sync agent (Node + chokidar)</text><text x="786" y="110">LaunchAgent with KeepAlive</text><text class="s" x="786" y="132">Watches the folder, polls every 30 s</text><text class="s" x="786" y="150">Full check every 5 minutes</text>
+<rect class="box" x="770" y="205" width="300" height="70" rx="9"/><text class="t" x="786" y="231">Normal vault folder</text><text class="s" x="786" y="253">Same files as today</text>
+<rect class="box" x="770" y="300" width="145" height="60" rx="9"/><text class="t" x="786" y="326">Obsidian</text><text class="s" x="786" y="346">No plugin</text>
+<rect class="box" x="925" y="300" width="145" height="60" rx="9"/><text class="t" x="941" y="326">Claude/Codex</text><text class="s" x="941" y="346">Edit files</text>
+<path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M332 110H418"/><path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M332 285H375V130H418"/><path class="g" marker-start="url(#b)" marker-end="url(#b)" d="M682 110H768"/>
+<path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M550 152V173"/><path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M690 150H708V320H682"/>
+<path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M920 172V203"/><path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M842 277V298"/><path class="l" marker-start="url(#a)" marker-end="url(#a)" d="M997 277V298"/>
+<rect class="box" x="10" y="410" width="1080" height="95" rx="9"/><text class="t" x="30" y="436">One write, in order</text>
+<text x="30" y="462">1. Hash file</text><text x="190" y="462">2. Upload contents to R2</text><text x="420" y="462">3. Commit with last-seen version</text><text x="690" y="462">4. D1 accepts or returns 409</text><text x="30" y="488" class="s">Contents upload first, so a commit can never point to missing data. Other devices see the new version on their next poll.</text>
+</svg></div>
+<h2>Stack</h2>
+<div class="scroll"><table><tr><th>Part</th><th>Choice</th><th>Why</th></tr>
+<tr><td>API</td><td>Cloudflare Worker, TypeScript</td><td>Always on, no server to maintain</td></tr>
+<tr><td>File index</td><td>D1</td><td>SQL can reject stale writes. Free database cap is 500 MB, and the index needs far less.</td></tr>
+<tr><td>File contents</td><td>R2</td><td>10 GB free, no egress fees. D1 rows cap at 2 MB, so photos cannot go there.</td></tr>
+<tr><td>Mac agent</td><td>Node, chokidar, LaunchAgent</td><td>FSEvents watcher, restarted by macOS. A periodic scan covers missed events.</td></tr>
+<tr><td>Android editor</td><td>Obsidian plugin, TypeScript</td><td>Uses vault events and <code>requestUrl</code>. Shares sync logic with the Mac agent.</td></tr>
+<tr><td>Sparkbox</td><td>Existing Java, HttpURLConnection</td><td>No new libraries. Token sealed by Android Keystore.</td></tr></table></div>
+<h2>Data</h2>
+<pre>files(path PRIMARY KEY, version, hash, size, deleted, device, updated_at)
+counter(n)                      -- one row, rises on each commit
+R2: blobs/&lt;sha256&gt;              -- never overwritten</pre>
+<h2>API</h2>
+<pre>GET  /changes?after=N           files with version &gt; N, paged
+GET  /blobs/:hash               file contents
+PUT  /blobs/:hash               upload contents, checked against the hash
+POST /commit                    {path, baseVersion, hash, deleted}
+                                200 {version} or 409 {current version and hash}</pre>
+<h2>Core logic</h2>
+<pre>-- /commit: one D1 batch. A rejected write only leaves a gap in the counter.
+UPDATE counter SET n = n + 1;
+INSERT INTO files (...) VALUES (..., (SELECT n FROM counter))
+ON CONFLICT(path) DO UPDATE SET hash = excluded.hash, version = excluded.version, ...
+WHERE files.version = :baseVersion;
+-- No row changed: return 409.</pre>
+<ol><li><strong>Each client remembers</strong> the version and hash it last synced for every path.</li>
+<li><strong>Pull:</strong> get changes after the last seen version. If the local file still matches its remembered hash, replace it.</li>
+<li><strong>Local file also changed:</strong> keep the server file at the path, and save local text as <code>Note (conflict Android 2026-11-08 2224).md</code>.</li>
+<li><strong>Push:</strong> send each file whose hash differs from the remembered hash.</li>
+<li><strong>409:</strong> pull, then repeat.</li>
+<li><strong>Inbox.md append:</strong> read latest, stop if the entry already exists, append, commit. On 409, repeat. This is safe after retries and crashes.</li>
+<li><strong>No echo:</strong> a client records the new hash before writing a pulled file, so its watcher ignores that write.</li>
+<li><strong>Delete and rename:</strong> delete sets a flag. Rename is a delete plus a create. Android moves pulled deletes to trash with <code>trashFile</code>.</li>
+<li><strong>Never synced:</strong> <code>.git</code>, <code>.obsidian</code>, <code>.claude</code>, <code>.agents</code>, <code>.serena</code>, <code>.env</code>, <code>.DS_Store</code>.</li></ol>
+<h2>Complexity estimate</h2>
+<div class="scroll"><table><tr><th>Part</th><th>Size (lines)</th><th>Difficulty</th><th>Main risk</th></tr>
+<tr><td>Worker, D1, R2</td><td>250</td><td>Low</td><td>Atomic commit behaviour</td></tr>
+<tr><td>Shared sync logic</td><td>400</td><td>High</td><td>Edge cases. This is the code that can damage notes.</td></tr>
+<tr><td>Mac agent</td><td>200</td><td>Medium</td><td>Partial saves, sleep and wake</td></tr>
+<tr><td>Obsidian plugin</td><td>300</td><td>Medium</td><td>Mobile file APIs, app closed during sync</td></tr>
+<tr><td>Sparkbox</td><td>400</td><td>Medium</td><td>Inbox reads and edits. <code>readText</code> and <code>edit</code> are the main change points.</td></tr>
+<tr><td>Tests and migration</td><td>500</td><td>High</td><td>Must cover every case below</td></tr></table></div>
+<p style="margin-top:10px">Total: about 2,000 lines and 3 to 5 weeks part-time with AI help. This replaces my earlier 2 to 4 week guess. Hosting estimate: $0 a month.</p>
+<h2>Must pass on a test vault</h2>
+<ol><li>Capture with Obsidian closed reaches the Mac.</li><li>Capture during Process inbox loses neither change.</li><li>Same note edited offline on both devices keeps both texts.</li><li>Sync stops mid-upload, then resumes without damage.</li><li>Delete, rename and 4 MB photo sync correctly.</li><li>Mac sleeps for a day, then catches up.</li><li>Full vault hashes match on Mac, Android and server.</li></ol>
+<h2>Rollout</h2>
+<ol><li>Zip the vault. Keep Drive frozen as backup.</li><li>Build server and Mac agent on a copy.</li><li>Add the plugin on a test vault.</li><li>Add Sparkbox behind a Settings switch.</li><li>Run the tests above.</li><li>Turn GSync off on both devices, then load the real vault.</li></ol>
+<h2>Check before building</h2>
+<p>Correction: I said Self-hosted LiveSync likely needs CouchDB. Its README also lists S3 and R2 object storage, with periodic or on-save sync. Its stored data is journal-based, so Sparkbox could not simply add a file. <a href="https://github.com/zyautra/VaultDatum">VaultDatum</a> is another self-hosted Obsidian sync project, and I have not assessed it. Review both for one hour before committing to this build.</p>
+<h2>Decisions for review</h2>
+<ol><li>Should Daily and Health sync through Cloudflare? Android Obsidian needs them if you edit them there. This spec assumes yes, with TLS and provider encryption, not end-to-end encryption.</li><li>Is a 30-second delay acceptable? Live push can come later.</li><li>Is a conflict copy acceptable for notes, rather than auto-merge?</li></ol>
+<h2>Limits and sources</h2>
+<p>Still to confirm: D1 batch atomicity comes from an older Cloudflare page, and Worker limits on large photo uploads need a test. <a href="https://developers.cloudflare.com/d1/platform/limits/">D1 limits</a> · <a href="https://developers.cloudflare.com/r2/api/workers/workers-api-reference/">R2 Workers API</a> · <a href="https://developers.cloudflare.com/workers/platform/limits/">Workers limits</a> · <a href="https://docs.obsidian.md/Reference/TypeScript+API/Vault">Obsidian Vault API</a> · <a href="https://docs.obsidian.md/oo/plugin">Obsidian plugin checklist</a> · <a href="https://github.com/vrtmrz/obsidian-livesync">Self-hosted LiveSync</a> · <a href="https://www.npmjs.com/package/@dsktschy/chokidar">chokidar</a></p>
+</section>
+</main>
+<script>
+const tabs=document.querySelectorAll('[data-tab]');
+tabs.forEach(b=>b.onclick=()=>{document.querySelectorAll('section').forEach(s=>s.hidden=s.id!==b.dataset.tab);tabs.forEach(t=>t.setAttribute('aria-selected',t===b));scrollTo(0,0)});
+</script></body></html>

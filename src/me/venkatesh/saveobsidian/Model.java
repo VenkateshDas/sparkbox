@@ -29,19 +29,18 @@ final class Model {
 
     /** {type, tags, tldr, title}, or null when the reply is unusable. IOException (network, key, quota) means stop for now. */
     static String[] enrich(String key, String model, String title, String url, String why, String ideas, java.util.function.Consumer<String> pageSink) throws Exception {
-        String page = "";
-        String host = new URL(url).getHost().toLowerCase(java.util.Locale.ROOT);
-        boolean youtube = host.equals("youtu.be") || host.equals("youtube.com") || host.endsWith(".youtube.com");
-        // YouTube serves an "unsupported browser" page to this fetch; the title alone is better than that text.
         String full = "";
-        if (!youtube) try { full = Enrich.pageText(PageTitle.html(url, true)); } catch (Exception ignored) { } // title and URL still classify
-        page = full.length() > Enrich.PROMPT_CHARS ? full.substring(0, Enrich.PROMPT_CHARS) : full;
+        try { full = Fetch.content(url, "", false); } catch (Exception ignored) { } // title and URL still classify; a video is tagged from its captions and description, never transcribed here
+        String page = full.length() > Enrich.PROMPT_CHARS ? full.substring(0, Enrich.PROMPT_CHARS) : full;
+        boolean thin = full.replaceAll("(?m)^(Channel|Length):.*$", "").trim().length() < 80; // a video with no description or captions has nothing to summarise
         if (pageSink != null && !full.isEmpty()) pageSink.accept(full); // the whole page, so Ask and later processing need no refetch
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", 300)
             .put("messages", new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", Enrich.SYSTEM + Enrich.INSTRUCTIONS))
-                .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + url.replaceFirst("[?#].*$", "") + "\nPage text:\n" + page + Enrich.notes(why, ideas)))); // query strings often carry tokens
-        return parse(post("chat/completions", key, request));
+                .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + Capture.identity(url) + "\nPage text:\n" + (thin ? "(nothing could be read from the page: judge only from the title and URL, and leave tldr empty)" : page) + Enrich.notes(why, ideas)))); // query strings often carry tokens
+        String[] r = parse(post("chat/completions", key, request));
+        if (r != null && thin) { r[1] = ""; r[2] = ""; } // with no text to read, tags and a summary would be guesses
+        return r;
     }
 
     /** {type, tags, tldr} for a typed or spoken note. */
@@ -68,14 +67,15 @@ final class Model {
     /** Plain text of a spoken clip. format is the file extension OpenRouter accepts (m4a, mp3, ogg...). */
     static String transcribe(String key, byte[] audio, String format) throws Exception {
         return new JSONObject(post("audio/transcriptions", key, new JSONObject().put("model", TRANSCRIBE)
-            .put("input_audio", new JSONObject().put("data", Base64.encodeToString(audio, Base64.NO_WRAP)).put("format", format)))).optString("text").trim();
+            .put("input_audio", new JSONObject().put("data", Base64.encodeToString(audio, Base64.NO_WRAP)).put("format", format)), 300000)).optString("text").trim();
     }
 
     /** The model's JSON reply forced into the safe shape, or null when unusable. */
     private static String[] parse(String reply) {
         try {
             String content = new JSONObject(reply).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
-            JSONObject out = new JSONObject(content.substring(content.indexOf('{'), content.lastIndexOf('}') + 1));
+            JSONObject out = JsonFix.object(content);
+            if (out == null) return null;
             List<String> tags = new ArrayList<>();
             JSONArray array = out.optJSONArray("tags");
             for (int i = 0; array != null && i < array.length(); i++) tags.add(array.optString(i));
@@ -105,6 +105,9 @@ final class Model {
     }
 
     /** Streamed chat completion: calls live with the text so far, returns the assembled message {content, tool_calls?}. */
+    /** Set by the Ask screen to stop a running answer: the stream ends and what has arrived so far is the reply. */
+    static volatile boolean cancel;
+
     static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
         connection.setRequestMethod("POST");
@@ -121,6 +124,7 @@ final class Model {
             JSONArray calls = new JSONArray();
             try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = in.readLine()) != null; ) {
+                    if (cancel) { calls = new JSONArray(); break; }
                     if (!line.startsWith("data:")) continue; // blank lines and ": OPENROUTER PROCESSING" keep-alives
                     String data = line.substring(5).trim();
                     if (data.equals("[DONE]")) break;
@@ -150,29 +154,115 @@ final class Model {
         } finally { connection.disconnect(); }
     }
 
-    /** One non-streamed completion; the reply text. For Ingest, which asks for JSON. */
-    static String complete(String key, String model, String system, String user, int maxTokens) throws Exception {
+    /** One non-streamed completion; the reply text. */
+    static String complete(String key, String model, String system, String user, int maxTokens) throws Exception { return complete(key, model, system, user, maxTokens, false); }
+
+    /** noReasoning asks the provider to skip hidden thinking, which a reasoning model would otherwise spend the whole token budget on. Models without it ignore the field. */
+    static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning) throws Exception { return complete(key, model, system, user, maxTokens, noReasoning, false); }
+
+    /** json asks the provider to guarantee a JSON object. A provider that does not know the field answers 400 (Rejected). */
+    static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json) throws Exception {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
             .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
+        if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
+        if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
         JSONObject message = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0).getJSONObject("message");
         return message.isNull("content") ? "" : message.optString("content", "");
     }
 
-    private static String post(String path, String key, JSONObject request) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(90000);
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Authorization", "Bearer " + key);
-        connection.setRequestProperty("Content-Type", "application/json");
+    private static final java.util.Set<String> NO_REASONING_FIELD = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    private static final java.util.Set<String> NO_JSON_MODE = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** Asks for no hidden thinking so a reasoning model keeps its token budget for the answer; a model that refuses that field is asked again without it, and remembered. */
+    static String completeLean(String key, String model, String system, String user, int maxTokens) throws Exception {
+        if (NO_REASONING_FIELD.contains(model)) return complete(key, model, system, user, maxTokens, false);
+        try { return complete(key, model, system, user, maxTokens, true); }
+        catch (Rejected refused) { NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false); }
+    }
+
+    /**
+     * A JSON object from the model, however it arrives: JSON mode and "no thinking" are asked for first and dropped (and remembered per model) when the
+     * provider refuses them; a reply that is empty, fenced, cut off or has stray commas is repaired; one that is still unusable is asked for once more.
+     * Throws IOException when nothing usable came back.
+     */
+    static JSONObject completeJson(String key, String model, String system, String user, int maxTokens) throws Exception {
+        String reply = "";
+        for (int attempt = 0; attempt < 2; attempt++) {
+            String ask = attempt == 0 ? user : user + "\n\nYour last reply could not be read. Reply with one complete JSON object and nothing else.";
+            reply = chatJson(key, model, system, ask, attempt == 0 ? maxTokens : maxTokens + 1500);
+            JSONObject o = JsonFix.object(reply);
+            if (o != null) return o;
+        }
+        String shown = reply.trim().replaceAll("\\s+", " ");
+        throw new IOException("The model did not return usable JSON" + (shown.isEmpty() ? " (empty reply)" : ": " + (shown.length() > 120 ? shown.substring(0, 120) : shown)));
+    }
+
+    private static String chatJson(String key, String model, String system, String user, int maxTokens) throws Exception {
+        boolean json = !NO_JSON_MODE.contains(model), lean = !NO_REASONING_FIELD.contains(model), droppedJson = false, droppedLean = false;
+        for (;;) {
+            try {
+                String reply = complete(key, model, system, user, maxTokens, lean, json);
+                if (droppedJson) NO_JSON_MODE.add(model); // only remembered once the plainer request worked, so a refused input is not blamed on the model
+                if (droppedLean) NO_REASONING_FIELD.add(model);
+                return reply;
+            } catch (Rejected refused) {
+                if (json) { json = false; droppedJson = true; }
+                else if (lean) { lean = false; droppedLean = true; }
+                else throw refused;
+            }
+        }
+    }
+
+    /** A reply the provider marks as a failure, or a transient one worth another try. */
+    private static final class Transient extends IOException { Transient(String m) { super(m); } }
+
+    private static String post(String path, String key, JSONObject request) throws Exception { return post(path, key, request, 120000); }
+
+    /** Up to three tries: a dropped connection, a timeout, a 429 or a 5xx waits a moment and goes again. A refusal (400s) or a bad key is not retried. */
+    private static String post(String path, String key, JSONObject request, int readTimeout) throws Exception {
+        byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
+        IOException last = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) Thread.sleep(attempt == 1 ? 2000 : 5000);
+            HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(readTimeout);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Authorization", "Bearer " + key);
+            connection.setRequestProperty("Content-Type", "application/json");
+            try {
+                try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
+                int code = connection.getResponseCode();
+                if (code == 200) {
+                    String body;
+                    try (InputStream in = connection.getInputStream()) { body = new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
+                    if (body.startsWith("{\"error\"") || body.startsWith("{ \"error\"")) throw new Transient("The provider reported an error: " + detail(body));
+                    return body;
+                }
+                String why = detail(errorBody(connection));
+                if (code == 400 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this request (" + code + (why.isEmpty() ? "" : ": " + why) + ")");
+                if (code == 408 || code == 425 || code == 429 || code >= 500) throw new Transient("OpenRouter answered " + code + (why.isEmpty() ? "" : ": " + why));
+                throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : why.isEmpty() ? "" : ": " + why));
+            } catch (Transient | java.net.SocketException | java.net.SocketTimeoutException | java.io.EOFException | javax.net.ssl.SSLException again) {
+                last = again;
+            } finally { connection.disconnect(); }
+        }
+        throw new IOException("Smart tags paused: " + (last == null ? "connection failed" : last.getMessage()));
+    }
+
+    private static String errorBody(HttpURLConnection c) {
+        try (InputStream in = c.getErrorStream()) { return in == null ? "" : new String(CaptureService.readAll(in), StandardCharsets.UTF_8); } catch (Exception none) { return ""; }
+    }
+
+    /** The provider's own words for what went wrong, short, from an error body. */
+    private static String detail(String body) {
         try {
-            try (OutputStream out = connection.getOutputStream()) { out.write(request.toString().getBytes(StandardCharsets.UTF_8)); }
-            int code = connection.getResponseCode();
-            if (code == 400 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this file (" + code + ")");
-            if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
-            try (InputStream in = connection.getInputStream()) { return new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
-        } finally { connection.disconnect(); }
+            JSONObject e = new JSONObject(body).optJSONObject("error");
+            String m = e == null ? "" : e.optString("message", "");
+            m = m.replaceAll("\\s+", " ").trim();
+            return m.length() > 160 ? m.substring(0, 160) : m;
+        } catch (Exception none) { return ""; }
     }
 
     // --- key ---

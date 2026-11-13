@@ -159,7 +159,7 @@ final class Md {
         Link(int color, Open open, String target) { this.color = color; this.open = open; this.target = target; }
         @Override public void onClick(View view) {
             if (open != null) open.open(target);
-            else try { view.getContext().startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target))); } catch (RuntimeException none) { }
+            else if (target.matches("(?i)(https?://|mailto:).*")) try { view.getContext().startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target))); } catch (RuntimeException none) { } // note text is untrusted: only web and mail links open
         }
         @Override public void updateDrawState(TextPaint paint) { paint.setColor(color); paint.setUnderlineText(false); }
     }

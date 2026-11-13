@@ -18,12 +18,12 @@ public class ShareActivity extends Activity {
                 .setShortLabel("Sparkbox").setLongLabel("Save to Obsidian inbox")
                 .setIcon(Icon.createWithResource(ctx, R.drawable.notification_icon))
                 .setCategories(java.util.Collections.singleton("me.venkatesh.saveobsidian.SAVE"))
-                .setIntent(new Intent(Intent.ACTION_MAIN).setClass(ctx, SetupActivity.class)).build()));
+                .setIntent(new Intent(Intent.ACTION_MAIN).setClass(ctx, MainActivity.class)).build()));
         } catch (RuntimeException ignored) { } // the share itself must never depend on this
     }
     /** Start filing queued captures, or ask for an inbox first. The capture itself is already safe in the queue. */
     static void dispatch(android.app.Activity a) {
-        if (a.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) a.startActivity(new Intent(a, SetupActivity.class).putExtra("waiting", true));
+        if (a.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) a.startActivity(new Intent(a, MainActivity.class).putExtra(MainActivity.TAB, 0)); // the Feed asks for the vault folder
         else CaptureService.start(a, null);
     }
 

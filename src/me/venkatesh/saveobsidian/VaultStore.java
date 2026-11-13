@@ -27,7 +27,7 @@ final class VaultStore {
         DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_LAST_MODIFIED, DocumentsContract.Document.COLUMN_SIZE};
     private static final long MAX_NOTE = 2L * 1024 * 1024;
     static volatile Snap last;
-    private static final int CACHE = 2; // bump when Vault.parse changes what it extracts, so old caches are rebuilt
+    private static final int CACHE = 4; // bump when Vault.parse changes what it extracts, so old caches are rebuilt
 
     /** Notes, their links, and the provider ids needed to open each one. */
     static final class Snap {
@@ -65,7 +65,9 @@ final class VaultStore {
         long cacheMs = System.currentTimeMillis() - started;
         int[] counts = new int[2]; // re-read, kept
         String rootId = DocumentsContract.getTreeDocumentId(tree);
-        for (Row top : children(c, tree, rootId)) {
+        List<Row> tops = children(c, tree, rootId);
+        if (tops == null) throw new java.io.IOException("The vault folder cannot be read right now.");
+        for (Row top : tops) {
             boolean wanted = false;
             for (String r : ROOTS) wanted |= r.equals(top.name);
             if (top.dir && wanted) walk(c, tree, top, top.name, old, fresh, counts);
@@ -91,15 +93,20 @@ final class VaultStore {
                 r.modified = q.isNull(3) ? 0 : q.getLong(3); r.size = q.isNull(4) ? -1 : q.getLong(4);
                 if (r.name != null && !r.name.startsWith(".")) rows.add(r); // .obsidian, .git, .env stay unseen
             }
-        } catch (RuntimeException unreadable) { }
+        } catch (RuntimeException unreadable) { return null; } // null = could not list, which is not the same as empty
         return rows;
     }
 
     private static void walk(Context c, Uri tree, Row dir, String path, Map<String, Cached> old, Map<String, Cached> fresh, int[] counts) {
-        for (Row r : children(c, tree, dir.id)) {
+        List<Row> rows = children(c, tree, dir.id);
+        if (rows == null) { // keep what was known about this folder rather than dropping its notes
+            for (Map.Entry<String, Cached> e : old.entrySet()) if (e.getKey().startsWith(path + "/")) { fresh.put(e.getKey(), e.getValue()); counts[1]++; }
+            return;
+        }
+        for (Row r : rows) {
             String p = path + "/" + r.name;
             if (r.dir) { walk(c, tree, r, p, old, fresh, counts); continue; }
-            if (!r.name.endsWith(".md") || p.equals("Sources/Inbox.md") || r.size > MAX_NOTE) continue;
+            if (!r.name.endsWith(".md") || Layout.conflict(r.name) || p.equals(Layout.NEW + "/Inbox.md") || p.equals(Layout.OLD + "/Inbox.md") || r.size > MAX_NOTE) continue;
             Cached known = old.get(p);
             if (known != null && known.size == r.size && known.note.mtime == r.modified && known.id.equals(r.id)) { fresh.put(p, known); counts[1]++; continue; }
             try {
@@ -129,6 +136,7 @@ final class VaultStore {
         List<Vault.Note> notes = new ArrayList<>();
         Map<String, String> ids = new HashMap<>();
         for (Cached k : all) { notes.add(k.note); ids.put(k.note.path, k.id); }
+        Layout.detect(ids.keySet());
         return new Snap(Vault.build(notes), ids, Uri.parse(tree(c)));
     }
 
@@ -146,11 +154,17 @@ final class VaultStore {
             for (int i = 0; i < notes.length(); i++) {
                 JSONObject o = notes.getJSONObject(i);
                 Vault.Note n = new Vault.Note(o.getString("p"), o.getLong("m"), o.getString("t"), o.getString("y"), o.getString("d"), o.getString("u"),
-                    o.getString("g"), strings(o.getJSONArray("o")), strings(o.getJSONArray("l")));
+                    o.getString("g"), strings(o.getJSONArray("o")), strings(o.getJSONArray("l")), meta(o.optJSONObject("f")), o.optString("w"), o.optInt("n"), o.optString("k"));
                 map.put(n.path, new Cached(o.getString("i"), o.getLong("z"), n));
             }
         } catch (Exception none) { map.clear(); } // missing or damaged: a rescan rebuilds it
         return map;
+    }
+
+    private static Map<String, String> meta(JSONObject o) {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (o != null) for (java.util.Iterator<String> it = o.keys(); it.hasNext(); ) { String k = it.next(); out.put(k, o.optString(k)); }
+        return out;
     }
 
     private static List<String> strings(JSONArray a) throws Exception {
@@ -167,7 +181,7 @@ final class VaultStore {
             for (Cached k : all) {
                 Vault.Note n = k.note;
                 notes.put(new JSONObject().put("p", n.path).put("m", n.mtime).put("t", n.title).put("y", n.type).put("d", n.description).put("u", n.updated)
-                    .put("g", n.digest).put("o", new JSONArray(n.topics)).put("l", new JSONArray(n.links)).put("i", k.id).put("z", k.size));
+                    .put("g", n.digest).put("o", new JSONArray(n.topics)).put("l", new JSONArray(n.links)).put("f", new JSONObject(n.meta)).put("w", n.why).put("n", n.words).put("k", n.cardsText).put("i", k.id).put("z", k.size));
             }
             out = file.startWrite();
             out.write(new JSONObject().put("v", CACHE).put("tree", tree(c)).put("notes", notes).toString().getBytes(StandardCharsets.UTF_8));

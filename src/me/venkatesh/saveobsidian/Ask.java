@@ -13,7 +13,7 @@ import org.json.JSONObject;
  */
 final class Ask {
     static final String DEFAULT = "anthropic/claude-haiku-5.5"; // cheap, 1M context, reliable tool calls on OpenRouter
-    static final String INBOX = "Sources/Inbox";
+    static String inbox() { return Layout.inbox(); }
     private static final int STEPS = 8, READ = 20000, LIST = 60, CALLS = 6, EXCERPT = 300;
 
     interface Status { void say(String line); }
@@ -37,6 +37,7 @@ final class Ask {
         Usage.hit(c, "ask");
         String model = model(c);
         for (int step = 0; step < STEPS; step++) {
+            if (Model.cancel) return "";
             boolean last = step == STEPS - 1;
             JSONObject request = new JSONObject().put("model", model).put("max_tokens", 1800).put("messages", work);
             if (!last) request.put("tools", tools());
@@ -70,7 +71,7 @@ final class Ask {
     private static JSONArray tools() throws Exception {
         return new JSONArray()
             .put(tool("search", "Find notes and inbox captures by meaning and keywords. Returns the best matches with a one-line description.", prop("query", "string", "What to look for"), "query"))
-            .put(tool("read", "Read notes by path (the inbox is the path Sources/Inbox). Pass several paths in one call to read them together. A long note comes in parts: pass offset to continue.",
+            .put(tool("read", "Read notes by path (the inbox is the path " + Layout.inbox() + "). Pass several paths in one call to read them together. A long note comes in parts: pass offset to continue.",
                 prop("path", "string", "One note path as returned by the other tools")
                     .put("paths", new JSONObject().put("type", "array").put("items", new JSONObject().put("type", "string")).put("description", "Up to 4 note paths to read in one call, instead of path"))
                     .put("offset", new JSONObject().put("type", "integer").put("description", "Character to start from, default 0")), null))
@@ -109,7 +110,7 @@ final class Ask {
         try { return InboxFile.parse(CaptureService.readText(c)); } catch (Exception none) { return new ArrayList<>(); } // no inbox chosen or unreadable
     }
 
-    static String cite(InboxFile.Entry e) { return "[[" + INBOX + "|" + e.shownTitle().replaceAll("[\\[\\]|]", " ").trim() + "]]"; }
+    static String cite(InboxFile.Entry e) { return "[[" + inbox() + "|" + e.shownTitle().replaceAll("[\\[\\]|]", " ").trim() + "]]"; }
 
     private static String entryLine(Context c, InboxFile.Entry e, boolean full, int chars) {
         StringBuilder s = new StringBuilder("- " + cite(e) + " (inbox" + (e.time.isEmpty() ? "" : ", captured " + e.time) + (e.type.isEmpty() ? "" : ", " + e.type) + ")");
@@ -178,10 +179,10 @@ final class Ask {
 
     private static String read(Context c, VaultStore.Snap snap, String path, int offset, Status status, int cap) throws Exception {
         String text, head;
-        if (Vault.target(path).equalsIgnoreCase(INBOX)) {
+        if (Layout.isInbox(Vault.target(path))) {
             status.say("Reading the inbox");
             text = CaptureService.readText(c);
-            head = "[[" + INBOX + "|Inbox]]";
+            head = "[[" + inbox() + "|Inbox]]";
         } else {
             Vault.Note n = find(snap, path);
             if (n == null) return "Error: no note at \"" + path + "\". Use a path from search or list.";
@@ -211,7 +212,7 @@ final class Ask {
         if (folders.isEmpty() && notes.isEmpty()) return "Error: no folder \"" + path + "\".";
         StringBuilder out = new StringBuilder();
         for (java.util.Map.Entry<String, Integer> f : folders.entrySet()) out.append("folder ").append(p.isEmpty() ? "" : p + "/").append(f.getKey()).append(" (").append(f.getValue()).append(" notes)\n");
-        if (p.equalsIgnoreCase("Sources")) out.append("- [[").append(INBOX).append("|Inbox]] (inbox, ").append(entries(c).size()).append(" captures not yet filed)\n");
+        if (p.equalsIgnoreCase(Layout.sources())) out.append("- [[").append(inbox()).append("|Inbox]] (inbox, ").append(entries(c).size()).append(" captures not yet filed)\n");
         int from = Math.max(0, Math.min(offset, notes.size())), to = Math.min(notes.size(), from + LIST);
         for (Vault.Note n : notes.subList(from, to)) out.append(line(n)).append('\n');
         if (to < notes.size()) out.append("… ").append(notes.size() - to).append(" more: call list again with offset ").append(to).append('\n');

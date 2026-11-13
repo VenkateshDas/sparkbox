@@ -4,6 +4,19 @@ import me.venkatesh.saveobsidian.InboxFile;
 import me.venkatesh.saveobsidian.Enrich;
 import me.venkatesh.saveobsidian.Index;
 import me.venkatesh.saveobsidian.Vault;
+import me.venkatesh.saveobsidian.Layout;
+import me.venkatesh.saveobsidian.Lane;
+import me.venkatesh.saveobsidian.Feed;
+import me.venkatesh.saveobsidian.NoteEdit;
+import me.venkatesh.saveobsidian.Cites;
+import me.venkatesh.saveobsidian.Cards;
+import me.venkatesh.saveobsidian.Sched;
+import me.venkatesh.saveobsidian.Spark;
+import me.venkatesh.saveobsidian.CardPrompt;
+import me.venkatesh.saveobsidian.Extract;
+import me.venkatesh.saveobsidian.Transcript;
+import me.venkatesh.saveobsidian.JsonFix;
+import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
@@ -63,6 +76,12 @@ public class CaptureTest {
         regressionChecks();
         editFailureChecks();
         vaultChecks();
+        feedChecks();
+        noteEditChecks();
+        citesChecks();
+        entityChecks();
+        cardChecks();
+        readingChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
@@ -70,6 +89,16 @@ public class CaptureTest {
         System.out.println("Capture and append checks passed (" + count + ").");
     }
     static void vaultChecks() {
+        Layout.detect(Arrays.asList("Sources/A/2026/x.md", "Knowledge/Topics/T.md"));
+        check(Layout.sources().equals("Sources") && Layout.inbox().equals("Sources/Inbox")); // only the old layout has notes
+        Layout.detect(Arrays.asList("Knowledge/Sources/A/2026/x.md", "Sources/A/2026/y.md"));
+        check(Layout.sources().equals("Knowledge/Sources")); // both present: the new one wins
+        Layout.detect(new ArrayList<String>());
+        check(Layout.sources().equals("Knowledge/Sources") && Layout.other("Sources/X").equals("Knowledge/Sources/X") && Layout.other("Knowledge/Sources/X").equals("Sources/X") && Layout.other("Knowledge/Topics/X") == null);
+        check(Layout.conflict("a.sync-conflict-20261112-ABC.md") && !Layout.conflict("a.md") && Layout.isInbox("Sources/Inbox") && Layout.isInbox("Knowledge/Sources/Inbox"));
+        Vault.Graph moved = Vault.build(Arrays.asList(Vault.parse("Knowledge/Sources/A/2026/2026-01-01 - One.md", 1, "# One\ntext"), Vault.parse("Sources/B/2026/2026-01-02 - Two.md", 1, "# Two\ntext")));
+        check(moved.resolve("Sources/A/2026/2026-01-01 - One") != null && moved.resolve("Knowledge/Sources/B/2026/2026-01-02 - Two") != null); // links from either side of the move
+        check(IngestText.sourcesIndex("- [[Knowledge/Sources/AI Systems/index|AI Systems]] — 120 notes\n*297 source records under", "AI Systems").contains("121 notes"));
         String topic = "---\ntype: topic\nlast-updated: 2026-11-06\nrelated-topics: ['[[AI Agent Architecture]]', '[[RAG]]']\ndescription: LLM Memory Systems\n---\n\n## Core Mechanism\nPlain.\n"
             + "| Claim | Source |\n|---|---|\n| Memory | [[Sources/AI Systems/2026/2026-04-12 - Harness\\|Harness]] |\n";
         Vault.Note t = Vault.parse("Knowledge/Topics/LLM Memory Systems.md", 5, "\uFEFF" + topic.replace("\n", "\r\n"));
@@ -121,6 +150,187 @@ public class CaptureTest {
         check(Vault.blend(Arrays.asList(pile.get(8), pile.get(1)), words, "how do agents keep memory between sessions", 20).get(0) == pile.get(1)); // in both lists
         check(t.contains("memory core") && !t.contains("memory zebra") && src.contains("harness job"));
     }
+    static void feedChecks() {
+        Layout.detect(new ArrayList<String>());
+        String note = "---\ntype: source\nsource: \"https://www.example.com/a?utm_source=1\"\ncaptured: 2026-11-11\nvia: Sparkbox\nprocessed: true\ncuriosity: \"What changes?\"\nmade-topics-new: [\"[[T1]]\"]\nmade-topics-updated: [\"[[T2]]\"]\nmade-people-updated: [\"[[P]]\"]\n---\n\n# Stop coding\n\n## Why I captured this\nIdea to test.\n\n## Raw Content\none two three four\n\n## Claude's Extraction\n- x\n";
+        Vault.Note src = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-11 - Stop coding.md", 1000, note);
+        check(src.processed() && src.meta("curiosity").equals("What changes?") && src.why.equals("Idea to test.") && src.words == 4);
+        check(Vault.bullets("## Claude's Extraction\n### Key claims\n- One (high)\n- Two (low)\n### Topics identified\n- [[X]]\n", "Key claims").equals(Arrays.asList("One (high)", "Two (low)")));
+        check(Feed.made(src).equals("Made 1 note, 2 topics (1 new), 1 person"));
+        check(Lane.of(src.path, src.meta).equals("Craft") && Lane.of("Knowledge/Sources/Health & Biology/2026/x.md", new java.util.HashMap<String, String>()).equals("Life") && Lane.of("Knowledge/Topics/X.md", null).equals(""));
+        java.util.Map<String, String> override = new java.util.HashMap<>(); override.put("lane", "life");
+        check(Lane.of("Knowledge/Sources/AI Systems/2026/x.md", override).equals("Life"));
+        Vault.Note raw = Vault.parse("Knowledge/Sources/Developer Tools/2026/2026-11-10 - Raw.md", 900, "---\ntype: source\nsource: \"https://b.org/x\"\ncaptured: 2026-11-10\nprocessed: false\n---\n\n# Raw\ntext");
+        Vault.Note t1 = Vault.parse("Knowledge/Topics/T1.md", 800, "---\ntype: topic\n---\n# T1\n");
+        Vault.Note p1 = Vault.parse("Knowledge/People/P.md", 700, "---\ntype: person\n---\n# P\n");
+        Vault.Note s2 = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-09 - Second.md", 950, "---\ntype: source\ncaptured: 2026-11-09\n---\n# Second\n[[Knowledge/Topics/T1]]\n");
+        Vault.Note s3 = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-11 - Third.md", 960, "---\ntype: source\ncaptured: 2026-11-11\n---\n# Third\n[[Knowledge/Topics/T1]] [[Knowledge/People/P]]\n");
+        List<Vault.Note> all = Arrays.asList(src, raw, t1, p1, s2, s3);
+        InboxFile.Entry inboxed = InboxFile.parse("- \uD83D\uDD17 Fresh\n  https://c.org/y\n  Captured: 2026-11-12 08:14 \u00B7 via Sparkbox\n").get(0);
+        InboxFile.Entry dup = InboxFile.parse("- \uD83D\uDD17 Same\n  https://example.com/a\n  Captured: 2026-11-11 08:00 \u00B7 via Sparkbox\n").get(0);
+        java.time.LocalDateTime now = java.time.LocalDateTime.of(2026, 11, 12, 11, 14);
+        List<Feed.Item> items = Feed.build(all, Vault.build(all), Arrays.asList(inboxed, dup), now);
+        check(items.get(0).status.equals("Captured") && items.get(0).age.equals("3h ago") && items.get(0).sourceName.equals("c.org")); // newest first
+        int sources = 0, topics = 0, people = 0;
+        for (Feed.Item it : items) { if (it.kind.equals("source")) sources++; if (it.kind.equals("topic")) topics++; if (it.kind.equals("person")) people++; }
+        check(sources == 5 && topics == 1 && people == 1); // 4 notes + 1 capture; the duplicate capture is hidden; T1 has two fresh sources
+        check(Feed.filter(items, "All").size() == 6 && Feed.filter(items, "People").size() == 1 && Feed.filter(items, "Topics").size() == 1 && Feed.filter(items, "Craft").size() == 5);
+        check(Feed.filter(items, "Sources").size() == 5 && Feed.filter(items, "Life").isEmpty());
+        check(Feed.snippet("A long text about designing deterministic test harnesses before generating code in factories", "harnesses", 40).contains("harnesses") && Feed.snippet("short", "zzz", 40).isEmpty() && Feed.snippet("x harness y", "harness", 40).equals("x harness y"));
+        check(Feed.age(java.time.LocalDateTime.of(2026, 11, 9, 0, 0), false, now).equals("3d ago") && Feed.age(java.time.LocalDateTime.of(2026, 11, 12, 0, 0), false, now).equals("Today"));
+    }
+
+    static void entityChecks() {
+        String link = "[[Knowledge/Sources/AI Systems/2026/2026-11-11 - A]]", link2 = "[[Knowledge/Sources/AI Systems/2026/2026-11-12 - B]]";
+        check(IngestText.entityKind("Tool").equals("tool") && IngestText.entityKind("gadget").equals("other") && IngestText.entityKind(null).equals("other"));
+        String page = IngestText.newEntity("Qwen Coder", "model", "A family of open coding models.", link, "2026-11-11");
+        check(page.startsWith("---\ntype: entity\nkind: model\nappears-in: ['" + link + "']\nlast-updated: 2026-11-11\n---\n\n# Qwen Coder\n\n## What it is\nA family of open coding models.\n\n## Where it appears\n- " + link + "\n"));
+        String two = IngestText.updateEntity(page, link2, "2026-11-12");
+        check(two.contains("appears-in: ['" + link + "', '" + link2 + "']") && two.contains("last-updated: 2026-11-12") && two.contains("- " + link + "\n- " + link2) && IngestText.updateEntity(two, link2, "2026-11-13").equals(two));
+        check(IngestText.newEntity("X", "tool", "", link, "d").contains("A tool named in the captured sources."));
+        String idx = IngestText.entityIndex("# Knowledge Index\n\nText\n", "[[Knowledge/Entities/Qwen Coder|Qwen Coder]]", "model", "Open coding models");
+        check(idx.endsWith("## Entities\n- [[Knowledge/Entities/Qwen Coder|Qwen Coder]] (model) — Open coding models\n") && IngestText.entityIndex(idx, "[[Knowledge/Entities/Qwen Coder|Qwen Coder]]", "model", "x").equals(idx));
+        String idx2 = IngestText.entityIndex(idx, "[[Knowledge/Entities/Rex|Rex]]", "tool", "");
+        check(idx2.contains("(model) — Open coding models\n- [[Knowledge/Entities/Rex|Rex]] (tool)"));
+    }
+
+    static void citesChecks() {
+        Cites.Result r = Cites.number("A [[Knowledge/Topics/X|X]] and B [[Knowledge/Sources/S|Source S]], again [[Knowledge/Topics/X|X]]. Table \\| [[Knowledge/Topics/Y\\|Y]] ![[img.png]] [[ ]]");
+        check(r.text.startsWith("A [1] and B [2], again [1]. Table \\| [3] ![[img.png]]"));
+        check(r.sources.size() == 3 && r.sources.get(0)[1].equals("Knowledge/Topics/X") && r.sources.get(1)[2].equals("Source S") && r.sources.get(2)[1].equals("Knowledge/Topics/Y"));
+        check(Cites.number("No citations here.").sources.isEmpty() && Cites.number("No citations here.").text.equals("No citations here."));
+        check(Cites.notInKnowledge("Not in your knowledge base. Closest: [[A|A]]") && Cites.notInKnowledge("  **Not in your knowledge base**") && !Cites.notInKnowledge("It is not in your knowledge base maybe"));
+    }
+
+    static final long MIN = 60000L, DAYMS = 86400000L;
+
+    static void cardChecks() {
+        // ---- Cards: ids, times, state ----
+        check(Cards.id("p", "What  is X?").equals(Cards.id("p", "what is x?")) && Cards.id("p", "a").startsWith("c_") && Cards.id("p", "a").length() == 10 && !Cards.id("p", "a").equals(Cards.id("q", "a")));
+        long t0 = Cards.parseTime("2026-11-12T07:41Z");
+        check(Cards.time(t0).equals("2026-11-12T07:41Z") && Cards.parseTime("junk") == 0);
+        Cards.State st = new Cards.State(t0, 3, 2.5, 2, 0);
+        Cards.State back = Cards.parseState(Cards.stateText(st));
+        check(back != null && back.due == t0 && back.interval == 3 && back.ease == 2.5 && back.reps == 2 && back.lapses == 0 && Cards.parseState("due x") == null);
+        String log = Cards.logWith("", t0, "good", 9);
+        log = Cards.logWith(log, t0 - DAYMS, "hard", 14);
+        check(log.equals("2026-11-11T07:41Z hard 14s; 2026-11-12T07:41Z good 9s") && Cards.logTimes(log).size() == 2);
+        String big = "";
+        for (int i = 0; i < 60; i++) big = Cards.logWith(big, t0 + i * MIN, "good", 1);
+        check(big.split(";").length == 50);
+
+        // ---- Cards: parse and surgical edits ----
+        String note = "---\ntype: source\n---\n\n# T\n\n## Raw Content\ntext\n\n## Cards\n\n### c_1\nQ: Why?\nA: Because.\n  Second line.\nBasis: claim (high)\nState: due 2026-11-15T07:41Z interval 3 ease 2.50 reps 2 lapses 0\n\n### c_2\nQ: Odd\n\n### c_3\nQ: Next?\nA: Yes.\nFlag: yes\n\n## After\nkept\n";
+        List<Cards.Card> cs = Cards.parse("n.md", note);
+        check(cs.size() == 2 && cs.get(0).a.equals("Because.\nSecond line.") && cs.get(0).state.interval == 3 && cs.get(1).flag && cs.get(0).basis.equals("claim (high)")); // c_2 has no answer: skipped
+        java.util.Map<String, String> ch = new java.util.LinkedHashMap<>();
+        ch.put("Take", "my words"); ch.put("Flag", null);
+        String edited = Cards.setKeys(note, "c_1", ch);
+        check(edited.contains("### c_1\nQ: Why?\nA: Because.\n  Second line.\nBasis: claim (high)\nState: due 2026-11-15T07:41Z interval 3 ease 2.50 reps 2 lapses 0\nTake: my words\n\n### c_2"));
+        check(Cards.setKeys(edited, "c_1", ch).equals(edited)); // applying twice changes nothing
+        java.util.Map<String, String> gone = new java.util.LinkedHashMap<>(); gone.put("Flag", null);
+        String unflagged = Cards.setKeys(note, "c_3", gone);
+        check(!unflagged.contains("Flag: yes") && unflagged.contains("### c_3\nQ: Next?\nA: Yes.\n\n## After") && unflagged.contains("## After\nkept\n")); // only that block changed
+        java.util.Map<String, String> multi = new java.util.LinkedHashMap<>(); multi.put("A", "New\nanswer");
+        check(Cards.setKeys(note, "c_1", multi).contains("A: New\n  answer\nBasis: claim (high)") && Cards.setKeys(note, "c_zzz", multi).equals(note));
+        Cards.Card mine = new Cards.Card(); mine.id = "c_m"; mine.q = "Mine?"; mine.a = "Yes."; mine.origin = "mine"; mine.take = "t";
+        String added = Cards.add(note, java.util.Collections.singletonList(mine));
+        check(added.contains("Flag: yes\n\n### c_m\nQ: Mine?\nA: Yes.\nTake: t\nOrigin: mine\n\n## After") && Cards.add(added, java.util.Collections.singletonList(mine)).equals(added));
+        String created = Cards.add("# T\n\ntext\n", java.util.Collections.singletonList(mine));
+        check(created.equals("# T\n\ntext\n\n## Cards\n\n### c_m\nQ: Mine?\nA: Yes.\nTake: t\nOrigin: mine\n\n"));
+        check(!Cards.remove(note, "c_3").contains("c_3") && Cards.remove(note, "c_3").contains("### c_1") && Cards.remove(note, "c_nope").equals(note));
+        check(Cards.parse("x", Cards.add(created, java.util.Collections.<Cards.Card>emptyList())).size() == 1 && Cards.setKeys(note.replace("\n", "\r\n"), "c_1", ch).contains("Take: my words\r\n"));
+
+        // ---- NoteEdit.setKey ----
+        String fm = "---\ntype: source\nquality: partial\n---\n# T\n";
+        check(NoteEdit.setKey(fm, "quality", "full").equals("---\ntype: source\nquality: full\n---\n# T\n") && NoteEdit.setKey(fm, "kept", "true").equals("---\ntype: source\nquality: partial\nkept: true\n---\n# T\n"));
+        check(NoteEdit.setKey(fm, "quality", null).equals("---\ntype: source\n---\n# T\n") && NoteEdit.setKey("# no frontmatter\n", "kept", "true").equals("# no frontmatter\n") && NoteEdit.setKey(NoteEdit.setKey(fm, "kept", "true"), "kept", "true").equals(NoteEdit.setKey(fm, "kept", "true")));
+
+        // ---- Sched ----
+        long n = t0;
+        Cards.State g1 = Sched.next(null, "good", n);
+        check(g1.interval == 1 && g1.reps == 1 && g1.due == n + DAYMS && g1.ease == 2.5);
+        Cards.State g2 = Sched.next(g1, "good", n), g3 = Sched.next(g2, "good", n);
+        check(g2.interval == 3 && g3.interval == 8 && g3.reps == 3); // 3 * 2.5 = 7.5, rounded
+        check(Sched.next(Sched.next(null, "easy", n), "good", n).interval >= 4); // Easy then Good never shrinks the interval
+        check(Sched.next(null, "easy", n).interval == 4 && Sched.next(null, "hard", n).interval == 1 && Sched.next(g3, "easy", n).interval == 26 && Sched.next(g3, "easy", n).ease == 2.65);
+        Cards.State hard = Sched.next(g3, "hard", n);
+        check(hard.interval == 10 && Math.abs(hard.ease - 2.35) < 1e-9);
+        Cards.State lapse = Sched.next(g3, "again", n);
+        check(lapse.reps == 0 && lapse.lapses == 1 && lapse.due == n + 10 * MIN && Math.abs(lapse.ease - 2.3) < 1e-9 && Sched.next(lapse, "good", n).interval == 1);
+        check(Sched.next(null, "again", n).lapses == 0 && Sched.next(null, "again", n).ease == 2.5);
+        Cards.State low = new Cards.State(n, 5, 1.35, 4, 0);
+        check(Sched.next(low, "again", n).ease == 1.3 && Sched.next(new Cards.State(n, 5, 1.3, 4, 0), "hard", n).ease == 1.3);
+        check(Sched.label(null, "again", n).equals("later today") && Sched.label(g3, "good", n).equals("2w") && Sched.label(g1, "good", n).equals("3d") && Sched.label(g3, "easy", n).equals("3w") && Sched.label(new Cards.State(n, 100, 2.5, 5, 0), "good", n).equals("8mo"));
+
+        // ---- Spark ----
+        java.time.ZoneId utc = java.time.ZoneId.of("UTC");
+        java.util.List<Cards.Card> deck = new java.util.ArrayList<>();
+        for (int i = 0; i < 12; i++) { Cards.Card c = new Cards.Card(); c.id = "c" + i; c.path = i < 6 ? "a.md" : "b.md"; c.q = "q"; c.a = "a"; deck.add(c); }
+        java.util.List<String> newest = java.util.Arrays.asList("b.md", "a.md");
+        Spark.Plan p = Spark.plan(deck, new java.util.HashSet<String>(), n, utc, 7, newest);
+        check(p.state.equals("question") && p.queue.size() == 7 && p.queue.get(0).path.equals("b.md") && p.minutes() == 4 && p.reviewedToday == 0); // newest note first, capped at 7
+        java.util.Set<String> kept = new java.util.HashSet<>(); kept.add("a.md");
+        check(Spark.plan(deck, kept, n, utc, 7, newest).queue.get(0).path.equals("a.md")); // kept notes first
+        deck.get(0).flag = true; deck.get(1).parked = n + DAYMS; deck.get(2).state = new Cards.State(n - DAYMS, 3, 2.5, 2, 0); deck.get(3).state = new Cards.State(n + 5 * DAYMS, 3, 2.5, 2, 0);
+        Spark.Plan q = Spark.plan(deck, kept, n, utc, 7, newest);
+        check(q.queue.get(0).id.equals("c2")); // due cards before new ones
+        boolean none = true;
+        for (Cards.Card c : q.queue) none &= !c.id.equals("c0") && !c.id.equals("c1") && !c.id.equals("c3"); // flagged, parked and not-yet-due stay out
+        check(none && q.nextDue == n + 5 * DAYMS);
+        deck.get(4).log = Cards.logWith("", n - 60 * MIN, "good", 5); deck.get(5).log = Cards.logWith(Cards.logWith("", n - 3 * 60 * MIN, "again", 5), n - 2 * 60 * MIN, "good", 5);
+        check(Spark.reviewedToday(deck, n, utc) == 2 && Spark.plan(deck, kept, n, utc, 7, newest).queue.size() == 5); // each card counts once; cap 7 minus 2
+        check(Spark.plan(deck, kept, n, utc, 2, newest).state.equals("cap_reached") && Spark.plan(new java.util.ArrayList<Cards.Card>(), kept, n, utc, 7, newest).state.equals("no_cards"));
+        java.util.List<Cards.Card> one = new java.util.ArrayList<>(); Cards.Card done = new Cards.Card(); done.id = "d"; done.path = "a.md"; done.state = new Cards.State(n + DAYMS, 1, 2.5, 1, 0); done.log = Cards.logWith("", n - MIN, "good", 4); one.add(done);
+        check(Spark.plan(one, kept, n, utc, 7, newest).state.equals("caught_up") && Spark.plan(one, kept, n, utc, 1, newest).state.equals("caught_up") && Spark.clampCap(1) == 3 && Spark.clampCap(99) == 20);
+
+        // ---- CardPrompt: note input and quality ----
+        String src = "---\ntype: source\n---\n\n# Title\n\n## Why I captured this\nTo try.\n\n## Raw Content\n" + "word ".repeat(400) + "\n\n## Claude's Extraction\n\n### Key claims\n- One (high)\n- Two (low)\n";
+        check(CardPrompt.quality(src).equals("full") && CardPrompt.input(src).startsWith("Title: Title\nKey claims") && CardPrompt.input(src).contains("Why the owner saved it: To try.") && CardPrompt.input(src).contains("Page text:\nword word"));
+        String thinNote = "---\ntype: source\n---\n# T\n\n## Raw Content\nshort\n";
+        check(CardPrompt.quality(thinNote).equals("title_only") && CardPrompt.input("# Nothing\n").isEmpty());
+        String claimsOnly = "# T\n\n## Claude's Extraction\n\n### Key claims\n" + "- A claim that is long enough to count as text for the model to work from. ".repeat(30);
+        check(CardPrompt.quality(claimsOnly).equals("partial")); // claims alone never reach full
+        check(CardPrompt.input("# T\n\n## Raw Content\n" + "x".repeat(20000) + "\n").length() < 12100);
+
+        // ---- CardPrompt ----
+        java.util.List<String[]> raw = new java.util.ArrayList<>();
+        raw.add(new String[]{"Why is X?", "Because Y.", "Y is true", "high"});
+        raw.add(new String[]{"Low one?", "No.", "z", "low"});
+        raw.add(new String[]{"Link?", "See [[X]]", "b", "high"});
+        raw.add(new String[]{"Same?", "Same?", "b", "high"});
+        raw.add(new String[]{"  why   is x?", "Dup.", "b", "medium"});
+        raw.add(new String[]{"Url?", "Go to https://x.org", "b", "high"});
+        for (int i = 0; i < 6; i++) raw.add(new String[]{"Extra " + i + "?", "Answer " + i, "b", "medium"});
+        java.util.List<Cards.Card> ok = CardPrompt.validate("n.md", raw);
+        check(ok.size() == 4 && ok.get(0).basis.equals("Y is true (high)") && ok.get(1).q.equals("Extra 0?")); // low, link, same, duplicate, url dropped; capped at 4
+        check(CardPrompt.curiosity("What changes?").equals("What changes?") && CardPrompt.curiosity("A statement.").isEmpty() && CardPrompt.curiosity("See [[X]]?").isEmpty());
+        check(CardPrompt.quality(100).equals("title_only") && CardPrompt.quality(300).equals("partial") && CardPrompt.quality(1500).equals("full"));
+        String made = CardPrompt.apply("---\ntype: source\n---\n# T\n", "What changes?", "full", ok);
+        check(made.contains("curiosity: \"What changes?\"") && made.contains("quality: full") && made.contains("## Cards") && Cards.parse("n.md", made).size() == 4 && CardPrompt.apply(made, "What changes?", "full", ok).equals(made));
+        String thin = CardPrompt.apply("---\ntype: source\n---\n# T\n", "What?", "title_only", ok);
+        check(thin.contains("quality: title_only") && !thin.contains("curiosity") && !thin.contains("## Cards"));
+    }
+
+    static void noteEditChecks() {
+        String note = "---\ntype: source\n---\n\n# T\n\n## Why I captured this\nBecause.\n\n## Raw Content\n```\n## not a heading\n```\ntext\n\n## Claude's Extraction\n- x\n";
+        String a = NoteEdit.setSection(note, "My ideas", "Mine\nline two", "Why I captured this");
+        check(a.contains("## Why I captured this\nBecause.\n\n## My ideas\nMine\nline two\n\n## Raw Content")); // added after Why, other sections untouched
+        check(NoteEdit.setSection(a, "My ideas", "Mine\nline two", "Why I captured this").equals(a)); // applying twice changes nothing
+        String b = NoteEdit.setSection(a, "My ideas", "Changed", "Why I captured this");
+        check(b.contains("## My ideas\nChanged\n\n## Raw Content") && !b.contains("line two") && b.contains("## not a heading"));
+        check(NoteEdit.setSection(b, "My ideas", "  ", "Why I captured this").equals(note)); // an empty body removes the section
+        check(NoteEdit.setSection(note, "My ideas", "Z").contains("- x\n\n## My ideas\nZ\n") && NoteEdit.setSection(note, "My ideas", "Z").endsWith("Z\n")); // no anchor: at the end
+        String crlf = NoteEdit.setSection(note.replace("\n", "\r\n"), "My ideas", "Q", "Why I captured this");
+        check(crlf.contains("## My ideas\r\nQ\r\n") && !crlf.replace("\r\n", "").contains("\n"));
+        String raw = NoteEdit.setSection("# T\n\n## Raw Content\n```\n## My ideas\n```\n", "My ideas", "Real");
+        check(raw.contains("```\n## My ideas\n```") && raw.endsWith("## My ideas\nReal\n")); // a heading inside a fence is not a section
+        String topic = NoteEdit.setSection("# T\n\n## Core Mechanism\nPlain.\n\n## Key Claims\n| a |\n", "My take", NoteEdit.takeBody("I think so.", "2026-11-12"), "Core Mechanism");
+        check(topic.contains("Plain.\n\n## My take\nI think so.\n\nEdited: 2026-11-12\n\n## Key Claims"));
+        String sec = "I think so.\n\nEdited: 2026-11-12";
+        check(NoteEdit.takeText(sec).equals("I think so.") && NoteEdit.takeEdited(sec).equals("2026-11-12") && NoteEdit.takeBody(" ", "2026-11-12").isEmpty());
+    }
+
     static void inboxFileChecks() {
         String head = "---\ntype: inbox\n---\n# Sources Inbox\n\n*Landing pad.*\n\n";
         String telegram = "- 🔗 Telegram title\n  https://t.example/a\n  Captured: 18/10/26, 7:36 AM\n";
@@ -313,5 +523,70 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(Index.load(file).size() == 0 && Index.load(new java.io.File(file.getPath() + ".none")).size() == 0);
         file.delete();
     }
+    /** Page extraction, YouTube parsing, model-reply repair, lane choice. */
+    private static void readingChecks() throws Exception {
+        // an article page: navigation, a sidebar of links and a footer around the real text
+        String para = "The cache keeps recent results close to the reader, which saves a long trip to the database, and it is cleared when the data changes. ";
+        String html = "<html><head><title>Fast caches | Example Blog</title><meta property='og:site_name' content='Example Blog'><meta name='author' content='Ada Lovelace'>"
+            + "<meta property='og:image' content='/img/cover.png'></head><body><nav><a href='/'>Home</a><a href='/about'>About</a><a href='/x'>Archive</a></nav>"
+            + "<div class='sidebar'><a href='/a'>Popular one</a><a href='/b'>Popular two</a><a href='/c'>Popular three</a></div>"
+            + "<div class='post-content'><h1>Fast caches</h1><p>" + para + para + "</p><p>" + para + para + "</p><h2>Why it works</h2><p>" + para + para + "</p><ul><li>Keep it small and fast to read from memory</li></ul></div>"
+            + "<footer>Copyright Example Blog. All rights reserved. Privacy. Terms.</footer></body></html>";
+        Extract.Page page = Extract.parse(html, "https://blog.example.com/fast-caches");
+        check(page.title.equals("Fast caches"));
+        check(page.byline.equals("Ada Lovelace"));
+        check(page.image.equals("https://blog.example.com/img/cover.png"));
+        check(page.text.contains("saves a long trip to the database"));
+        check(page.text.contains("### Why it works"));
+        check(!page.text.contains("Popular two") && !page.text.contains("Copyright") && !page.text.contains("About"));
+        check(!page.blocked);
+        // structured data wins when the visible page is a thin app shell
+        String shell = "<html><head><title>Post</title><script type='application/ld+json'>{\"@context\":\"https://schema.org\",\"@graph\":[{\"@type\":\"BlogPosting\",\"headline\":\"From JSON\",\"author\":{\"name\":\"Grace\"},\"articleBody\":\"" + para.repeat(4).trim() + "\"}]}</script></head><body><div id='root'></div></body></html>";
+        Extract.Page ld = Extract.parse(shell, "https://x.example/p");
+        check(ld.title.equals("From JSON") && ld.byline.equals("Grace") && ld.text.contains("saves a long trip"));
+        // a bot check is reported as blocked, not as the article
+        Extract.Page wall = Extract.parse("<html><head><title>Just a moment...</title></head><body><h1>Just a moment...</h1><p>Enable JavaScript and cookies to continue</p></body></html>", "https://x.example/");
+        check(wall.blocked && wall.text.isEmpty());
+        check(Extract.parse("", "https://x.example/").text.isEmpty());
+
+        // YouTube links
+        check(Transcript.videoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://youtu.be/dQw4w9WgXcQ?si=abc").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://m.youtube.com/shorts/dQw4w9WgXcQ").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://www.youtube.com/live/dQw4w9WgXcQ?feature=share").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://music.youtube.com/watch?list=x&v=dQw4w9WgXcQ").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://www.youtube.com/channel/UC1234567890").isEmpty());
+        check(Transcript.videoId("https://example.com/watch?v=dQw4w9WgXcQ").isEmpty());
+        check(Transcript.videoId("not a url").isEmpty());
+        // caption tracks: written English beats automatic English beats other languages
+        org.json.JSONArray tracks = new org.json.JSONArray("[{\"baseUrl\":\"a\",\"languageCode\":\"de\"},{\"baseUrl\":\"b\",\"languageCode\":\"en\",\"kind\":\"asr\"},{\"baseUrl\":\"c\",\"languageCode\":\"en\"}]");
+        check(Transcript.pick(tracks).getString("baseUrl").equals("c"));
+        check(Transcript.pick(new org.json.JSONArray("[{\"baseUrl\":\"a\",\"languageCode\":\"de\"},{\"baseUrl\":\"b\",\"languageCode\":\"en\",\"kind\":\"asr\"}]")).getString("baseUrl").equals("b"));
+        check(Transcript.pick(new org.json.JSONArray("[]")) == null && Transcript.pick(null) == null);
+        // caption XML, both formats; a pause starts a paragraph; entities are decoded
+        String f3 = "<?xml version=\"1.0\"?><timedtext format=\"3\"><body><p t=\"1000\" d=\"2000\">We&#39;re no strangers</p><p t=\"3000\" d=\"2000\">to love &amp; war</p><p t=\"9000\" d=\"1000\">A new idea</p></body></timedtext>";
+        check(Transcript.fromXml(f3).equals("We're no strangers to love & war\n\nA new idea"));
+        String srv1 = "<transcript><text start=\"0\" dur=\"2\">Don&amp;#39;t panic</text><text start=\"2\" dur=\"2\">it works</text></transcript>";
+        check(Transcript.fromXml(srv1).equals("Don't panic it works"));
+        check(Transcript.fromXml("<timedtext><body><p t=\"0\" d=\"1\">[Music]</p><p t=\"1000\" d=\"1\">Hello</p></body></timedtext>").equals("Hello"));
+        check(Transcript.fromXml("").isEmpty() && Transcript.fromXml("<timedtext><body></body></timedtext>").isEmpty());
+
+        // model replies that are almost JSON
+        check(JsonFix.object("Here you go:\n```json\n{\"a\": 1, \"b\": [1, 2,],}\n```").getInt("a") == 1);
+        check(JsonFix.object("{\"a\": \"line one\nline two\"}").getString("a").equals("line one\nline two"));
+        org.json.JSONObject cut = JsonFix.object("{\"topics\": [{\"title\": \"One\"}, {\"title\": \"Two\", \"claims\": [{\"claim\": \"cut o");
+        check(cut != null && cut.getJSONArray("topics").length() == 2 && cut.getJSONArray("topics").getJSONObject(0).getString("title").equals("One"));
+        check(JsonFix.object("no json here") == null && JsonFix.object("") == null && JsonFix.object(null) == null);
+        check(JsonFix.object("{\"a\":{\"b\":2}}").getJSONObject("a").getInt("b") == 2);
+
+        // two videos are two links; tracking noise and fragments are not part of a link's identity
+        check(!Capture.identity("https://www.youtube.com/watch?v=aaaaaaaaaaa").equals(Capture.identity("https://www.youtube.com/watch?v=bbbbbbbbbbb")));
+        check(Capture.identity("https://a.com/p?id=7&utm_source=x#top").equals("https://a.com/p?id=7") && Capture.identity("https://a.com/p#x").equals("https://a.com/p"));
+        // lane and folder from the classifier
+        check(Lane.pick("craft", "Developer Tools")[0].equals("Craft") && Lane.pick("life", "developer tools")[0].equals("Craft")); // a real folder decides its own lane
+        check(Lane.pick("life", "Health & Biology")[1].equals("Health & Biology") && Lane.pick("craft", "Health & Biology")[0].equals("Life"));
+        check(Lane.pick("life", "nonsense")[1].equals("People & Society") && Lane.pick("craft", "nonsense") == null && Lane.pick("", "") == null);
+    }
+
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("check #" + count); }
 }

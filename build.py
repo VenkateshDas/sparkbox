@@ -19,18 +19,21 @@ env['PATH'] = str(java / 'bin') + os.pathsep + env['PATH']
 def run(*args):
     subprocess.run([str(x) for x in args], cwd=root, env=env, check=True)
 
-run(java / 'bin/javac', '-encoding', 'UTF-8', '-d', classes,
+jsoup = root / 'lib/jsoup-1.18.3.jar'
+testjson = root / 'lib/json-20240303.jar' # org.json for the JVM checks only; the phone has its own
+run(java / 'bin/javac', '-encoding', 'UTF-8', '-classpath', str(jsoup) + os.pathsep + str(testjson), '-d', classes,
+    root / 'src/me/venkatesh/saveobsidian/Extract.java', root / 'src/me/venkatesh/saveobsidian/Transcript.java', root / 'src/me/venkatesh/saveobsidian/JsonFix.java',
     root / 'src/me/venkatesh/saveobsidian/Capture.java', root / 'src/me/venkatesh/saveobsidian/AppendCheck.java',
-    root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'src/me/venkatesh/saveobsidian/Index.java', root / 'src/me/venkatesh/saveobsidian/Vault.java', root / 'src/me/venkatesh/saveobsidian/IngestText.java', root / 'tests/CaptureTest.java')
-run(java / 'bin/java', '-cp', classes, 'CaptureTest')
+    root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'src/me/venkatesh/saveobsidian/Index.java', root / 'src/me/venkatesh/saveobsidian/Vault.java', root / 'src/me/venkatesh/saveobsidian/Layout.java', root / 'src/me/venkatesh/saveobsidian/Lane.java', root / 'src/me/venkatesh/saveobsidian/Feed.java', root / 'src/me/venkatesh/saveobsidian/NoteEdit.java', root / 'src/me/venkatesh/saveobsidian/Cites.java', root / 'src/me/venkatesh/saveobsidian/Cards.java', root / 'src/me/venkatesh/saveobsidian/Sched.java', root / 'src/me/venkatesh/saveobsidian/Spark.java', root / 'src/me/venkatesh/saveobsidian/CardPrompt.java', root / 'src/me/venkatesh/saveobsidian/IngestText.java', root / 'tests/CaptureTest.java')
+run(java / 'bin/java', '-cp', str(classes) + os.pathsep + str(jsoup) + os.pathsep + str(testjson), 'CaptureTest')
 run(tools / 'aapt2', 'compile', '--dir', root / 'res', '-o', build / 'resources.zip')
 run(tools / 'aapt2', 'link', '-o', build / 'unsigned.apk', '-I', platform / 'android.jar',
     '--manifest', root / 'AndroidManifest.xml', '--min-sdk-version', '26', '--target-sdk-version', '35',
     '--java', build / 'generated', build / 'resources.zip')
-run(java / 'bin/javac', '-encoding', 'UTF-8', '--release', '8', '-classpath', platform / 'android.jar',
+run(java / 'bin/javac', '-encoding', 'UTF-8', '--release', '8', '-classpath', str(platform / 'android.jar') + os.pathsep + str(jsoup),
     '-d', classes, *sorted((root / 'src').rglob('*.java')), *sorted((build / 'generated').rglob('*.java')))
 run(java / 'bin/jar', 'cf', build / 'app.jar', '-C', classes, 'me')
-run(tools / 'd8', '--min-api', '26', '--lib', platform / 'android.jar', '--output', build, build / 'app.jar')
+run(tools / 'd8', '--min-api', '26', '--lib', platform / 'android.jar', '--output', build, build / 'app.jar', jsoup)
 with zipfile.ZipFile(build / 'unsigned.apk', 'a', zipfile.ZIP_DEFLATED) as apk:
     apk.write(build / 'classes.dex', 'classes.dex')
 run(tools / 'zipalign', '-f', '4', build / 'unsigned.apk', build / 'aligned.apk')

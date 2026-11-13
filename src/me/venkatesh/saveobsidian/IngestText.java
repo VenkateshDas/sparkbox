@@ -38,9 +38,9 @@ public final class IngestText {
 
     /** The Source note: front matter, then Raw Content, Why, Ideas and Claude's Extraction as Agents.md describes. */
     public static String sourceNote(String title, String url, String author, String captured, List<String> topics, List<String> people,
-                                    String why, String ideas, String raw, List<String> claims, List<String> flags) {
+                                    String why, String ideas, String raw, List<String> claims, List<String> flags, String lane) {
         StringBuilder s = new StringBuilder("---\ntype: source\nsource: \"" + url.replace("\"", "%22") + "\"\nauthor: \"" + author.replace("\"", "'") + "\"\ncaptured: " + captured
-            + "\nvia: Sparkbox\ntopics: " + quoteList(topics) + "\npeople: " + quoteList(people) + "\nprocessed: true\n---\n\n# " + title + "\n");
+            + "\nvia: Sparkbox\n" + (lane == null || lane.isEmpty() ? "" : "lane: " + lane.toLowerCase(java.util.Locale.ROOT) + "\n") + "topics: " + quoteList(topics) + "\npeople: " + quoteList(people) + "\nprocessed: true\n---\n\n# " + title + "\n");
         if (!raw.isEmpty()) s.append("\n## Raw Content\n").append(raw).append('\n');
         if (!why.trim().isEmpty()) s.append("\n## Why I captured this\n").append(why.trim()).append('\n');
         if (!ideas.trim().isEmpty()) s.append("\n## My ideas\n").append(ideas.trim()).append('\n');
@@ -81,7 +81,9 @@ public final class IngestText {
 
     public static String newPerson(String name, String role, String sourceLink) {
         String field = role.replaceAll("\\s+", " ").trim();
-        return "---\ntype: person\nfield: " + (field.isEmpty() ? "Captured author / coauthor" : field) + "\nkey-works: []\nappears-in: ['" + sourceLink + "']\n---\n\n## Who They Are\nCaptured author / coauthor in "
+        if (field.isEmpty()) field = "Captured author / coauthor";
+        else if (field.matches("(?s).*(: | #|^[^A-Za-z0-9(]).*") || field.endsWith(":")) field = "\"" + field.replace("\\", " ").replace("\"", "'") + "\""; // a role from a web page must not break the front matter
+        return "---\ntype: person\nfield: " + field + "\nkey-works: []\nappears-in: ['" + sourceLink + "']\n---\n\n## Who They Are\nCaptured author / coauthor in "
             + sourceLink + ". Biography unverified.\n\n## Key Ideas\n- None recorded yet.\n\n## Where they appear in this vault\n- " + sourceLink + "\n";
     }
 
@@ -109,7 +111,7 @@ public final class IngestText {
     /** Sources/index.md: one more note in this category and one more record in total. */
     public static String sourcesIndex(String text, String category) {
         String t = text;
-        Matcher m = Pattern.compile("(\\[\\[Sources/" + Pattern.quote(category) + "/index\\|" + Pattern.quote(category) + "\\]\\] — )(\\d+)( notes)").matcher(t);
+        Matcher m = Pattern.compile("(\\[\\[(?:Knowledge/)?Sources/" + Pattern.quote(category) + "/index\\|" + Pattern.quote(category) + "\\]\\] — )(\\d+)( notes)").matcher(t);
         if (m.find()) t = t.substring(0, m.start()) + m.group(1) + (Integer.parseInt(m.group(2)) + 1) + m.group(3) + t.substring(m.end());
         m = Pattern.compile("\\*(\\d+)( source records)").matcher(t);
         if (m.find()) t = t.substring(0, m.start()) + "*" + (Integer.parseInt(m.group(1)) + 1) + m.group(2) + t.substring(m.end());
@@ -125,6 +127,40 @@ public final class IngestText {
     public static String logLine(String sourceLink) { return "- [INGEST] " + sourceLink + " · complete.\n"; }
 
     public static String appendLine(String text, String line) { return text + (text.isEmpty() || text.endsWith("\n") ? "" : "\n") + line; }
+
+    // ---- entities ----
+
+    public static final String[] ENTITY_KINDS = {"model", "tool", "org", "dataset", "paper", "other"};
+
+    /** One of the entity kinds, "other" when the model named something else. */
+    public static String entityKind(String said) {
+        String k = said == null ? "" : said.trim().toLowerCase(java.util.Locale.ROOT);
+        for (String kind : ENTITY_KINDS) if (kind.equals(k)) return kind;
+        return "other";
+    }
+
+    /** A new Entity page: what it is, and the one source it appears in so far. */
+    public static String newEntity(String name, String kind, String what, String sourceLink, String today) {
+        return "---\ntype: entity\nkind: " + entityKind(kind) + "\nappears-in: ['" + sourceLink + "']\nlast-updated: " + today + "\n---\n\n# " + name + "\n\n## What it is\n"
+            + (what == null || what.trim().isEmpty() ? "A " + entityKind(kind) + " named in the captured sources." : what.replaceAll("\\s+", " ").trim()) + "\n\n## Where it appears\n- " + sourceLink + "\n";
+    }
+
+    /** The page with one more source: its link under "Where it appears" and in appears-in, last-updated moved. Unchanged when the source is already there. */
+    public static String updateEntity(String page, String sourceLink, String today) {
+        if (page.contains(sourceLink)) return page;
+        String out = page;
+        Matcher m = Pattern.compile("(?m)^appears-in:\\s*\\[(.*)\\]\\s*$").matcher(out);
+        if (m.find()) out = out.substring(0, m.start()) + "appears-in: [" + (m.group(1).trim().isEmpty() ? "" : m.group(1).trim() + ", ") + "'" + sourceLink + "']" + out.substring(m.end());
+        out = setFront(out, "last-updated", today);
+        return addBullets(out, "## Where it appears", java.util.Collections.singletonList("- " + sourceLink));
+    }
+
+    /** One line under "## Entities" in Knowledge/index.md (the section is created once); unchanged when the entity is already listed. */
+    public static String entityIndex(String index, String entityLink, String kind, String what) {
+        if (index.contains(entityLink)) return index;
+        String line = "- " + entityLink + " (" + entityKind(kind) + ")" + (what == null || what.trim().isEmpty() ? "" : " — " + what.replaceAll("\\s+", " ").trim());
+        return addBullets(index, "## Entities", java.util.Collections.singletonList(line));
+    }
 
     // ---- small Markdown helpers ----
 

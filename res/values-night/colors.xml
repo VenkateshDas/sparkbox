@@ -1,12 +1,12 @@
 <resources>
-    <color name="w_bg">#141415</color>
-    <color name="w_surface">#19191B</color>
-    <color name="w_ink">#EDEDED</color>
-    <color name="w_sub">#A1A1A6</color>
-    <color name="w_muted">#85858B</color>
-    <color name="w_line">#14EDEDED</color>
-    <color name="w_accent">#4CC38A</color>
-    <color name="w_raised">#2A2A2D</color>
-    <color name="w_card_top">#212124</color>
-    <color name="w_card_bot">#18181A</color>
+    <color name="w_bg">#0F141B</color>
+    <color name="w_surface">#171C23</color>
+    <color name="w_ink">#F1F5F9</color>
+    <color name="w_sub">#94A3B8</color>
+    <color name="w_muted">#94A3B8</color>
+    <color name="w_line">#28323F</color>
+    <color name="w_accent">#10B981</color>
+    <color name="w_raised">#1E242D</color>
+    <color name="w_card_top">#171C23</color>
+    <color name="w_card_bot">#1E242D</color>
 </resources>

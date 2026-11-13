@@ -39,6 +39,14 @@ public final class Capture {
     }
 
     /** Drops tracking parameters, keeps everything else. */
+    /** What makes a link the same link: tracking parameters and the #fragment dropped, the rest of the query kept (a YouTube video is /watch?v=ID, and nothing else tells two videos apart). */
+    public static String identity(String url) {
+        String u;
+        try { u = cleanUrl(url.trim()); } catch (RuntimeException odd) { u = url.trim(); }
+        int h = u.indexOf('#');
+        return h < 0 ? u : u.substring(0, h);
+    }
+
     public static String cleanUrl(String url) {
         int hash = url.indexOf('#');
         String fragment = hash < 0 ? "" : url.substring(hash), rest = hash < 0 ? url : url.substring(0, hash);

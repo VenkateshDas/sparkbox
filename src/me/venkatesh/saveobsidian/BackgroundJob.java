@@ -9,7 +9,7 @@ import android.content.Context;
 
 /** Lets Android run tagging and indexing with the app closed. Scheduled on app open and after each capture. */
 public class BackgroundJob extends JobService {
-    private static final int ID = 1;
+    private static final int ID = 1, RETRY = 2;
 
     static void schedule(Context c) {
         if (Model.key(c).isEmpty()) return; // nothing to do without a key
@@ -19,9 +19,25 @@ public class BackgroundJob extends JobService {
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build());
     }
 
+    /** Starts processing right now on a thread, and also asks Android for a job as the backup if the process is stopped. */
+    static void now(Context c) {
+        schedule(c);
+        final Context app = c.getApplicationContext();
+        new Thread(() -> Tagger.run(app)).start();
+    }
+
+    /** Comes back after a wait, for a capture whose processing failed and is due for another try. Replaces an earlier wait. */
+    static void scheduleLater(Context c, long delayMs, int id) {
+        if (Model.key(c).isEmpty()) return;
+        c.getSystemService(JobScheduler.class).schedule(new JobInfo.Builder(id, new ComponentName(c, BackgroundJob.class))
+            .setMinimumLatency(delayMs).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build());
+    }
+
     @Override public boolean onStartJob(JobParameters params) {
         new Thread(() -> {
             Tagger.run(this);
+            long wait = Ingest.retryDelay(this);
+            if (wait >= 0) scheduleLater(this, wait, params.getJobId() == RETRY ? RETRY + 1 : RETRY); // not its own id: that would stop this very job
             jobFinished(params, Tagger.waiting(this)); // only an unsent voice clip asks for a retry (with backoff); other errors wait for the next open
         }).start();
         return true;
