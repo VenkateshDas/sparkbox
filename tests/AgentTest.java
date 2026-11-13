@@ -1,0 +1,208 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import me.venkatesh.saveobsidian.Agent;
+import me.venkatesh.saveobsidian.Cancel;
+import me.venkatesh.saveobsidian.Tool;
+import me.venkatesh.saveobsidian.Truncate;
+import me.venkatesh.saveobsidian.Validate;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+/**
+ * The agent loop against a scripted fake model (Pi's faux provider idea). Scenarios follow pi packages/agent/test/agent-loop.test.ts @ 3e23dd9:
+ * events, custom messages and transformContext, tool calls and results, truncated calls, prepareArguments, completion vs source order,
+ * sequential forcing, terminate, beforeToolCall / afterToolCall / finishTurn; plus retry, abort and error contract, validation and truncation.
+ * Called from CaptureTest.main.
+ */
+final class AgentTest {
+    static int count;
+    private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("agent check #" + count); }
+
+    /** Scripted replies, popped in order. A Throwable entry is thrown; the requests the model saw are kept. */
+    static final class Faux implements Agent.Provider {
+        final ConcurrentLinkedQueue<Object> script = new ConcurrentLinkedQueue<>();
+        final List<JSONObject> requests = Collections.synchronizedList(new ArrayList<>());
+        Faux then(Object... replies) { script.addAll(Arrays.asList(replies)); return this; }
+        public JSONObject stream(JSONObject request, java.util.function.Consumer<String> live, Cancel cancel) throws Exception {
+            requests.add(new JSONObject(request.toString())); // snapshot: the agent keeps editing its own messages
+            Object next = script.poll();
+            if (next == null) throw new IllegalStateException("script ran out");
+            if (next instanceof Exception) throw (Exception) next;
+            JSONObject reply = (JSONObject) next;
+            live.accept(reply.optString("content", ""));
+            return reply;
+        }
+    }
+
+    static JSONObject say(String text) throws Exception { return new JSONObject().put("content", text).put("finish_reason", "stop"); }
+    static JSONObject calls(String... nameAndArgs) throws Exception {
+        JSONArray c = new JSONArray();
+        for (int i = 0; i < nameAndArgs.length; i += 2)
+            c.put(new JSONObject().put("id", "c" + i / 2).put("type", "function").put("function", new JSONObject().put("name", nameAndArgs[i]).put("arguments", nameAndArgs[i + 1])));
+        return new JSONObject().put("content", "").put("tool_calls", c).put("finish_reason", "tool_calls");
+    }
+
+    static JSONObject schema(String... nameAndType) throws Exception {
+        JSONObject props = new JSONObject();
+        JSONArray req = new JSONArray();
+        for (int i = 0; i < nameAndType.length; i += 2) { props.put(nameAndType[i], new JSONObject().put("type", nameAndType[i + 1])); req.put(nameAndType[i]); }
+        return new JSONObject().put("type", "object").put("properties", props).put("required", req);
+    }
+
+    interface Body { Tool.Result run(JSONObject args) throws Exception; }
+    static Tool tool(String name, JSONObject params, boolean sequential, Body body) {
+        return new Tool(name, name + " tool", params, sequential) { public Result execute(JSONObject a, Cancel c) throws Exception { return body.run(a); } };
+    }
+
+    static Agent agent(Faux f, Cancel cancel, Tool... tools) {
+        Agent a = new Agent(f, "test/model", "SYS", Arrays.asList(tools), cancel);
+        a.retryBaseMs = 0;
+        return a;
+    }
+
+    static void run() throws Exception {
+        // plain answer: events in order, system prompt first, no tools key without tools
+        Faux f = new Faux().then(say("hi"));
+        Agent a = agent(f, new Cancel());
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        a.listener = (type, data) -> events.add(type);
+        JSONObject last = a.prompt("hello");
+        check(last.getString("content").equals("hi") && last.getString("stopReason").equals("stop"));
+        check(events.toString().equals("[agent_start, turn_start, message_start, message_update, message_end, turn_end, agent_end]"));
+        check(f.requests.get(0).getJSONArray("messages").getJSONObject(0).getString("role").equals("system") && !f.requests.get(0).has("tools"));
+
+        // tool call, result, answer; the model sees the tool result but none of the bookkeeping keys
+        Tool echo = tool("echo", schema("text", "string"), false, args -> Tool.Result.ok("echo:" + args.getString("text")));
+        f = new Faux().then(calls("echo", "{\"text\":\"a\"}"), say("done"));
+        a = agent(f, new Cancel(), echo);
+        last = a.prompt("go");
+        check(last.getString("content").equals("done") && f.requests.size() == 2);
+        JSONArray second = f.requests.get(1).getJSONArray("messages");
+        check(second.length() == 4 && second.getJSONObject(2).getString("role").equals("assistant") && second.getJSONObject(3).getString("content").equals("echo:a"));
+        check(!second.getJSONObject(2).has("stopReason") && !second.getJSONObject(3).has("isError") && second.getJSONObject(3).getString("tool_call_id").equals("c0"));
+        check(f.requests.get(0).getJSONArray("tools").length() == 1);
+
+        // unknown tool and bad arguments come back as errors the model can read; the run continues
+        f = new Faux().then(calls("nope", "{}", "echo", "{}", "echo", "not json at all"), say("ok"));
+        a = agent(f, new Cancel(), echo);
+        a.prompt("go");
+        List<JSONObject> m = a.messages();
+        check(m.get(2).getString("content").startsWith("Unknown tool nope") && m.get(3).getString("content").equals("Invalid arguments: text: required"));
+        check(m.get(4).getString("content").equals("The arguments are not valid JSON.") && m.get(4).getBoolean("isError"));
+
+        // a response cut off by the token limit never runs its tool calls
+        int[] ran = {0};
+        Tool counted = tool("counted", schema(), false, args -> { ran[0]++; return Tool.Result.ok("x"); });
+        f = new Faux().then(calls("counted", "{}").put("finish_reason", "length"), say("ok"));
+        a = agent(f, new Cancel(), counted);
+        a.prompt("go");
+        check(ran[0] == 0 && a.messages().get(2).getString("content").contains("token limit") && a.messages().get(1).getString("stopReason").equals("length"));
+
+        // prepareArguments shim runs before validation; coercion turns "5" into 5
+        Tool shim = new Tool("shim", "shim", schema("count", "integer"), false) {
+            public JSONObject prepareArguments(JSONObject args) throws org.json.JSONException { if (args.has("n")) args.put("count", args.remove("n")); return args; }
+            public Result execute(JSONObject a2, Cancel c) { return Result.ok("count=" + a2.getInt("count")); }
+        };
+        f = new Faux().then(calls("shim", "{\"n\":\"5\"}"), say("ok"));
+        a = agent(f, new Cancel(), shim);
+        a.prompt("go");
+        check(a.messages().get(2).getString("content").equals("count=5"));
+
+        // parallel batch: results persist in call order even when the first call finishes last; events fire in completion order
+        Tool slow = tool("slow", schema(), false, args -> { Thread.sleep(150); return Tool.Result.ok("slow"); });
+        Tool quick = tool("quick", schema(), false, args -> Tool.Result.ok("quick"));
+        f = new Faux().then(calls("slow", "{}", "quick", "{}"), say("ok"));
+        a = agent(f, new Cancel(), slow, quick);
+        List<String> ends = Collections.synchronizedList(new ArrayList<>());
+        a.listener = (type, data) -> { if (type.equals("tool_execution_end")) ends.add(data.optString("name")); };
+        a.prompt("go");
+        check(ends.toString().equals("[quick, slow]") && a.messages().get(2).getString("content").equals("slow") && a.messages().get(3).getString("content").equals("quick"));
+
+        // one sequential tool forces the whole batch to run one after another
+        List<String> order = Collections.synchronizedList(new ArrayList<>());
+        Tool s1 = tool("s1", schema(), true, args -> { order.add("s1+"); Thread.sleep(100); order.add("s1-"); return Tool.Result.ok("1"); });
+        Tool s2 = tool("s2", schema(), false, args -> { order.add("s2+"); order.add("s2-"); return Tool.Result.ok("2"); });
+        f = new Faux().then(calls("s1", "{}", "s2", "{}"), say("ok"));
+        agent(f, new Cancel(), s1, s2).prompt("go");
+        check(order.toString().equals("[s1+, s1-, s2+, s2-]"));
+
+        // terminate: stops only when every result in the batch asks for it
+        Tool stop = new Tool("stop", "stop", schema(), false) { public Result execute(JSONObject a2, Cancel c) { return new Result("end", null, false, true); } };
+        f = new Faux().then(calls("stop", "{}"), say("never"));
+        agent(f, new Cancel(), stop).prompt("go");
+        check(f.requests.size() == 1);
+        f = new Faux().then(calls("stop", "{}", "echo", "{\"text\":\"z\"}"), say("after"));
+        check(agent(f, new Cancel(), stop, echo).prompt("go").getString("content").equals("after"));
+
+        // hooks: transformContext runs before convertToLlm and custom messages are dropped; beforeToolCall blocks; afterToolCall patches; finishTurn ends
+        f = new Faux().then(calls("echo", "{\"text\":\"a\"}", "echo", "{\"text\":\"blocked\"}"), say("ok"));
+        a = agent(f, new Cancel(), echo);
+        a.messages().add(new JSONObject().put("role", "custom").put("content", "UI card"));
+        a.hooks = new Agent.Hooks() {
+            public List<JSONObject> transformContext(List<JSONObject> msgs) { return msgs.subList(Math.max(0, msgs.size() - 6), msgs.size()); }
+            public String beforeToolCall(String name, JSONObject args) { return args.optString("text").equals("blocked") ? "Blocked by policy" : null; }
+            public Tool.Result afterToolCall(String name, JSONObject args, Tool.Result r) { return r.withText(r.text.toUpperCase()); }
+        };
+        a.prompt("go");
+        check(!f.requests.get(0).toString().contains("UI card") && a.messages().get(3).getString("content").equals("ECHO:A") && a.messages().get(4).getString("content").equals("Blocked by policy"));
+        f = new Faux().then(calls("echo", "{\"text\":\"a\"}"), say("never"));
+        a = agent(f, new Cancel(), echo);
+        a.hooks = new Agent.Hooks() { public boolean finishTurn(List<JSONObject> results) { return false; } };
+        a.prompt("go");
+        check(f.requests.size() == 1);
+
+        // step cap ends with stopReason max-steps
+        f = new Faux().then(calls("echo", "{\"text\":\"1\"}"), calls("echo", "{\"text\":\"2\"}"), calls("echo", "{\"text\":\"3\"}"));
+        a = agent(f, new Cancel(), echo);
+        a.maxTurns = 3;
+        check(a.prompt("go").getString("stopReason").equals("max-steps"));
+
+        // provider failures never throw: retry the retryable, stop at once on a bad key, hint on a 400 with tools
+        f = new Faux().then(new java.io.IOException("Smart tags paused: OpenRouter answered 429"), new java.io.IOException("offline"), say("third time"));
+        check(agent(f, new Cancel()).prompt("go").getString("content").equals("third time") && f.requests.size() == 3);
+        f = new Faux().then(new java.io.IOException("Smart tags paused: OpenRouter answered 401 (check the key)"), say("never"));
+        last = agent(f, new Cancel()).prompt("go");
+        check(last.getString("stopReason").equals("error") && f.requests.size() == 1 && last.getString("errorMessage").contains("401"));
+        f = new Faux().then(new java.io.IOException("OpenRouter answered 400"));
+        last = agent(f, new Cancel(), echo).prompt("go");
+        check(last.getString("errorMessage").contains("may not support tool calls"));
+        f = new Faux().then(new java.io.IOException("boom"), new java.io.IOException("boom"), new java.io.IOException("boom"), new java.io.IOException("boom"), say("never"));
+        check(agent(f, new Cancel()).prompt("go").getString("stopReason").equals("error") && f.requests.size() == 4); // 1 try + 3 retries
+        // a failed message stays in the transcript but is not sent to the model next time
+        a = agent(new Faux().then(new java.io.IOException("OpenRouter answered 401"), say("fine")), new Cancel());
+        a.prompt("one");
+        a.prompt("two");
+        check(a.messages().size() == 4);
+
+        // abort: a stopped run ends with an aborted assistant message, and a tool that was waiting is told so
+        Cancel cancel = new Cancel();
+        Tool stopper = tool("stopper", schema(), false, args -> { cancel.halt(); return Tool.Result.ok("x"); });
+        f = new Faux().then(calls("stopper", "{}"), say("never"));
+        a = agent(f, cancel, stopper);
+        check(a.prompt("go").getString("stopReason").equals("aborted") && f.requests.size() == 1);
+        Cancel before = new Cancel();
+        before.halt();
+        check(agent(new Faux(), before).prompt("go").getString("stopReason").equals("aborted"));
+
+        // validation: coercion and dotted error paths
+        JSONObject nested = new JSONObject().put("type", "object").put("required", new JSONArray().put("edits")).put("properties", new JSONObject()
+            .put("edits", new JSONObject().put("type", "array").put("items", schema("oldText", "string", "n", "integer"))));
+        JSONObject args = new JSONObject("{\"edits\":[{\"oldText\":\"a\",\"n\":\"2\"},{\"n\":1}]}");
+        check(Validate.check(nested, args).equals("edits.1.oldText: required") && args.getJSONArray("edits").getJSONObject(0).get("n").equals(2L));
+        check(Validate.check(nested, new JSONObject("{\"edits\":[{\"oldText\":\"a\",\"n\":\"x\"}]}")).equals("edits.0.n: expected integer"));
+        check(Validate.check(schema("flag", "boolean"), new JSONObject("{\"flag\":\"true\"}")) == null && Validate.check(schema("s", "string"), new JSONObject("{\"s\":7}")) == null);
+
+        // truncation: lines or bytes, whichever first; never mid-line; footer says what is left
+        StringBuilder big = new StringBuilder();
+        for (int i = 1; i <= 5000; i++) big.append("line ").append(i).append('\n');
+        Truncate.Cut cut = Truncate.head(big.toString());
+        check(cut.truncated && cut.shownLines == 2000 && cut.text.endsWith("line 2000") && cut.totalLines == 5001);
+        Truncate.Cut bytes = Truncate.head("aaaa\nbbbb\ncccc", 100, 9);
+        check(bytes.text.equals("aaaa\nbbbb") && bytes.truncated);
+        check(Truncate.tail("a\nb\nc\nd", 2, 100).text.equals("c\nd") && !Truncate.head("short").truncated);
+        check(Truncate.withFooter(Truncate.head("a\nb\nc", 2, 100), true, "Use offset=3 to continue").equals("a\nb\n\n[Showing lines 1-2 of 3. Use offset=3 to continue]"));
+    }
+}

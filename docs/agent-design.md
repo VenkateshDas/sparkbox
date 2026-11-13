@@ -164,8 +164,8 @@ MCP-specific safeguards (not in Pi, needed on a phone with personal data):
 | Pi feature | Status | Note |
 |---|---|---|
 | One stream fn per wire API, normalized event stream | adapt M1 | one adapter: existing `Model.stream` (OpenRouter, openai-completions) behind a small `Provider` seam for tests |
-| `Model` record: contextWindow, maxTokens, cost, reasoning, compat flags | M1 | small table for the few supported models; unknown model = conservative defaults |
-| Capability check for tool support | M1 | Pi has none; Sparkbox needs it (free-text model id today) |
+| `Model` record: contextWindow, maxTokens, cost, reasoning, compat flags | M2 | deferred from M1 (ponytail): nothing reads it until compaction needs the window |
+| Capability check for tool support | M1 done | Pi has none. A 400 on a request with tools is reported with "this model may not support tool calls"; no model table |
 | Thinking levels with per-model map and clamping; level on each message; `thinking_level_change` entry | M5 | fixes the GLM thinking-eats-budget issue |
 | Usage on every assistant message (in/out/cacheRead/cacheWrite/reasoning) and cost, plus separate non-message spend | M2 | feeds the existing `usage` store |
 | Retry: classify retryable vs quota/billing; agent-level 3 retries, 2s base backoff, 60s cap; retry events | M1 | `Model.stream` has none today |
@@ -212,6 +212,8 @@ truncation and compaction scenarios: **M1-M3**. Classes go in the `pure` list in
 - Loop runs in a durable runner so Android killing the process resumes from the log.
 
 ## Milestones
+
+M1 status: built on branch `feat/agent-design` (`Agent`, `Tool`, `Validate`, `Truncate`, `tests/AgentTest.java`, `Model.provider`); not wired into the Ask screen yet.
 
 1. **Core:** `Agent` loop, tool contract + validation, `Truncate`, stop-reason/error contract, retry, `Provider` seam,
    model table + capability check, hook interfaces, faux provider + ported loop tests.

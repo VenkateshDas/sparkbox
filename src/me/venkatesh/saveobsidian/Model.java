@@ -121,6 +121,8 @@ final class Model {
             if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
             StringBuilder text = new StringBuilder();
             JSONArray calls = new JSONArray();
+            String finish = "";
+            JSONObject usage = null;
             try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
                 for (String line; (line = in.readLine()) != null; ) {
                     if (cancel.stopped()) { calls = new JSONArray(); break; }
@@ -129,7 +131,9 @@ final class Model {
                     if (data.equals("[DONE]")) break;
                     JSONObject chunk = new JSONObject(data);
                     if (chunk.has("error")) throw new IOException("Smart tags paused: " + chunk.getJSONObject("error").optString("message", "provider error"));
+                    if (chunk.optJSONObject("usage") != null) usage = chunk.getJSONObject("usage"); // OpenRouter sends usage in the last chunk by itself
                     JSONArray choices = chunk.optJSONArray("choices");
+                    if (choices != null && choices.length() > 0 && !choices.getJSONObject(0).isNull("finish_reason")) finish = choices.getJSONObject(0).optString("finish_reason", "");
                     JSONObject delta = choices == null || choices.length() == 0 ? null : choices.getJSONObject(0).optJSONObject("delta");
                     if (delta == null) continue;
                     if (!delta.isNull("content") && delta.has("content")) { text.append(delta.getString("content")); if (live != null) live.accept(text.toString()); }
@@ -149,12 +153,17 @@ final class Model {
             }
             JSONObject message = new JSONObject().put("content", text.toString());
             if (calls.length() > 0) message.put("tool_calls", calls);
+            if (!finish.isEmpty()) message.put("finish_reason", finish);
+            if (usage != null) message.put("usage", usage);
             return message;
         } catch (IOException dropped) {
             if (cancel.stopped()) return new JSONObject().put("content", ""); // our own disconnect
             throw dropped;
         } finally { cancel.detach(connection); connection.disconnect(); }
     }
+
+    /** The OpenRouter stream as the Agent's provider. */
+    static Agent.Provider provider(String key) { return (request, live, cancel) -> stream(key, request, live, cancel); }
 
     /** One non-streamed completion; the reply text. */
     static String complete(String key, String model, String system, String user, int maxTokens) throws Exception { return complete(key, model, system, user, maxTokens, false); }
