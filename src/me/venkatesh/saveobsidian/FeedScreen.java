@@ -217,6 +217,8 @@ final class FeedScreen extends Screen {
 
     // ---- drawing ----
 
+    private static boolean usable;
+
     private void drawRows() {
         rows.clear();
         List<Attention> need = attention();
@@ -228,6 +230,7 @@ final class FeedScreen extends Screen {
         rows.addAll(shown);
         if (shown.isEmpty() && (need.isEmpty() || !all)) rows.add(VaultStore.ready(ui.c) ? "empty" : "novault");
         ((BaseAdapter) list.getAdapter()).notifyDataSetChanged();
+        if (!usable && !items.isEmpty()) { usable = true; list.post(() -> android.util.Log.i("Sparkbox", "feed usable " + (android.os.SystemClock.uptimeMillis() - android.os.Process.getStartUptimeMillis()) + " ms")); } // startup marker for docs/baseline.md
         subtitle.setText(checkedAt == 0 ? "Vault not checked yet" : "Vault checked " + ago(checkedAt));
     }
 
