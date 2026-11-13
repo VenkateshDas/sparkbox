@@ -121,4 +121,13 @@ Failure types, in `Failures.java`, each with its own recovery text and retry beh
 
 A vault-save failure reuses the saved model answer: the plan is stored before any vault write (`plan:` in the ingest prefs), so a retry goes straight to writing, unless the Why or Ideas changed (Milestone 0).
 
-Measured after the change: first frame 154 ms, usable Feed 216 ms (median of 5). Not measured: how the limits behave under a real ingest burst; tune them from logs (`model … ms`, `stage … ms`) once real captures run.
+Measured after the change: first frame 154 ms, usable Feed 216 ms (median of 5).
+
+Live test (three Wikipedia links shared back to back into the real inbox; vault copied first and restored byte for byte after: 16 new notes removed, 7 changed files put back, diff clean):
+
+| What | Value | Gate |
+|---|---|---|
+| Ingest per capture | 21.3 s, 11.4 s (after restart), 9.4 s | recorded |
+| Lane check and main answer | ran side by side on the 2 background slots (3.5 s and 10.0 s) | recorded |
+| Feed scroll while ingest runs | 892 frames, 0.45 % janky, p99 8 ms | b: pass |
+| Kill during the second capture | reopening resumed it at once and it finished; no capture lost | c: pass |
