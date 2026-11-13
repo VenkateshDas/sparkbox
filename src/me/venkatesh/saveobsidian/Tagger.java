@@ -39,6 +39,7 @@ final class Tagger {
             // Each stage stands alone: a tagging failure must not stop ingest, and a dead network in one must not hide what another could still do.
             String[] stages = {"sweep", "transcribe", "tag", "backfill", "file", "cards", "describe", "embed"};
             for (String stage : stages) {
+                long stageBegan = System.currentTimeMillis();
                 try {
                     switch (stage) {
                         case "sweep": CaptureService.sweep(c); break;
@@ -50,7 +51,9 @@ final class Tagger {
                         case "describe": describe(c, key); break;
                         default: embed(c, key); VaultStore.embed(c, key);
                     }
+                    android.util.Log.i("Sparkbox", "stage " + stage + " " + (System.currentTimeMillis() - stageBegan) + " ms");
                 } catch (Exception stop) {
+                    android.util.Log.i("Sparkbox", "stage " + stage + " stopped after " + (System.currentTimeMillis() - stageBegan) + " ms: " + stop);
                     String m = String.valueOf(stop.getMessage()); // only provider trouble is worth showing; inbox contention clears itself
                     if (m.startsWith("Smart tags") && problem.isEmpty()) problem = m;
                 }
@@ -59,7 +62,7 @@ final class Tagger {
             c.getSharedPreferences("capture", 0).edit().putString("aiProblem", problem).apply();
             RUNNING.set(false);
         }
-        if (again && !halt) run(c); // a capture arrived while this run was busy
+        if (again) run(c); // a capture arrived while this run was busy (even if Android stopped the job meanwhile: the process is still here)
     }
 
     private static void tag(Context c, String key) throws Exception {

@@ -167,12 +167,22 @@ final class Model {
     static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json, String schemaName, JSONObject schema) throws Exception {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
             .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
-        if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
+        if (noReasoning) request.put("reasoning", "low".equals(REASONING.get(model)) ? new JSONObject().put("effort", "low") : new JSONObject().put("enabled", false));
         if (schema != null) {
             request.put("response_format", new JSONObject().put("type", "json_schema").put("json_schema", new JSONObject().put("name", schemaName).put("strict", true).put("schema", schema)));
             request.put("provider", new JSONObject().put("require_parameters", true));
-        } else if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
-        JSONObject choice = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0);
+        } else {
+            if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
+        }
+        long began = System.currentTimeMillis();
+        String body = post("chat/completions", key, request, schema != null || json ? 90000 : 120000);
+        JSONObject whole = new JSONObject(body);
+        JSONObject usage = whole.optJSONObject("usage");
+        JSONObject details = usage == null ? null : usage.optJSONObject("completion_tokens_details");
+        android.util.Log.i("Sparkbox", "model " + model + " " + (System.currentTimeMillis() - began) + " ms, prompt " + (usage == null ? "?" : usage.optInt("prompt_tokens")) + " tokens, answer "
+            + (usage == null ? "?" : usage.optInt("completion_tokens")) + " tokens (reasoning " + (details == null ? "?" : details.optInt("reasoning_tokens")) + "), max " + maxTokens
+            + ", provider " + whole.optString("provider", "?") + ", structured " + (schema != null) + ", json " + json + ", lean " + noReasoning);
+        JSONObject choice = whole.getJSONArray("choices").getJSONObject(0);
         JSONObject message = choice.getJSONObject("message");
         String content = message.isNull("content") ? "" : message.optString("content", "");
         if (content.trim().isEmpty()) {
@@ -188,6 +198,11 @@ final class Model {
     /** Why the last reply came back empty (finish reason, reasoning size), for the error shown to the owner. */
     private static final ThreadLocal<String> LAST_EMPTY = new ThreadLocal<>();
 
+    /** Per model: "low" once it has answered that its thinking cannot be switched off (GLM 5.3 Flash), so the app asks for the least thinking instead. */
+    private static final java.util.Map<String, String> REASONING = java.util.Collections.synchronizedMap(new java.util.HashMap<String, String>());
+
+    private static boolean mandatoryThinking(Rejected r) { return String.valueOf(r.getMessage()).toLowerCase(java.util.Locale.ROOT).contains("mandatory"); }
+
     private static final java.util.Set<String> NO_REASONING_FIELD = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     private static final java.util.Set<String> NO_JSON_MODE = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
 
@@ -195,7 +210,10 @@ final class Model {
     static String completeLean(String key, String model, String system, String user, int maxTokens) throws Exception {
         if (NO_REASONING_FIELD.contains(model)) return complete(key, model, system, user, maxTokens, false);
         try { return complete(key, model, system, user, maxTokens, true); }
-        catch (Rejected refused) { NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false); }
+        catch (Rejected refused) {
+            if (mandatoryThinking(refused) && !"low".equals(REASONING.get(model))) { REASONING.put(model, "low"); return complete(key, model, system, user, maxTokens, true); }
+            NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false);
+        }
     }
 
     /**
@@ -236,6 +254,8 @@ final class Model {
                 if (droppedLean) NO_REASONING_FIELD.add(model);
                 return reply;
             } catch (Rejected refused) {
+                android.util.Log.i("Sparkbox", "model " + model + " refused (structured " + structured + ", json " + json + ", lean " + lean + "): " + refused.getMessage());
+                if (lean && mandatoryThinking(refused) && !"low".equals(REASONING.get(model))) { REASONING.put(model, "low"); continue; } // not the format's fault: this model always thinks, so ask for the least
                 if (structured) { structured = false; droppedSchema = true; }
                 else if (json) { json = false; droppedJson = true; }
                 else if (lean) { lean = false; droppedLean = true; }
@@ -277,7 +297,8 @@ final class Model {
                 throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : why.isEmpty() ? "" : ": " + why));
             } catch (Transient | java.net.SocketException | java.net.SocketTimeoutException | java.io.EOFException | javax.net.ssl.SSLException | java.net.UnknownHostException again) {
                 last = again;
-                if (attempt >= 2 && !Net.offline(again)) break; // other trouble gets three tries
+                android.util.Log.i("Sparkbox", "model call attempt " + (attempt + 1) + " failed: " + again);
+                if (!Net.offline(again) && (attempt >= 2 || (again instanceof java.net.SocketTimeoutException && attempt >= 1))) break; // other trouble gets three tries, a slow answer only one more
             } finally { connection.disconnect(); }
         }
         if (last != null && Net.offline(last)) throw new Net.Offline("Smart tags paused: no connection to OpenRouter (" + last.getMessage() + ")");
