@@ -65,6 +65,7 @@ public class QuickActivity extends Activity {
         root.addView(sheet, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
         Ui.insets(root);
         setContentView(root);
+        Ui.back(this, this::onBackPressed);
 
         View handle = new View(this);
         handle.setBackground(ui.round(ui.line, 0, 2));

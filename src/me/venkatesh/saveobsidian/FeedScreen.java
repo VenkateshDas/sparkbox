@@ -147,12 +147,13 @@ final class FeedScreen extends Screen {
         d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
     }
 
-    @Override void onHide() { shown = false; main.removeCallbacks(ticker); }
+    @Override void onHide() { shown = false; main.removeCallbacks(ticker); Ingest.onStage = null; }
 
     @Override void onShow() {
         shown = true;
         main.removeCallbacks(ticker);
-        main.postDelayed(ticker, 1000);
+        main.postDelayed(ticker, 10000);
+        Ingest.onStage = () -> main.post(this::redrawLive);
         drawBanner();
         refreshFromCache();
         scan();
@@ -526,15 +527,22 @@ final class FeedScreen extends Screen {
         return box;
     }
 
-    /** While any capture is on a step, the cards are redrawn every second so the checklist moves. */
+    /** Steps redraw through Ingest.onStage; this slow pass is only a safety net (and moves the seconds counter). */
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
-            boolean live = false;
-            for (Object row : rows) if (row instanceof Feed.Item && ((Feed.Item) row).entry != null && (Ingest.stage(ui.c, ((Feed.Item) row).entry) >= 0 || Ingest.queued(ui.c, ((Feed.Item) row).entry))) live = true;
-            if (live && list != null && list.getAdapter() instanceof android.widget.BaseAdapter) ((android.widget.BaseAdapter) list.getAdapter()).notifyDataSetChanged();
-            if (shown) main.postDelayed(this, live ? 1000 : 3000);
+            if (live()) redrawLive();
+            if (shown) main.postDelayed(this, 10000);
         }
     };
+
+    private boolean live() {
+        for (Object row : rows) if (row instanceof Feed.Item && ((Feed.Item) row).entry != null && (Ingest.stage(ui.c, ((Feed.Item) row).entry) >= 0 || Ingest.queued(ui.c, ((Feed.Item) row).entry))) return true;
+        return false;
+    }
+
+    private void redrawLive() {
+        if (shown && list != null && list.getAdapter() instanceof android.widget.BaseAdapter) ((android.widget.BaseAdapter) list.getAdapter()).notifyDataSetChanged();
+    }
     private boolean shown;
 
     /** Runs the whole pipeline again for this capture now: tagging, reading the page, ingest. */

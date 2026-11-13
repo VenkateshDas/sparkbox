@@ -59,7 +59,7 @@ final class Tagger {
     private static void tag(Context c, String key) throws Exception {
         String model = c.getSharedPreferences("capture", 0).getString("aiModel", Model.DEFAULT);
         Set<String> skipped = new HashSet<>();
-        for (int calls = 0; calls < 40 && !SetupActivity.editing && !halt(); ) {
+        for (int calls = 0; calls < 40 && !halt(); ) {
             String destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             InboxFile.Entry next = null;
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
@@ -127,7 +127,7 @@ final class Tagger {
         android.content.SharedPreferences tried = c.getSharedPreferences("enriched", 0);
         int fetched = 0;
         for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
-            if (fetched >= 10 || halt() || SetupActivity.editing) return;
+            if (fetched >= 10 || halt()) return;
             String mark = "page:" + Long.toHexString(Index.key(Capture.identity(e.url)));
             if (e.text || e.url.isEmpty() || e.type.isEmpty() || Content.has(c, e.url) || tried.getBoolean(mark, false)) continue;
             fetched++;
@@ -142,7 +142,7 @@ final class Tagger {
     /** Voice clips: transcribe, file the note, then delete the audio. Errors stay on the job so Settings can show them. */
     private static void transcribe(Context c, String key) throws Exception {
         for (File file : CaptureService.pending(c)) {
-            if (SetupActivity.editing || halt()) return;
+            if (halt()) return;
             JSONObject job;
             try { job = CaptureService.readJob(file); } catch (Exception unreadable) { continue; }
             if (!"voice".equals(job.optString("kind")) || job.has("error")) continue;
@@ -178,7 +178,7 @@ final class Tagger {
     private static void describe(Context c, String key) throws Exception {
         if (!c.getSharedPreferences("capture", 0).getBoolean("describe", false) || !Attach.ready(c)) return;
         Set<String> skipped = new HashSet<>();
-        for (int calls = 0; calls < 20 && !SetupActivity.editing && !halt(); ) {
+        for (int calls = 0; calls < 20 && !halt(); ) {
             String destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             InboxFile.Entry next = null;
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {

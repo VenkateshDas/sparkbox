@@ -67,6 +67,7 @@ public class VaultActivity extends Activity {
         page.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), ui.dp(32));
         scroll.addView(page);
         setContentView(scroll);
+        Ui.back(this, this::onBackPressed);
         Ui.insets(scroll);
         stack.add(new String[]{"home"});
         handle(getIntent());
@@ -138,7 +139,7 @@ public class VaultActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        if (stack.size() > 1) { stack.remove(stack.size() - 1); tab = "read"; shown = PAGE; draw(true); } else super.onBackPressed();
+        if (stack.size() > 1) { stack.remove(stack.size() - 1); tab = "read"; shown = PAGE; draw(true); } else finish();
     }
 
     private void go(String... where) { stack.add(where); tab = "read"; shown = PAGE; draw(true); }

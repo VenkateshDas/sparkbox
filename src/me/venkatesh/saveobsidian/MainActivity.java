@@ -105,6 +105,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < NAMES.length; i++) nav.addView(navItem(i), new LinearLayout.LayoutParams(0, ui.dp(64), 1));
         root.addView(nav);
         setContentView(root);
+        Ui.back(this, this::onBackPressed);
         // System bars pad the shell. While the keyboard is open the tab bar steps aside, so typing never floats it above the keys.
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             boolean keyboard = false;
@@ -224,7 +225,7 @@ public class MainActivity extends Activity {
             show(stack.isEmpty() ? built[tab] : stackViews.get(stackViews.size() - 1));
             current().onShow();
         } else if (tab != 0) select(0);
-        else super.onBackPressed();
+        else if (isTaskRoot()) moveTaskToBack(false); else finish(); // as the system does for a root activity; super would loop through our own back callback
     }
 
     /** A tab that is not built yet: its name and a way to the existing screens, so nothing is lost while the real screens arrive. */

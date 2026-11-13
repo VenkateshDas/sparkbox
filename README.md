@@ -62,7 +62,6 @@ The old Automate flow is no longer required.
 |---|---|
 | `AndroidManifest.xml` | App identity, permissions, share intent filter, activities, short foreground service |
 | `src/me/venkatesh/saveobsidian/ShareActivity.java` | Receive shares, queue them privately, start the service |
-| `src/me/venkatesh/saveobsidian/SetupActivity.java` | Launcher inbox with edit/delete; Settings groups file access, notifications and recovery |
 | `src/me/venkatesh/saveobsidian/VerifiedEdit.java` | Snapshot, backup, write and read-back sequence, exercised with failing storage callbacks |
 | `src/me/venkatesh/saveobsidian/InboxFile.java` | Pure inbox parsing: list entries, delete one, set Why/Ideas |
 | `src/me/venkatesh/saveobsidian/CaptureService.java` | Private queue, title lookup orchestration, append/verification, progress and completion notifications |

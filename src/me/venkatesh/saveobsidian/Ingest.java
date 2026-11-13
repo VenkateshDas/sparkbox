@@ -70,7 +70,7 @@ final class Ingest {
             VaultStore.Snap snap = VaultStore.cached(c);
             if (snap == null) snap = VaultStore.scan(c);
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
-                if (done >= PER_RUN || Tagger.halt() || SetupActivity.editing || System.currentTimeMillis() - started > RUN_BUDGET) break;
+                if (done >= PER_RUN || Tagger.halt() || System.currentTimeMillis() - started > RUN_BUDGET) break;
                 String ek = entryKey(e);
                 int tries = prog.getInt("tries:" + ek, 0);
                 if (!eligible(c, e) || tries >= MAX_TRIES || System.currentTimeMillis() < prog.getLong("next:" + ek, 0)) {
@@ -107,7 +107,12 @@ final class Ingest {
     static final String[] STEPS = {"Saved to your inbox", "Reading the page", "Understanding it with AI", "Choosing Craft or Life", "Writing the note", "Updating topics and people", "Filing and indexing"};
     private static final long STAGE_FRESH = 6 * MINUTE;
 
-    private static void stage(SharedPreferences prog, String ek, int n) { prog.edit().putString("stage:" + ek, n + "|" + System.currentTimeMillis()).apply(); }
+    /** Told (on the worker thread) whenever a capture moves to another step, so the Feed redraws then instead of polling. */
+    static volatile Runnable onStage;
+    private static void stage(SharedPreferences prog, String ek, int n) {
+        prog.edit().putString("stage:" + ek, n + "|" + System.currentTimeMillis()).apply();
+        Runnable r = onStage; if (r != null) r.run();
+    }
 
     /** The step this capture is on right now (1 to 6), or -1 when it is not being processed. A step silent for six minutes is taken as dead. */
     static int stage(Context c, InboxFile.Entry e) {

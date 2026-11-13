@@ -134,6 +134,11 @@ final class Ui {
             }
         });
     }
+    /** Back on Android 13+ through the callback API (onBackPressed is no longer called there); older versions keep onBackPressed. */
+    static void back(android.app.Activity a, Runnable r) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) a.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, r::run);
+    }
+
     static void insets(View view) {
         view.setFitsSystemWindows(false);
         view.setOnApplyWindowInsetsListener((v, insets) -> {
