@@ -170,10 +170,9 @@ final class Model {
         if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
         if (schema != null) {
             request.put("response_format", new JSONObject().put("type", "json_schema").put("json_schema", new JSONObject().put("name", schemaName).put("strict", true).put("schema", schema)));
-            request.put("provider", new JSONObject().put("require_parameters", true).put("sort", "throughput")); // the fastest endpoint that supports the schema
+            request.put("provider", new JSONObject().put("require_parameters", true));
         } else {
             if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
-            if (json || noReasoning) request.put("provider", new JSONObject().put("sort", "throughput"));
         }
         long began = System.currentTimeMillis();
         String body = post("chat/completions", key, request, schema != null || json ? 90000 : 120000);
@@ -247,6 +246,7 @@ final class Model {
                 if (droppedLean) NO_REASONING_FIELD.add(model);
                 return reply;
             } catch (Rejected refused) {
+                android.util.Log.i("Sparkbox", "model " + model + " refused (structured " + structured + ", json " + json + ", lean " + lean + "): " + refused.getMessage());
                 if (structured) { structured = false; droppedSchema = true; }
                 else if (json) { json = false; droppedJson = true; }
                 else if (lean) { lean = false; droppedLean = true; }
