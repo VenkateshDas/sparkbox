@@ -200,8 +200,8 @@ truncation and compaction scenarios: **M1-M3**. Classes go in the `pure` list in
 - `grep`/`find`/`ls` run on the in-memory vault snapshot (SAF reads are slow). `read` hits the file.
 - `edit` (exact text replacement) / `write` go through `VaultWrite` + `VaultLock` (backup, stale check, read-back)
   behind a confirm card. No delete, no bash.
-- Exact semantics of `read` (offset/limit), `edit` (uniqueness, multi-edit) and `grep`/`find` output formats
-  are to be taken from `packages/coding-agent/src/core/tools/*.ts` at M4; not yet read in detail.
+- Semantics, arguments, limits and messages are ported from `packages/coding-agent/src/core/tools/*.ts` (M4, `VaultTools`).
+  Not ported: fuzzy matching in `edit` (exact text only), images, `.gitignore`, dotfiles.
 - Add a tool only when files cannot express the need (capture queue, cards).
 
 ## Divergences from Pi (deliberate)
@@ -214,6 +214,7 @@ truncation and compaction scenarios: **M1-M3**. Classes go in the `pure` list in
 ## Milestones
 
 M1 status: built on branch `feat/agent-design` (`Agent`, `Tool`, `Validate`, `Truncate`, `tests/AgentTest.java`, `Model.provider`); not wired into the Ask screen yet.
+M4 status: built (`VaultTools`: `read/grep/find/ls/search/edit/write` over a `Files` seam, `Confirm` gate before every change, writes only to `.md` under the given roots, `tests/VaultToolsTest.java`). Not built here: the Android `Files` adapter (snapshot paths, `VaultWrite`, embeddings `search`) and the confirm card, which belong with wiring the Ask screen; inbox is not a vault path yet.
 M3 status: built in plain Java (`Agent` queues/abort/settle/resume, `Compact.now`, `Session` list/name/stats/export, model memory). Not built here: the Android foreground-service runner (belongs with wiring the Ask screen). Dropped from Pi: prompt dispositions (`running()` tells the UI whether to prompt or steer). Added: the last allowed turn has no tools and asks for the answer (as Ask does today).
 M2 status: built (`Session`, `Compact`, `OpenRouter` stream extracted from `Model`, overflow retry, `context_edit`, usage totals). Live check: `scripts/live-agent.sh` (needs `OPENROUTER_API_KEY` in `.env`). Context-window table still deferred: `Compact` takes the window as a constructor argument until the Ask screen is wired.
 
