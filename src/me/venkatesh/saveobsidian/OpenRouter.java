@@ -81,4 +81,16 @@ public final class OpenRouter {
         } finally { cancel.detach(connection); connection.disconnect(); }
     }
 
+
+    /**
+     * Thinking level on a request ("off", "low", "medium", "high"; anything else leaves the provider's default). A reasoning model otherwise spends the
+     * token budget on hidden thinking and can leave the answer empty or cut off; models without reasoning ignore the field. One place, so every request
+     * (turns and summaries) follows the same setting.
+     */
+    public static void thinking(JSONObject request, String level) {
+        try {
+            if ("off".equals(level)) request.put("reasoning", new JSONObject().put("enabled", false));
+            else if ("low".equals(level) || "medium".equals(level) || "high".equals(level)) request.put("reasoning", new JSONObject().put("effort", level));
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+    }
 }

@@ -96,6 +96,30 @@ final class VaultToolsTest {
         check(run("write", "{\"path\":\"Other/X.md\",\"content\":\"x\"}").startsWith("Cannot write") && run("write", "{\"path\":\"Knowledge/../Other/X.md\",\"content\":\"x\"}").startsWith("Cannot write"));
         check(run("write", "{\"path\":\"Knowledge/x.txt\",\"content\":\"x\"}").startsWith("Knowledge/x.txt") || !m.notes.containsKey("Knowledge/x.txt"));
         check(tools.get("edit").sequential && tools.get("write").sequential && !tools.get("read").sequential);
+        // skills and prompt templates
+        Map<String, String> files = new TreeMap<>();
+        files.put("Knowledge/Skills/weekly-review/SKILL.md", "---\nname: weekly-review\ndescription: Review the week's notes\n---\n# Steps\nList new notes.\n");
+        files.put("Knowledge/Skills/Bad Name/SKILL.md", "---\nname: Bad Name\ndescription: x\n---\nbody");
+        files.put("Knowledge/Skills/folder-name/SKILL.md", "---\ndescription: Named by its folder\ndisable-model-invocation: true\n---\nhidden body");
+        files.put("Knowledge/Skills/nodesc/SKILL.md", "---\nname: nodesc\n---\nbody");
+        files.put("Knowledge/Prompts/sum.md", "---\ndescription: summarise\n---\nSummarise $1 in $2 words. All: $ARGUMENTS");
+        List<String> fp = new ArrayList<>(files.keySet());
+        Map<String, me.venkatesh.saveobsidian.Skills.Skill> skills = me.venkatesh.saveobsidian.Skills.index(fp, files::get);
+        check(skills.keySet().toString().equals("[folder-name, weekly-review]"));
+        String block = me.venkatesh.saveobsidian.Skills.block(skills);
+        check(block.contains("<name>weekly-review</name>") && block.contains("<location>Knowledge/Skills/weekly-review/SKILL.md</location>") && !block.contains("folder-name"));
+        check(me.venkatesh.saveobsidian.Skills.block(new LinkedHashMap<>()).isEmpty());
+        check(me.venkatesh.saveobsidian.Skills.expand("/skill:weekly-review for June", skills, fp, files::get).equals("<skill name=\"weekly-review\" location=\"Knowledge/Skills/weekly-review/SKILL.md\">\nReferences are relative to Knowledge/Skills/weekly-review.\n\n# Steps\nList new notes.\n</skill>\n\nfor June"));
+        check(me.venkatesh.saveobsidian.Skills.expand("/sum \"my notes\" 50", skills, fp, files::get).equals("Summarise my notes in 50 words. All: \"my notes\" 50"));
+        check(me.venkatesh.saveobsidian.Skills.expand("/nothing x", skills, fp, files::get).equals("/nothing x") && me.venkatesh.saveobsidian.Skills.expand("hello", skills, fp, files::get).equals("hello"));
+        JSONObject req = new JSONObject();
+        me.venkatesh.saveobsidian.OpenRouter.thinking(req, "off");
+        check(req.getJSONObject("reasoning").getBoolean("enabled") == false);
+        me.venkatesh.saveobsidian.OpenRouter.thinking(req, "high");
+        check(req.getJSONObject("reasoning").getString("effort").equals("high"));
+        req = new JSONObject();
+        me.venkatesh.saveobsidian.OpenRouter.thinking(req, "auto");
+        check(!req.has("reasoning"));
         System.out.println("Vault tools checks passed (" + count + ").");
     }
 }

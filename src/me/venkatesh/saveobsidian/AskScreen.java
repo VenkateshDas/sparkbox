@@ -119,7 +119,7 @@ final class AskScreen extends Screen {
                 a.subscribe((type, data) -> events(type, data));
                 Usage.hit(ui.c, "ask");
                 JSONObject last;
-                if (again) { try { last = a.resume(); } catch (IllegalStateException nothing) { last = a.prompt(question); } } else last = a.prompt(question);
+                if (again) { try { last = a.resume(); } catch (IllegalStateException nothing) { last = a.prompt(Scout.expand(ui.c, snap, question)); } } else last = a.prompt(Scout.expand(ui.c, snap, question));
                 started = true;
                 if ("error".equals(last.optString("stopReason"))) throw new Exception(last.optString("errorMessage"));
                 answer = last.optString("content", "");
