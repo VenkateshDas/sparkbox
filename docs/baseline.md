@@ -54,3 +54,18 @@ APK size is recorded, not a gate.
 | Feed scroll, idle | 0.00 % janky, p99 8 ms | pass |
 
 Installed over the build.py APK (versionCode 11 to 12) with the same key: vault, settings and inbox kept. Checked on the phone with the R8 build: share-sheet text capture, Quick note tile, Voice note tile (recorded, then discarded), widget provider registered. The widget itself was not placed on a home screen.
+
+## Milestone 4 (Compose Settings pilot, Compose Feed)
+
+| What | Value | Gate |
+|---|---|---|
+| APK size | 1.29 MB (Compose + Material 3) | recorded |
+| First frame, median of 6 | **150 ms** (was 296) | a: pass |
+| Usable Feed, median of 6 | **221 ms** (was 253) | a: pass |
+| Feed scroll, idle | 0.23 % janky, p99 11 ms | b (idle): pass |
+
+The first Compose Feed was slower (first frame 420 ms, usable 370 ms): the vault cache was read and the Feed built twice on the main thread before the first frame (build() and onShow(), about 115 ms each; the View Feed did the same). Now it is read once, on a background thread, while Compose draws the shell. Full AOT compilation (`cmd package compile -m speed`) changed little, so it was main-thread work, not JIT.
+
+"Feed usable" is now logged when the rows are handed to Compose, one frame before they are drawn.
+
+Not re-run in this milestone: scroll jank during an ingest and the kill test (gate c). Ingest, capture and processing code are unchanged; the Feed only reads their state.

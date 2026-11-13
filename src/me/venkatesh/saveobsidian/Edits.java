@@ -41,6 +41,30 @@ final class Edits {
             })).setNegativeButton("Cancel", null).show();
     }
 
+    /** Sets the Craft or Life lane in a Source note's frontmatter. done runs on the main thread with "" on success or a short reason. */
+    static void setLane(Context c, String path, String lane, Consumer<String> done) {
+        final Handler main = new Handler(Looper.getMainLooper());
+        if (!VaultWrite.writable(c)) { done.accept("Allow write access to your vault folder in Settings."); return; }
+        new Thread(() -> {
+            String result = "";
+            VaultLock.L.lock(); // read, change and write as one step
+            try {
+                String before = VaultWrite.read(c, path);
+                if (before == null) result = "That note is gone.";
+                else {
+                    String after = NoteEdit.setKey(before, "lane", lane.toLowerCase(java.util.Locale.ROOT));
+                    if (after.equals(before)) result = before.startsWith("---") ? "" : "That note has no frontmatter to change.";
+                    else VaultWrite.write(c, path, before, after);
+                }
+            } catch (VaultWrite.Stale changed) { result = "That note changed just now. Try again."; }
+            catch (Exception e) { result = "Could not change the lane: " + e.getMessage(); }
+            finally { VaultLock.L.unlock(); }
+            if (result.isEmpty()) try { VaultStore.scan(c); } catch (Exception ignored) { }
+            final String message = result;
+            main.post(() -> done.accept(message));
+        }).start();
+    }
+
     /** done runs on the main thread with "" on success or a short reason. */
     static void delete(Context c, String path, Consumer<String> done) {
         final Handler main = new Handler(Looper.getMainLooper());
