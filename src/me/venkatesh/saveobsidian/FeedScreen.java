@@ -147,7 +147,12 @@ final class FeedScreen extends Screen {
         d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
     }
 
+    @Override void onHide() { shown = false; main.removeCallbacks(ticker); }
+
     @Override void onShow() {
+        shown = true;
+        main.removeCallbacks(ticker);
+        main.postDelayed(ticker, 1000);
         drawBanner();
         refreshFromCache();
         scan();
@@ -453,6 +458,7 @@ final class FeedScreen extends Screen {
         if (!it.waiting.isEmpty()) card.addView(ui.text(it.waiting, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (!it.made.isEmpty()) card.addView(ui.text(it.made, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (it.cards > 0) card.addView(ui.text(it.cards + (it.cards == 1 ? " card" : " cards") + (it.kept ? ", up first in Spark" : ""), 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        if (it.entry != null) { View live = progressPanel(it.entry); if (live != null) card.addView(live, ui.lp(12)); }
         String problem = it.entry == null ? "" : Ingest.problem(ui.c, it.entry);
         if (!problem.isEmpty()) {
             TextView warn = ui.text(problem, 13, Typeface.DEFAULT, ui.warn);
@@ -494,6 +500,42 @@ final class FeedScreen extends Screen {
         if (source && it.entry == null && !it.path.isEmpty()) card.setOnLongClickListener(v -> { Edits.confirmDelete(host, it.path, it.title, this::scan); return true; });
         return wrap(card);
     }
+
+    /** The live checklist for a capture that is being processed (or waiting its turn): what is done, what is happening now, what comes next. Null when there is nothing to show. */
+    private View progressPanel(InboxFile.Entry entry) {
+        int now = Ingest.stage(ui.c, entry);
+        boolean queued = now < 0 && Ingest.queued(ui.c, entry);
+        if (now < 0 && !queued) return null;
+        LinearLayout box = new LinearLayout(ui.c);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+        box.setBackground(ui.round(ui.raised, 0, 8));
+        box.addView(ui.text(queued ? "Waiting for its turn" : "Processing now", 12, Ui.BOLD, ui.sub));
+        for (int i = 0; i < Ingest.STEPS.length; i++) {
+            boolean done = !queued && i < now || i == 0, active = !queued && i == now;
+            String mark = done ? "✓" : active ? "●" : "○";
+            LinearLayout line = new LinearLayout(ui.c);
+            line.setGravity(Gravity.CENTER_VERTICAL);
+            TextView m = ui.text(mark, 14, Ui.BOLD, done || active ? ui.accent : ui.sub);
+            m.setGravity(Gravity.CENTER);
+            line.addView(m, new LinearLayout.LayoutParams(ui.dp(24), ViewGroup.LayoutParams.WRAP_CONTENT));
+            String label = Ingest.STEPS[i] + (active ? "…  " + Ingest.stageSeconds(ui.c, entry) + "s" : "");
+            line.addView(ui.text(label, 14, active ? Ui.MEDIUM : Typeface.DEFAULT, active ? ui.ink : done ? ui.sub : ui.sub));
+            box.addView(line, ui.lp(i == 0 ? 8 : 4));
+        }
+        return box;
+    }
+
+    /** While any capture is on a step, the cards are redrawn every second so the checklist moves. */
+    private final Runnable ticker = new Runnable() {
+        @Override public void run() {
+            boolean live = false;
+            for (Object row : rows) if (row instanceof Feed.Item && ((Feed.Item) row).entry != null && (Ingest.stage(ui.c, ((Feed.Item) row).entry) >= 0 || Ingest.queued(ui.c, ((Feed.Item) row).entry))) live = true;
+            if (live && list != null && list.getAdapter() instanceof android.widget.BaseAdapter) ((android.widget.BaseAdapter) list.getAdapter()).notifyDataSetChanged();
+            if (shown) main.postDelayed(this, live ? 1000 : 3000);
+        }
+    };
+    private boolean shown;
 
     /** Runs the whole pipeline again for this capture now: tagging, reading the page, ingest. */
     private void retry(InboxFile.Entry entry) {

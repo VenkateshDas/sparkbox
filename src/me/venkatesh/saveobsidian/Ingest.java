@@ -80,6 +80,7 @@ final class Ingest {
                     prefs.edit().remove("ingestProblem").apply();
                     prog.edit().remove("err:" + ek).remove("next:" + ek).apply();
                 } catch (Exception failed) {
+                    prog.edit().remove("stage:" + ek).apply();
                     if (Net.offline(failed)) { // no connection is not this capture's fault: no try is used, and the job comes back in a couple of minutes
                         prog.edit().putLong("next:" + ek, System.currentTimeMillis() + 2 * MINUTE).putString("err:" + ek, OFFLINE).apply();
                         prefs.edit().putString("ingestProblem", OFFLINE).apply();
@@ -93,6 +94,32 @@ final class Ingest {
                 }
             }
         } catch (Exception unreadable) { prefs.edit().putString("ingestProblem", String.valueOf(unreadable.getMessage())).apply(); }
+    }
+
+    /** The steps a capture goes through, shown live on its Feed card. Step 0 is already done when processing starts. */
+    static final String[] STEPS = {"Saved to your inbox", "Reading the page", "Understanding it with AI", "Choosing Craft or Life", "Writing the note", "Updating topics and people", "Filing and indexing"};
+    private static final long STAGE_FRESH = 6 * MINUTE;
+
+    private static void stage(SharedPreferences prog, String ek, int n) { prog.edit().putString("stage:" + ek, n + "|" + System.currentTimeMillis()).apply(); }
+
+    /** The step this capture is on right now (1 to 6), or -1 when it is not being processed. A step silent for six minutes is taken as dead. */
+    static int stage(Context c, InboxFile.Entry e) {
+        String v = c.getSharedPreferences("ingest", 0).getString("stage:" + entryKey(e), "");
+        int bar = v.indexOf('|');
+        if (bar < 0) return -1;
+        try { return System.currentTimeMillis() - Long.parseLong(v.substring(bar + 1)) > STAGE_FRESH ? -1 : Integer.parseInt(v.substring(0, bar)); } catch (NumberFormatException bad) { return -1; }
+    }
+
+    /** Seconds the capture has been on its current step. */
+    static int stageSeconds(Context c, InboxFile.Entry e) {
+        String v = c.getSharedPreferences("ingest", 0).getString("stage:" + entryKey(e), "");
+        int bar = v.indexOf('|');
+        try { return bar < 0 ? 0 : (int) ((System.currentTimeMillis() - Long.parseLong(v.substring(bar + 1))) / 1000); } catch (NumberFormatException bad) { return 0; }
+    }
+
+    /** Waiting for its turn: ready to process, no failure recorded, not on a step yet. */
+    static boolean queued(Context c, InboxFile.Entry e) {
+        return ready(c) && eligible(c, e) && stage(c, e) < 0 && problem(c, e).isEmpty();
     }
 
     /** What went wrong with this capture and what happens next, or "". */
@@ -170,13 +197,16 @@ final class Ingest {
         String saved = prog.getString("plan:" + ek, "");
         JSONObject plan;
         if (saved.isEmpty()) {
+            stage(prog, ek, 1);
             String page = pageText(c, key, e, tries);
             String user = "Existing topics: " + String.join("; ", topicNames.values()) + "\nExisting people: " + String.join("; ", peopleNames.values()) + "\nExisting entities: " + String.join("; ", entityNames.values())
                 + "\n\nTitle: " + e.shownTitle() + "\nURL: " + Capture.identity(e.url) + (e.tldr.isEmpty() ? "" : "\nSummary: " + e.tldr) + Enrich.notes(e.why, e.ideas)
                 + "\nPage text:\n" + (page.replaceAll("(?m)^(Channel|Length):.*$", "").trim().length() < 80 ? "(nothing could be read from the page: judge only from the title and URL, keep tldr empty, and never invent facts)" : page);
             String use = tries >= 2 && !model(c).equals(FALLBACK_MODEL) ? FALLBACK_MODEL : model(c);
+            stage(prog, ek, 2);
             plan = Model.completeJson(key, use, SYSTEM, user, 3500, "ingest_plan", Schemas.plan(), FALLBACK_MODEL);
             if (plan.optJSONArray("topics") == null || plan.optJSONArray("topics").length() == 0) throw new IOException("The model's answer had no topics");
+            stage(prog, ek, 3);
             String[] filed = Classify.of(c, key, plan.optString("title").isEmpty() ? e.shownTitle() : plan.optString("title"), e.url, e.tldr.isEmpty() ? plan.optString("tldr") : e.tldr, e.why, e.ideas, page, IngestText.category(plan.optString("category")));
             if (filed != null) plan.put("category", filed[1]).put("lane", filed[0]);
             prog.edit().putString("plan:" + ek, plan.toString()).apply();
@@ -262,6 +292,7 @@ final class Ingest {
         for (int i = 0; fl != null && i < fl.length(); i++) if (!fl.optString(i).trim().isEmpty()) flags.add(fl.optString(i));
 
         // 3. write, one recorded step at a time
+        stage(prog, ek, 4);
         if (!done.contains("source")) {
             String raw = Content.load(c, e.url, 400000);
             if (raw.isEmpty()) raw = tldr;
@@ -269,6 +300,7 @@ final class Ingest {
             try { VaultWrite.write(c, sourcePath, null, note); } catch (IOException exists) { if (VaultWrite.read(c, sourcePath) == null) throw exists; } // an earlier attempt already wrote it
             step(prog, ek, done, "source");
         }
+        stage(prog, ek, 5);
         for (Topic t : topics) {
             String name = "topic:" + t.title;
             if (done.contains(name)) continue;
@@ -315,6 +347,7 @@ final class Ingest {
             }
             step(prog, ek, done, "cards");
         }
+        stage(prog, ek, 6);
         if (!done.contains("kidx")) {
             String text = VaultWrite.read(c, "Knowledge/index.md");
             if (text != null) {
@@ -359,7 +392,7 @@ final class Ingest {
         StringBuilder log = new StringBuilder(line);
         for (int i = 0; i < Math.min(old.length, 19); i++) log.append('\n').append(old[i]);
         prefs.edit().putString("ingestLog", log.toString()).apply();
-        prog.edit().remove(ek).remove("plan:" + ek).remove("tries:" + ek).apply();
+        prog.edit().remove(ek).remove("plan:" + ek).remove("tries:" + ek).remove("stage:" + ek).apply();
         Usage.hit(c, "ingest");
         VaultStore.last = null; // the next scan picks up the new and changed notes
     }
