@@ -104,57 +104,11 @@ final class Model {
         return java.util.Arrays.asList(out);
     }
 
-    /** Streamed chat completion: calls live with the text so far, returns the assembled message {content, tool_calls?}. */
-    /** cancel is this answer's own switch: stopping it ends the stream (what arrived so far is the reply) and never touches background work. */
-    static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
-        cancel.attach(connection);
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(90000);
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Authorization", "Bearer " + key);
-        connection.setRequestProperty("Content-Type", "application/json");
-        try {
-            try (OutputStream out = connection.getOutputStream()) { out.write(request.put("stream", true).toString().getBytes(StandardCharsets.UTF_8)); }
-            int code = connection.getResponseCode();
-            if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : ""));
-            StringBuilder text = new StringBuilder();
-            JSONArray calls = new JSONArray();
-            try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-                for (String line; (line = in.readLine()) != null; ) {
-                    if (cancel.stopped()) { calls = new JSONArray(); break; }
-                    if (!line.startsWith("data:")) continue; // blank lines and ": OPENROUTER PROCESSING" keep-alives
-                    String data = line.substring(5).trim();
-                    if (data.equals("[DONE]")) break;
-                    JSONObject chunk = new JSONObject(data);
-                    if (chunk.has("error")) throw new IOException("Smart tags paused: " + chunk.getJSONObject("error").optString("message", "provider error"));
-                    JSONArray choices = chunk.optJSONArray("choices");
-                    JSONObject delta = choices == null || choices.length() == 0 ? null : choices.getJSONObject(0).optJSONObject("delta");
-                    if (delta == null) continue;
-                    if (!delta.isNull("content") && delta.has("content")) { text.append(delta.getString("content")); if (live != null) live.accept(text.toString()); }
-                    JSONArray parts = delta.optJSONArray("tool_calls");
-                    for (int i = 0; parts != null && i < parts.length(); i++) {
-                        JSONObject part = parts.getJSONObject(i), fn = part.optJSONObject("function");
-                        int at = part.optInt("index", i);
-                        while (calls.length() <= at) calls.put(new JSONObject().put("id", "").put("type", "function").put("function", new JSONObject().put("name", "").put("arguments", "")));
-                        JSONObject slot = calls.getJSONObject(at), slotFn = slot.getJSONObject("function");
-                        if (part.optString("id", "").length() > 0) slot.put("id", part.getString("id"));
-                        if (fn != null) {
-                            if (!fn.isNull("name") && fn.has("name")) slotFn.put("name", slotFn.getString("name") + fn.getString("name"));
-                            if (!fn.isNull("arguments") && fn.has("arguments")) slotFn.put("arguments", slotFn.getString("arguments") + fn.getString("arguments"));
-                        }
-                    }
-                }
-            }
-            JSONObject message = new JSONObject().put("content", text.toString());
-            if (calls.length() > 0) message.put("tool_calls", calls);
-            return message;
-        } catch (IOException dropped) {
-            if (cancel.stopped()) return new JSONObject().put("content", ""); // our own disconnect
-            throw dropped;
-        } finally { cancel.detach(connection); connection.disconnect(); }
-    }
+    /** Streamed chat completion: see OpenRouter.stream. */
+    static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel) throws Exception { return OpenRouter.stream(key, request, live, cancel); }
+
+    /** The OpenRouter stream as the Agent's provider. */
+    static Agent.Provider provider(String key) { return (request, live, cancel) -> stream(key, request, live, cancel); }
 
     /** One non-streamed completion; the reply text. */
     static String complete(String key, String model, String system, String user, int maxTokens) throws Exception { return complete(key, model, system, user, maxTokens, false); }
@@ -332,16 +286,22 @@ final class Model {
     // --- key ---
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("capture", 0); }
 
-    static void saveKey(Context c, String key) throws Exception {
+    static void saveKey(Context c, String key) throws Exception { seal(c, "aiKey", key); }
+
+    /** Any secret, encrypted with the Keystore key and kept under this preference name. */
+    static void seal(Context c, String pref, String value) throws Exception {
+        String key = value;
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, secret());
-        prefs(c).edit().putString("aiKey", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":"
+        prefs(c).edit().putString(pref, Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":"
             + Base64.encodeToString(cipher.doFinal(key.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP)).apply();
     }
 
     /** The saved key, or "" when none (or when it can no longer be decrypted). */
-    static String key(Context c) {
-        String[] sealed = prefs(c).getString("aiKey", "").split(":");
+    static String key(Context c) { return unseal(c, "aiKey"); }
+
+    static String unseal(Context c, String pref) {
+        String[] sealed = prefs(c).getString(pref, "").split(":");
         if (sealed.length != 2) return "";
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");

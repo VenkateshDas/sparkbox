@@ -79,7 +79,7 @@ private fun SearchUi(s: SearchState, a: SearchActions) {
                 s.hits.isEmpty() -> Column(Modifier.fillMaxWidth().padding(top = 32.dp, start = 16.dp, end = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("No results", style = MaterialTheme.typography.titleLarge)
                     Text("Nothing matches. Try another word, or ask your vault.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
-                    Button(onClick = { keyboard?.hide(); a.ask() }, modifier = Modifier.padding(top = 16.dp)) { Text("Ask your vault") }
+                    Button(onClick = { keyboard?.hide(); a.ask() }, modifier = Modifier.padding(top = 16.dp)) { Text("Ask Scout") }
                 }
                 else -> LazyColumn(contentPadding = PaddingValues(16.dp, 4.dp, 16.dp, 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(s.hits, key = { it.path }) { h -> HitCard(h, s.query, a) }

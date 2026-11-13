@@ -79,13 +79,23 @@ final class SettingsScreen extends Screen {
         boolean keySaved = !Model.key(ui.c).isEmpty();
         ai.add(row("OpenRouter key", keySaved ? "Saved" : "Not set", () -> keyDialog()));
         ai.add(row("Tagging model", prefs().getString("aiModel", Model.DEFAULT), () -> modelDialog("Model for tags", "An OpenRouter model id.", "aiModel", prefs().getString("aiModel", Model.DEFAULT), Model.DEFAULT)));
-        ai.add(row("Ask model", Ask.model(ui.c), () -> modelDialog("Model for Ask", "It must support tool calls.", "askModel", Ask.model(ui.c), Ask.DEFAULT)));
+        ai.add(row("Scout model", Ask.model(ui.c), () -> modelDialog("Model for Scout", "It must support tool calls.", "askModel", Ask.model(ui.c), Ask.DEFAULT)));
+        ai.add(row("Scout thinking", Scout.thinking(ui.c), () -> { String now = Scout.thinking(ui.c); int next = (java.util.Arrays.asList(Scout.LEVELS).indexOf(now) + 1) % Scout.LEVELS.length; prefs().edit().putString("scoutThinking", Scout.LEVELS[next]).apply(); draw(); }));
         ai.add(row("Card model", CardGen.model(ui.c), () -> modelDialog("Model for cards", "An OpenRouter model id.", "cardModel", CardGen.model(ui.c), CardGen.DEFAULT_MODEL)));
         if (keySaved) {
             boolean describe = prefs().getBoolean("describe", false);
             ai.add(toggle("Describe photos and PDFs", describe, () -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
             ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
         }
+
+        java.util.List<SettingRow> tools = group("Scout tools (MCP servers)");
+        org.json.JSONArray servers = Scout.serverList(ui.c);
+        for (int i = 0; i < servers.length(); i++) {
+            final int at = i;
+            org.json.JSONObject s = servers.optJSONObject(i);
+            if (s != null) tools.add(row(s.optString("name"), (s.optBoolean("enabled", true) ? "On" : "Off") + (s.optBoolean("trusted") ? ", trusted" : ", asks first") + "  " + s.optString("url"), () -> serverDialog(at)));
+        }
+        tools.add(row("Add a server", "Remote MCP over HTTP. Scout asks before each call.", () -> addServerDialog()));
 
         java.util.List<SettingRow> spark = group("Spark");
         int[] p = snap == null ? new int[]{0, 0} : CardGen.progress(snap);
@@ -150,5 +160,62 @@ final class SettingsScreen extends Screen {
                 try { Model.saveKey(ui.c, k); BackgroundJob.schedule(ui.c); } catch (Exception failed) { android.widget.Toast.makeText(ui.c, "Could not save the key", android.widget.Toast.LENGTH_SHORT).show(); }
                 draw();
             }).setNegativeButton("Cancel", null).show();
+    }
+
+    private android.widget.EditText field(android.widget.LinearLayout box, String hint, boolean secret) {
+        android.widget.EditText e = new android.widget.EditText(ui.c);
+        e.setHint(hint);
+        e.setSingleLine(true);
+        e.setInputType(android.text.InputType.TYPE_CLASS_TEXT | (secret ? android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD : android.text.InputType.TYPE_TEXT_VARIATION_URI));
+        box.addView(e, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return e;
+    }
+
+    private void addServerDialog() {
+        LinearLayout box = new LinearLayout(ui.c);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
+        android.widget.EditText name = field(box, "Name (letters, digits, - or _)", false), url = field(box, "https://server.example/mcp", false), token = field(box, "Bearer token (optional)", true);
+        new android.app.AlertDialog.Builder(host).setTitle("Add an MCP server").setMessage("Scout sends a tool call's arguments to this server, and its results come back as untrusted text. Each call asks you first.").setView(box)
+            .setPositiveButton("Add", (d, w) -> {
+                String n = name.getText().toString().trim().replaceAll("[^A-Za-z0-9_-]", "_"), u = url.getText().toString().trim();
+                if (n.isEmpty() || !u.startsWith("https://")) { android.widget.Toast.makeText(ui.c, "Needs a name and an https:// address (plain http is blocked)", android.widget.Toast.LENGTH_SHORT).show(); return; }
+                try {
+                    if (!token.getText().toString().trim().isEmpty()) Model.seal(ui.c, "mcpToken:" + n, token.getText().toString().trim());
+                    org.json.JSONArray list = Scout.serverList(ui.c);
+                    list.put(new org.json.JSONObject().put("name", n).put("url", u).put("enabled", true).put("trusted", false));
+                    Scout.saveServers(ui.c, list);
+                } catch (Exception failed) { android.widget.Toast.makeText(ui.c, "Could not save the server", android.widget.Toast.LENGTH_SHORT).show(); }
+                draw();
+            }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void serverDialog(int at) {
+        org.json.JSONArray list = Scout.serverList(ui.c);
+        org.json.JSONObject s = list.optJSONObject(at);
+        if (s == null) return;
+        boolean on = s.optBoolean("enabled", true), trusted = s.optBoolean("trusted");
+        new android.app.AlertDialog.Builder(host).setTitle(s.optString("name")).setItems(new String[]{on ? "Turn off" : "Turn on", trusted ? "Ask before every call" : "Trust its read-only tools (no question)", "Allowed tools: " + (s.optString("allow").isEmpty() ? "all" : s.optString("allow")), "Remove"}, (d, which) -> {
+            try {
+                if (which == 2) { allowDialog(at); return; }
+                if (which == 0) s.put("enabled", !on);
+                else if (which == 1) s.put("trusted", !trusted);
+                else if (which == 3) { org.json.JSONArray keep = new org.json.JSONArray(); for (int i = 0; i < list.length(); i++) if (i != at) keep.put(list.get(i)); Scout.saveServers(ui.c, keep); ui.c.getSharedPreferences("capture", 0).edit().remove("mcpToken:" + s.optString("name")).apply(); draw(); return; }
+                Scout.saveServers(ui.c, list);
+            } catch (Exception ignored) { }
+            draw();
+        }).show();
+    }
+
+    private void allowDialog(int at) {
+        org.json.JSONArray list = Scout.serverList(ui.c);
+        org.json.JSONObject s = list.optJSONObject(at);
+        if (s == null) return;
+        LinearLayout box = new LinearLayout(ui.c);
+        box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
+        android.widget.EditText e = field(box, "search, fetch_content (empty = every tool)", false);
+        e.setText(s.optString("allow"));
+        new android.app.AlertDialog.Builder(host).setTitle("Allowed tools").setMessage("The server's own tool names, separated by commas. Only these are offered to Scout. Fewer tools means less to send each time, and keeps paid tools out of reach.").setView(box)
+            .setPositiveButton("Save", (d, w) -> { try { s.put("allow", e.getText().toString().trim()); Scout.saveServers(ui.c, list); } catch (Exception ignored) { } draw(); }).setNegativeButton("Cancel", null).show();
     }
 }

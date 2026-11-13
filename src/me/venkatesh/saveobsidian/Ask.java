@@ -126,7 +126,7 @@ final class Ask {
         return s.toString();
     }
 
-    private static String inbox(Context c, String query, int limit, int chars, Status status) {
+    static String inbox(Context c, String query, int limit, int chars, Status status) {
         status.say(query.isEmpty() ? "Looking at the inbox" : "Looking in the inbox for “" + query + "”");
         List<InboxFile.Entry> all = entries(c);
         if (all.isEmpty()) return "The inbox is empty or not available.";
@@ -143,7 +143,7 @@ final class Ask {
 
     // ---- notes ----
 
-    private static String search(Context c, VaultStore.Snap snap, String query, Status status) {
+    static String search(Context c, VaultStore.Snap snap, String query, Status status) {
         status.say("Searching “" + query + "”");
         float[] q = null;
         try { q = VaultStore.vector(c, query); } catch (Exception offline) { } // keyword results still work without the network
