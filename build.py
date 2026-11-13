@@ -26,6 +26,9 @@ run(java / 'bin/javac', '-encoding', 'UTF-8', '-classpath', str(jsoup) + os.path
     root / 'src/me/venkatesh/saveobsidian/Capture.java', root / 'src/me/venkatesh/saveobsidian/AppendCheck.java',
     root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/VaultLock.java', root / 'src/me/venkatesh/saveobsidian/Cancel.java', root / 'src/me/venkatesh/saveobsidian/RunGate.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'src/me/venkatesh/saveobsidian/Index.java', root / 'src/me/venkatesh/saveobsidian/Vault.java', root / 'src/me/venkatesh/saveobsidian/Layout.java', root / 'src/me/venkatesh/saveobsidian/Lane.java', root / 'src/me/venkatesh/saveobsidian/Feed.java', root / 'src/me/venkatesh/saveobsidian/NoteEdit.java', root / 'src/me/venkatesh/saveobsidian/Cites.java', root / 'src/me/venkatesh/saveobsidian/Cards.java', root / 'src/me/venkatesh/saveobsidian/Sched.java', root / 'src/me/venkatesh/saveobsidian/Spark.java', root / 'src/me/venkatesh/saveobsidian/CardPrompt.java', root / 'src/me/venkatesh/saveobsidian/IngestText.java', root / 'tests/CaptureTest.java')
 run(java / 'bin/java', '-cp', str(classes) + os.pathsep + str(jsoup) + os.pathsep + str(testjson), 'CaptureTest')
+if any((root / 'src').rglob('*.kt')):
+    print('Kotlin sources present: the APK is built by Gradle now (./gradlew assembleRelease). build.py ran the JVM checks only.')
+    raise SystemExit(0)
 # the manifest has no package (Gradle takes it from namespace); aapt2 needs one
 manifest = build / 'AndroidManifest.xml'
 manifest.write_text((root / 'AndroidManifest.xml').read_text().replace('<manifest ', '<manifest package="me.venkatesh.saveobsidian" ', 1))

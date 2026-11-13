@@ -1,5 +1,8 @@
 // Single-module build. Sources stay where build.py expects them (src/, res/, AndroidManifest.xml).
-plugins { alias(libs.plugins.android.application) }
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
 
 layout.buildDirectory = file("build/gradle") // build/ itself belongs to build.py
 
@@ -7,7 +10,7 @@ val signingDir = file("${System.getProperty("user.home")}/.local/share/save-to-o
 
 android {
     namespace = "me.venkatesh.saveobsidian"
-    compileSdk = 35
+    compileSdk = 37 // androidx needs 36+; targetSdk stays 35, so runtime behaviour is unchanged
     defaultConfig {
         applicationId = "me.venkatesh.saveobsidian"
         minSdk = 26
@@ -18,6 +21,7 @@ android {
     sourceSets["main"].apply {
         manifest.srcFile("AndroidManifest.xml")
         java.directories.add("src")
+        kotlin.directories.add("src")
         res.directories.add("res")
     }
     signingConfigs {
@@ -38,13 +42,20 @@ android {
         debug { signingConfig = signingConfigs["release"] } // debug builds still upgrade the installed app in place
     }
     lint { baseline = file("lint-baseline.xml") } // findings that predate Gradle; new ones fail check
+    buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
-dependencies { implementation(libs.jsoup) }
+dependencies {
+    implementation(libs.jsoup)
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.material3)
+    implementation(libs.activity.compose)
+}
 
 // The JVM checks (tests/CaptureTest.java): plain classes only, no Android, same list as build.py.
 val jvmCheck by configurations.creating

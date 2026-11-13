@@ -22,7 +22,7 @@ import java.util.Locale;
 /**
  * Sparkbox look: slate surfaces, system sans at two weights, an emerald accent. Dark and light palettes from the approved design. Sizes: 12 / 14 / 16 / 20 / 48. Spacing: multiples of 4.
  */
-final class Ui {
+public final class Ui {
     final Context c;
     final int bg, surface, raised, ink, sub, muted, line, accent, onAccent, container, onContainer, warn, warnBg, err, errBg;
     final boolean dark;
