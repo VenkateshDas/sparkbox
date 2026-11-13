@@ -63,6 +63,7 @@ final class SearchScreen extends Screen {
         if (snap == null) return;
         new Thread(() -> {
             List<Vault.Note> hits;
+            Limits.interactive(true);
             try { hits = VaultStore.semantic(ui.c, snap, q, 30); } catch (Exception offline) { hits = null; } // no key or no network: the word results stay, silently
             final List<Vault.Note> done = hits;
             main.post(() -> { if (q.equals(query) && done != null && !done.isEmpty()) { meaning = done; show(); } });

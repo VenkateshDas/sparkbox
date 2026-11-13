@@ -98,3 +98,27 @@ Kept on purpose:
 - Md.java renders note Markdown into a TextView with tappable links; the vault reader embeds that TextView in Compose.
 - Thumb.java: link previews already have a memory cache, a disk cache and 480 px downsampling, so Coil would add a dependency for nothing.
 - The home-screen widget stays RemoteViews (widgets cannot use Compose without Glance).
+
+## Milestone 6 (concurrency limits, failure types)
+
+Start values, in `Limits.java`:
+- Source fetching (`Fetch.page`): 3 at a time, shared by ingest, tagging and backfills.
+- Background model calls (`Model.post` for ingest, Craft/Life, tags, cards, descriptions, embeddings): 2 at a time.
+- Interactive model calls never queue behind them: Ask streams on its own, and search, vault search and Similar mark their thread interactive.
+- Vault edits: the single `VaultLock` from Milestone 0.
+- Vault scans: one at a time. A caller that waited for a scan which started after it asked reuses that result instead of walking the vault again.
+- Backfills (tags, descriptions, card generation, embeddings) already run one after another inside the single Tagger run, so they never overlap each other.
+
+Failure types, in `Failures.java`, each with its own recovery text and retry behaviour:
+
+| Kind | What the owner sees | Retry |
+|---|---|---|
+| offline | tried again by itself when back online | every couple of minutes, no try used |
+| key / credit | check the key in Settings | stops until the owner retries |
+| rate limit | OpenRouter is limiting requests | waits at least 10 minutes |
+| unusable answer | asks again, then the fallback model | normal ladder |
+| conflicting edit | the note changed while saving; the AI answer is kept | normal ladder, no new model call |
+
+A vault-save failure reuses the saved model answer: the plan is stored before any vault write (`plan:` in the ingest prefs), so a retry goes straight to writing, unless the Why or Ideas changed (Milestone 0).
+
+Measured after the change: first frame 154 ms, usable Feed 216 ms (median of 5). Not measured: how the limits behave under a real ingest burst; tune them from logs (`model … ms`, `stage … ms`) once real captures run.

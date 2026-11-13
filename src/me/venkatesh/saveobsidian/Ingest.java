@@ -94,8 +94,10 @@ final class Ingest {
                         break; // the rest would fail the same way
                     }
                     String m = failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage();
-                    int n = tries + 1;
-                    prog.edit().putInt("tries:" + ek, n).putLong("next:" + ek, System.currentTimeMillis() + BACKOFF[Math.min(n, BACKOFF.length - 1)]).putString("err:" + ek, m).apply();
+                    String kind = Failures.kind(m);
+                    int n = Failures.retries(kind) ? tries + 1 : MAX_TRIES; // a bad key stops the ladder until the owner fixes it (Retry, or Retry failed captures)
+                    long wait = Math.max(BACKOFF[Math.min(n, BACKOFF.length - 1)], Failures.minWaitMs(kind));
+                    prog.edit().putInt("tries:" + ek, n).putLong("next:" + ek, System.currentTimeMillis() + wait).putString("err:" + ek, m).apply();
                     prefs.edit().putString("ingestProblem", e.shownTitle() + ": " + m).apply();
                     if (m.startsWith("Smart tags paused")) break; // the provider or the network is down: the next captures would fail the same way
                 }
@@ -139,10 +141,11 @@ final class Ingest {
         SharedPreferences prog = c.getSharedPreferences("ingest", 0);
         String ek = entryKey(e), err = prog.getString("err:" + ek, "").replaceFirst("^Smart tags paused: ", "");
         if (err.isEmpty()) return "";
-        if (err.equals(OFFLINE)) return "No connection to the AI service (a failed lookup of openrouter.ai). This is retried by itself every couple of minutes; Retry tries now.";
-        if (prog.getInt("tries:" + ek, 0) >= MAX_TRIES) return "Processing stopped after " + MAX_TRIES + " tries: " + err;
+        String kind = err.equals(OFFLINE) ? Failures.OFFLINE : Failures.kind(err), say = Failures.recovery(kind, err);
+        if (kind.equals(Failures.OFFLINE) || kind.equals(Failures.KEY)) return say;
+        if (prog.getInt("tries:" + ek, 0) >= MAX_TRIES) return "Processing stopped after " + MAX_TRIES + " tries. " + say;
         long wait = prog.getLong("next:" + ek, 0) - System.currentTimeMillis();
-        return "Processing failed: " + err + (wait > MINUTE ? " Trying again in " + (wait / MINUTE) + " min." : " Trying again soon.");
+        return say + (wait > MINUTE ? " Next try in " + (wait / MINUTE) + " min." : " Next try soon.");
     }
 
     /** Clears what is remembered about one capture (tries, waits, the model's plan) and runs the whole pipeline now. For the owner's Retry. */

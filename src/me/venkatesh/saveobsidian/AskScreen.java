@@ -107,9 +107,10 @@ final class AskScreen extends Screen {
         final JSONArray messages = sent;
         new Thread(() -> {
             String answer = null, error = null;
+            Limits.interactive(true);
             try {
                 answer = Ask.run(ui.c, snap, key, messages, line -> main.post(() -> view.status(line)), soFar -> main.post(() -> view.live(soFar)), cancel);
-            } catch (Exception e) { error = String.valueOf(e.getMessage()).replace("Smart tags paused: ", ""); }
+            } catch (Exception e) { String m = String.valueOf(e.getMessage()).replace("Smart tags paused: ", ""); String k = Failures.kind(m); error = k.equals(Failures.OTHER) || k.equals(Failures.CONFLICT) ? m : Failures.recovery(k, m).replace("It is tried again by itself when you are back online; Retry tries now.", "Try again when you are online."); }
             final String a = answer, e = error;
             main.post(() -> finish(question, a, e));
         }).start();

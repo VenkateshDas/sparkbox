@@ -273,6 +273,11 @@ final class Model {
 
     /** A dropped connection, a timeout, a 429 or a 5xx waits a moment and goes again (three tries); a failed lookup or missing connection gets six, spread over about 40 seconds, because it is usually a short blip. A refusal (400s) or a bad key is not retried. */
     private static String post(String path, String key, JSONObject request, int readTimeout) throws Exception {
+        if (Limits.interactive()) return send(path, key, request, readTimeout); // the owner is waiting: never queue behind background work
+        return Limits.with(Limits.AI, () -> send(path, key, request, readTimeout));
+    }
+
+    private static String send(String path, String key, JSONObject request, int readTimeout) throws Exception {
         byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
         IOException last = null;
         for (int attempt = 0; attempt < 6; attempt++) {

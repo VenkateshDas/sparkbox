@@ -24,6 +24,8 @@ import me.venkatesh.saveobsidian.VerifiedEdit;
 import me.venkatesh.saveobsidian.VaultLock;
 import me.venkatesh.saveobsidian.Cancel;
 import me.venkatesh.saveobsidian.RunGate;
+import me.venkatesh.saveobsidian.Limits;
+import me.venkatesh.saveobsidian.Failures;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -32,6 +34,7 @@ public class CaptureTest {
     static int count;
     public static void main(String[] args) throws Exception {
         concurrency();
+        limits();
         check(Capture.firstUrl("A caption\nhttps://example.com/post?a=1&b=two+three\nRead it").equals("https://example.com/post?a=1&b=two+three"));
         check(Capture.firstUrl("https://youtu.be/Abc?t=42").equals("https://youtu.be/Abc?t=42"));
         check(Capture.pageTitle("<HTML><TITLE class='x'>You don&#x27;t\nneed long context</TITLE></HTML>").equals("You don&#x27;t\nneed long context"));
@@ -670,5 +673,39 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(IngestText.samePlanInputs("abc", "abc"));
         check(!IngestText.samePlanInputs("abc", "def"));
         check(IngestText.samePlanInputs("", "def") && IngestText.samePlanInputs(null, "def"));
+    }
+
+    static void limits() throws Exception {
+        // background model calls: never more than two at once, however many ask
+        final java.util.concurrent.atomic.AtomicInteger now = new java.util.concurrent.atomic.AtomicInteger(), most = new java.util.concurrent.atomic.AtomicInteger();
+        List<Thread> ts = new ArrayList<>();
+        for (int i = 0; i < 6; i++) ts.add(new Thread(() -> { try { Limits.with(Limits.AI, () -> { most.accumulateAndGet(now.incrementAndGet(), Math::max); Thread.sleep(40); now.decrementAndGet(); return null; }); } catch (Exception e) { } }));
+        for (Thread t : ts) t.start();
+        for (Thread t : ts) t.join();
+        check(most.get() == 2 && Limits.AI.availablePermits() == 2);
+        // a permit comes back even when the work throws
+        try { Limits.with(Limits.FETCH, () -> { throw new java.io.IOException("x"); }); } catch (java.io.IOException expected) { }
+        check(Limits.FETCH.availablePermits() == 3);
+        // interactive is per thread
+        Limits.interactive(true);
+        final boolean[] other = new boolean[1];
+        Thread t = new Thread(() -> other[0] = Limits.interactive());
+        t.start(); t.join();
+        check(Limits.interactive() && !other[0]);
+        Limits.interactive(false);
+        check(!Limits.interactive());
+
+        // failure kinds and what follows from them
+        check(Failures.kind("Offline: waiting for a connection").equals(Failures.OFFLINE));
+        check(Failures.kind("Smart tags paused: OpenRouter answered 401 (check the key)").equals(Failures.KEY));
+        check(Failures.kind("Smart tags paused: OpenRouter answered 402 (out of credit)").equals(Failures.KEY));
+        check(Failures.kind("Smart tags paused: OpenRouter answered 429: slow down").equals(Failures.RATE));
+        check(Failures.kind("The model found no topic for this capture").equals(Failures.MALFORMED));
+        check(Failures.kind("Knowledge/index.md changed while it was being edited. It will be tried again.").equals(Failures.CONFLICT));
+        check(Failures.kind("Why or Ideas changed while processing: it will be processed again").equals(Failures.CONFLICT));
+        check(Failures.kind("Something odd").equals(Failures.OTHER));
+        check(!Failures.retries(Failures.KEY) && Failures.retries(Failures.RATE) && Failures.retries(Failures.CONFLICT));
+        check(Failures.minWaitMs(Failures.RATE) >= 600000 && Failures.minWaitMs(Failures.OTHER) == 0);
+        check(Failures.recovery(Failures.CONFLICT, "").contains("without a new model call"));
     }
 }

@@ -235,6 +235,7 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
         VaultStore.Snap s = snap;
         new Thread(() -> {
             List<Vault.Note> hits;
+            Limits.interactive(true);
             try { hits = VaultStore.semantic(this, s, q, 20); } catch (Exception offline) { hits = null; } // no key or network: the word match stays
             List<Vault.Note> done = hits;
             runOnUiThread(() -> { if (!isDestroyed() && q.equals(query) && done != null && !done.isEmpty()) { semanticHits = done; draw(false); } });
@@ -381,6 +382,7 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
         b.add(new Body("Finding similar notes", true, false));
         VaultStore.Snap s = snap;
         new Thread(() -> {
+            Limits.interactive(true);
             List<Vault.Note> found = VaultStore.similar(this, s, n, 10);
             runOnUiThread(() -> {
                 if (isDestroyed()) return;

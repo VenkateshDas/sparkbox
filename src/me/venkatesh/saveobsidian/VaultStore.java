@@ -57,8 +57,24 @@ final class VaultStore {
         return snap;
     }
 
-    /** Walks the vault, re-reading only files whose size or modified time changed. Blocking. */
+    private static final java.util.concurrent.locks.ReentrantLock SCAN = new java.util.concurrent.locks.ReentrantLock();
+    private static volatile long scanBegan;
+    private static volatile Snap scanned;
+
+    /** One scan at a time. A caller that waited for a scan which began after it asked takes that result instead of walking the vault again. */
     static Snap scan(Context c) throws Exception {
+        long asked = System.nanoTime();
+        SCAN.lock();
+        try {
+            Snap done = scanned;
+            if (done != null && scanBegan >= asked) return done;
+            scanBegan = System.nanoTime();
+            return scanned = walkVault(c);
+        } finally { SCAN.unlock(); }
+    }
+
+    /** Walks the vault, re-reading only files whose size or modified time changed. Blocking. */
+    private static Snap walkVault(Context c) throws Exception {
         long started = System.currentTimeMillis();
         Uri tree = Uri.parse(tree(c));
         Map<String, Cached> old = readCache(c), fresh = new HashMap<>();
