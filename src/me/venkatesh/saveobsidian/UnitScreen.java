@@ -146,7 +146,7 @@ final class UnitScreen extends Screen {
         edit.setHint("Add your own words");
         edit.setHintTextColor(ui.sub);
         edit.setTextColor(ui.ink);
-        edit.setTextSize(15);
+        edit.setTextSize(Ui.type(15));
         edit.setBackground(null);
         edit.setPadding(0, ui.dp(8), 0, ui.dp(8));
         edit.setMinHeight(ui.dp(48));

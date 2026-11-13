@@ -229,7 +229,7 @@ public class VaultActivity extends Activity {
         search.setText(query);
         search.setTextColor(ui.ink);
         search.setHintTextColor(ui.muted);
-        search.setTextSize(15);
+        search.setTextSize(Ui.type(15));
         search.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
         search.setBackground(ui.round(0, ui.line, 8));
         search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);

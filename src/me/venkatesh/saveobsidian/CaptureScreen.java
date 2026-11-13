@@ -119,7 +119,7 @@ final class CaptureScreen extends Screen {
         e.setMinLines(lines);
         e.setGravity(Gravity.TOP);
         e.setTextColor(ui.ink);
-        e.setTextSize(15);
+        e.setTextSize(Ui.type(15));
         e.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
         e.setBackground(ui.round(ui.surface, ui.line, 8));
         e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);

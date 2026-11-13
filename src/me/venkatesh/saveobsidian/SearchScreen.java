@@ -53,7 +53,7 @@ final class SearchScreen extends Screen {
         input.setHint("Search notes, topics, people");
         input.setHintTextColor(ui.sub);
         input.setTextColor(ui.ink);
-        input.setTextSize(15);
+        input.setTextSize(Ui.type(15));
         input.setText(query);
         input.setPadding(ui.dp(16), 0, ui.dp(16), 0);
         input.setBackground(ui.round(ui.raised, ui.line, 24));

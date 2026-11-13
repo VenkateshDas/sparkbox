@@ -86,7 +86,7 @@ final class AskScreen extends Screen {
         input.setHint("Ask your vault");
         input.setHintTextColor(ui.sub);
         input.setTextColor(ui.ink);
-        input.setTextSize(15);
+        input.setTextSize(Ui.type(15));
         input.setMaxLines(4);
         input.setRawInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setImeOptions(EditorInfo.IME_ACTION_SEND);

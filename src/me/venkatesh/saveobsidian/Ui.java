@@ -73,10 +73,13 @@ final class Ui {
         return p;
     }
 
+    /** The type scale, tighter than the sizes written at call sites: body 1.5 steps down (15 to 13.5, never under 11), headings compressed (17 to 15, 20 to 17, 28 to 23). */
+    static float type(float sp) { return sp <= 16 ? Math.max(11, sp - 1.5f) : 15 + (sp - 17) * 0.7f; }
+
     TextView text(String value, float sp, Typeface face, int color) {
         TextView view = new TextView(c);
         view.setText(value);
-        view.setTextSize(sp);
+        view.setTextSize(type(sp));
         view.setTypeface(face);
         view.setTextColor(color);
         view.setIncludeFontPadding(false);
@@ -115,9 +118,9 @@ final class Ui {
     TextView button(String label, boolean primary, View.OnClickListener click) {
         TextView view = text(label, 14, MEDIUM, primary ? onAccent : ink);
         view.setGravity(Gravity.CENTER);
-        view.setMinHeight(dp(48));
+        view.setMinHeight(dp(40));
         view.setMinWidth(dp(48));
-        view.setPadding(dp(16), 0, dp(16), 0);
+        view.setPadding(dp(14), 0, dp(14), 0);
         view.setBackground(ripple(round(primary ? accent : raised, primary ? 0 : line, 24)));
         view.setOnClickListener(click);
         buttonRole(view);

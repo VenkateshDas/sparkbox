@@ -178,7 +178,7 @@ final class SparkScreen extends Screen {
 
     private TextView small(String label, View.OnClickListener click) {
         TextView b = ui.button(label, false, click);
-        b.setTextSize(14);
+        b.setTextSize(Ui.type(14));
         b.setPadding(ui.dp(8), 0, ui.dp(8), 0);
         b.setSingleLine(true);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ui.dp(48), 1);

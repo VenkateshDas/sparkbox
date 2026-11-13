@@ -123,7 +123,7 @@ public class QuickActivity extends Activity {
         input.setHint("Write a thought");
         input.setHintTextColor(ui.muted);
         input.setTextColor(ui.ink);
-        input.setTextSize(18);
+        input.setTextSize(Ui.type(18));
         input.setLineSpacing(0, 1.25f);
         input.setBackground(null);
         input.setPadding(0, ui.dp(8), 0, ui.dp(8));
