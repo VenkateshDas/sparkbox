@@ -284,10 +284,11 @@ private fun Small(text: String) = Text(text, style = MaterialTheme.typography.bo
 
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.Action(label: String, icon: Int, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.weight(1f).heightIn(min = 44.dp), colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) {
+    // Small side padding: with four actions on a phone, the default 24dp left no room and "Open" and "Share" wrapped letter by letter.
+    TextButton(onClick = onClick, modifier = Modifier.weight(1f).heightIn(min = 44.dp), contentPadding = PaddingValues(horizontal = 2.dp), colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) {
         Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.width(4.dp))
+        Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false)
     }
 }
 
