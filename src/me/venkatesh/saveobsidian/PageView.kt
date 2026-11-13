@@ -62,6 +62,17 @@ class Heading @JvmOverloads constructor(val text: String, val origin: Int = Orig
 class Bullet(val text: String, val low: Boolean) : Block
 class Group(val rows: List<Nav>) : Block
 class Primary(val text: String, val onClick: Runnable) : Block
+class Act(val label: String, val onClick: Runnable)
+/** A card in a list: tags, a bold first line, body, a quiet note, and text actions under it. */
+class Entry(val tags: List<Tag>, val title: String, val body: String, val note: String, val acts: List<Act>) : Block
+/** A text field. Typing reports through onChange; publishing a new value (a chip tap) replaces the text. chips add a prefix when tapped. */
+class Field(val label: String, val value: String, val minLines: Int, val chips: List<Act>, val onChange: java.util.function.Consumer<String>) : Block
+class Meter(val done: Int, val total: Int) : Block
+/** A View drawn inside the page (a link preview). */
+class Picture(val height: Int, val make: java.util.function.Supplier<View>) : Block
+class Buttons(val acts: List<Act>) : Block
+/** A big avatar letter with a title and subtitle, for profile-style headers. */
+class Hero(val letter: String, val title: String, val sub: String) : Block
 class Danger(val text: String, val onClick: Runnable) : Block
 /** An editable section of the note. draft survives redraws through onChange; Save shows only when the text differs from saved. */
 class Editor(val label: String, val saved: String, val draft: String, val hint: String, val onChange: java.util.function.Consumer<String>, val saver: Saver) : Block
@@ -177,6 +188,39 @@ fun BlockUi(b: Block) {
         is Primary -> Button(onClick = { b.onClick.run() }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) { Text(b.text) }
         is Danger -> TextButton(onClick = { b.onClick.run() }, modifier = Modifier.fillMaxWidth()) { Text(b.text, color = cs.error) }
         is Editor -> EditorUi(b)
+        is Entry -> Surface(shape = RoundedCornerShape(14.dp), color = cs.surfaceContainerLow, border = BorderStroke(1.dp, cs.outlineVariant)) {
+            Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp)) {
+                if (b.tags.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 6.dp)) { b.tags.forEach { ToneChip(it) } }
+                Text(b.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(end = 8.dp))
+                if (b.body.isNotEmpty()) Text(b.body, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 6.dp, end = 8.dp))
+                if (b.note.isNotEmpty()) Text(b.note, style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, end = 8.dp))
+                if (b.acts.isNotEmpty()) Row(Modifier.padding(top = 2.dp)) { b.acts.forEach { a -> TextButton(onClick = { a.onClick.run() }) { Text(a.label) } } }
+            }
+        }
+        is Field -> Column {
+            Text(b.label, style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+            if (b.chips.isNotEmpty()) Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                b.chips.forEach { c -> androidx.compose.material3.AssistChip(onClick = { c.onClick.run() }, label = { Text(c.label) }) }
+            }
+            var text by remember(b.value) { mutableStateOf(b.value) }
+            OutlinedTextField(value = text, onValueChange = { text = it; b.onChange.accept(it) }, minLines = b.minLines, textStyle = MaterialTheme.typography.bodyLarge,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
+        is Meter -> androidx.compose.material3.LinearProgressIndicator(progress = { if (b.total == 0) 0f else b.done.toFloat() / b.total }, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)))
+        is Picture -> androidx.compose.ui.viewinterop.AndroidView(factory = { b.make.get() }, modifier = Modifier.fillMaxWidth().heightIn(min = b.height.dp, max = b.height.dp).clip(RoundedCornerShape(12.dp)))
+        is Buttons -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            b.acts.forEachIndexed { i, a ->
+                if (i == 0) Button(onClick = { a.onClick.run() }, modifier = Modifier.weight(1f)) { Text(a.label) }
+                else androidx.compose.material3.OutlinedButton(onClick = { a.onClick.run() }, modifier = Modifier.weight(1f)) { Text(a.label) }
+            }
+        }
+        is Hero -> Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.foundation.layout.Box(Modifier.padding(end = 16.dp).clip(RoundedCornerShape(32.dp)).background(cs.primary).padding(horizontal = 22.dp, vertical = 16.dp)) {
+                Text(b.letter, style = MaterialTheme.typography.headlineSmall, color = cs.onPrimary)
+            }
+            Column { Text(b.title, style = MaterialTheme.typography.headlineSmall); Text(b.sub, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant) }
+        }
     }
 }
 

@@ -9,4 +9,8 @@
     <color name="w_raised">#F1F5F9</color>
     <color name="w_card_top">#FFFFFF</color>
     <color name="w_card_bot">#F1F5F9</color>
+    <color name="accent">#047857</color>
+    <color name="ink">#0F172A</color>
+    <color name="sub">#475569</color>
+    <color name="dialog">#FFFFFF</color>
 </resources>
