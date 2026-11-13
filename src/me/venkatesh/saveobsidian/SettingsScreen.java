@@ -42,17 +42,26 @@ final class SettingsScreen extends Screen {
     }
 
     private View row(String title, String value, View.OnClickListener click) {
-        return row(title, value, value.isEmpty() ? "Open" : value.equals("On") || value.equals("Off") ? "Switch" : "Change", click);
+        boolean add = value.equals("Add");
+        return row(title, add ? "" : value, add ? "Add" : value.isEmpty() ? "Open" : value.equals("On") || value.equals("Off") ? "Switch" : "Change", click);
     }
 
-    /** A settings line; when it can be pressed, a real button at the end says what pressing does. */
+    /** A settings line in three fixed columns: label, current value, button. Lines with no action keep the button column empty so every value lines up. */
     private View row(String title, String value, String action, View.OnClickListener click) {
         LinearLayout r = new LinearLayout(ui.c);
         r.setGravity(Gravity.CENTER_VERTICAL);
         r.setMinimumHeight(ui.dp(56));
-        r.addView(ui.text(title, 16, Typeface.DEFAULT, ui.ink), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        if (!value.isEmpty()) { TextView v = ui.text(value, 13, Typeface.DEFAULT, ui.sub); v.setMaxLines(2); r.addView(v); }
-        if (click != null) { TextView b = ui.button(action, false, click); b.setMinHeight(ui.dp(40)); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.leftMargin = ui.dp(12); r.addView(b, lp); }
+        r.addView(ui.text(title, 16, Typeface.DEFAULT, ui.ink), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 5));
+        TextView v = ui.text(value, 13, Typeface.DEFAULT, ui.sub);
+        v.setMaxLines(2);
+        v.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 4);
+        vp.leftMargin = ui.dp(8);
+        r.addView(v, vp);
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(ui.dp(92), ui.dp(40));
+        bp.leftMargin = ui.dp(12);
+        if (click != null) { TextView b = ui.button(action, false, click); b.setMinHeight(ui.dp(40)); b.setPadding(ui.dp(8), 0, ui.dp(8), 0); r.addView(b, bp); }
+        else r.addView(new View(ui.c), bp);
         return r;
     }
 
