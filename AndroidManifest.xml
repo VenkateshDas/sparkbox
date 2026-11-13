@@ -45,7 +45,6 @@
             </intent-filter>
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
-        <activity android:name=".DashboardActivity" android:exported="false" />
         <activity android:name=".VaultActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".AskActivity" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <receiver android:name=".Reminder" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter></receiver>
