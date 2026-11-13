@@ -1,0 +1,11 @@
+[versions]
+agp = "9.5.1"
+jsoup = "1.18.3"
+json = "20240303"
+
+[libraries]
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+json = { module = "org.json:json", version.ref = "json" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }

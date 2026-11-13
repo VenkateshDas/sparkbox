@@ -43,3 +43,14 @@ b. Feed scroll jank while an ingest runs must stay at most 1 % janky frames and 
 c. A captured link is never lost when the app is killed during processing: kill, restart, it resumes and the original capture is intact.
 
 APK size is recorded, not a gate.
+
+## Milestone 3 (Gradle 9.9.1, AGP 9.5.1, R8 release)
+
+| What | Value | Gate |
+|---|---|---|
+| APK size | 298,518 bytes (292 KB, was 452 KB) | recorded |
+| First frame, median of 5 | 310 ms | a: at most 340, pass |
+| Usable Feed, median of 5 | 267 ms | a: at most 291, pass |
+| Feed scroll, idle | 0.00 % janky, p99 8 ms | pass |
+
+Installed over the build.py APK (versionCode 11 to 12) with the same key: vault, settings and inbox kept. Checked on the phone with the R8 build: share-sheet text capture, Quick note tile, Voice note tile (recorded, then discarded), widget provider registered. The widget itself was not placed on a home screen.

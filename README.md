@@ -288,3 +288,7 @@ When a link has been tagged, one model call reads the page, your Why and Ideas (
 5. The capture leaves `Inbox.md`.
 
 Rules: pages are only added to, never rewritten. Each edit starts from the exact text that was read (if the file changed meanwhile it is retried later), is read back after writing, and the previous text is kept privately for two weeks. Every step is recorded, so an interrupted run resumes instead of repeating; the model answer is kept so a retry does not pay twice. At most 3 captures per run and 3 tries per capture. Settings lists what was ingested and the last problem. Typed notes, voice and photos are not ingested yet and stay in the inbox.
+
+## Gradle build
+
+`./gradlew assembleRelease` (APK in `build/gradle/outputs/apk/release/`) and `./gradlew check` (JVM checks in tests/CaptureTest.java plus lint against `lint-baseline.xml`). Needs JDK 17+ and an Android SDK in `local.properties` (`sdk.dir=...`). Signs with the same key as build.py, so either APK installs over the other. `python3 build.py` still works.

@@ -170,7 +170,7 @@ public final class Vault {
     }
 
     public static Note parse(String path, long mtime, String text) {
-        if (text.startsWith("﻿")) text = text.substring(1);
+        if (text.startsWith("\uFEFF")) text = text.substring(1);
         text = clipLines(text.replace("\r\n", "\n"));
         int[] bodyAt = new int[1];
         Map<String, String> fm = frontmatter(text, bodyAt);
