@@ -42,12 +42,17 @@ final class SettingsScreen extends Screen {
     }
 
     private View row(String title, String value, View.OnClickListener click) {
+        return row(title, value, value.isEmpty() ? "Open" : value.equals("On") || value.equals("Off") ? "Switch" : "Change", click);
+    }
+
+    /** A settings line; when it can be pressed, a real button at the end says what pressing does. */
+    private View row(String title, String value, String action, View.OnClickListener click) {
         LinearLayout r = new LinearLayout(ui.c);
         r.setGravity(Gravity.CENTER_VERTICAL);
         r.setMinimumHeight(ui.dp(56));
         r.addView(ui.text(title, 16, Typeface.DEFAULT, ui.ink), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         if (!value.isEmpty()) { TextView v = ui.text(value, 13, Typeface.DEFAULT, ui.sub); v.setMaxLines(2); r.addView(v); }
-        if (click != null) { r.addView(ui.text("  ›", 17, Typeface.DEFAULT, ui.sub)); r.setOnClickListener(click); Ui.buttonRole(r); }
+        if (click != null) { TextView b = ui.button(action, false, click); b.setMinHeight(ui.dp(40)); LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.leftMargin = ui.dp(12); r.addView(b, lp); }
         return r;
     }
 
@@ -80,7 +85,7 @@ final class SettingsScreen extends Screen {
         ingest.addView(row("Vault write access", canWrite ? "Granted" : "Not granted", canWrite ? null : v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
         ingest.addView(row("Ingest model", Ingest.model(ui.c), v -> modelDialog("Model for ingest", "An OpenRouter model id. A stronger model gives better topics.", "ingestModel", Ingest.model(ui.c), Ingest.DEFAULT_MODEL)));
         ingest.addView(row("Lane and folder model", Classify.model(ui.c), v -> modelDialog("Model for Craft or Life", "An OpenRouter model id. It decides the lane and the subject folder of each new note.", "classifyModel", Classify.model(ui.c), Classify.DEFAULT_MODEL)));
-        ingest.addView(row("Retry failed captures", "", v -> {
+        ingest.addView(row("Retry failed captures", "", "Retry now", v -> {
             int n = Ingest.retryAll(ui.c);
             android.widget.Toast.makeText(ui.c, n == 0 ? "Nothing has failed" : "Trying " + n + (n == 1 ? " capture" : " captures") + " again", android.widget.Toast.LENGTH_SHORT).show();
             draw();
@@ -100,7 +105,7 @@ final class SettingsScreen extends Screen {
         if (keySaved) {
             boolean describe = prefs().getBoolean("describe", false);
             ai.addView(row("Describe photos and PDFs", describe ? "On" : "Off", v -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
-            ai.addView(row("Remove key", "", v -> { Model.clear(ui.c); draw(); }));
+            ai.addView(row("Remove key", "", "Remove", v -> { Model.clear(ui.c); draw(); }));
         }
 
         LinearLayout spark = group("Spark");

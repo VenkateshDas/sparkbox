@@ -19,6 +19,13 @@ public class BackgroundJob extends JobService {
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build());
     }
 
+    /** Starts processing right now on a thread, and also asks Android for a job as the backup if the process is stopped. */
+    static void now(Context c) {
+        schedule(c);
+        final Context app = c.getApplicationContext();
+        new Thread(() -> Tagger.run(app)).start();
+    }
+
     /** Comes back after a wait, for a capture whose processing failed and is due for another try. Replaces an earlier wait. */
     static void scheduleLater(Context c, long delayMs, int id) {
         if (Model.key(c).isEmpty()) return;

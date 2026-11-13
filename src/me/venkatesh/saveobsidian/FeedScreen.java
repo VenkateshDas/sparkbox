@@ -480,7 +480,7 @@ final class FeedScreen extends Screen {
         card.addView(rule, rp);
         LinearLayout bar = new LinearLayout(ui.c);
         if (it.entry == null) bar.addView(action("Ask", R.drawable.ic_nav_ask, v -> host.ask("Tell me about " + it.title)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
-        else if (!it.entry.url.isEmpty() && it.entry.file.isEmpty() && Model.key(ui.c).length() > 0) bar.addView(action(problem.isEmpty() ? "Process" : "Retry", R.drawable.ic_retry, v -> retry(it.entry)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        else if (!it.entry.url.isEmpty() && it.entry.file.isEmpty() && Model.key(ui.c).length() > 0) bar.addView(action("Retry", R.drawable.ic_retry, v -> retry(it.entry)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         if (it.cards > 0) bar.addView(action(it.kept ? "Kept" : "Keep", R.drawable.ic_keep, v -> { it.kept = !it.kept; CardStore.keep(ui.c, it.path, it.kept); drawRows(); }), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         if (!it.url.isEmpty()) bar.addView(action("Open", R.drawable.ic_open, v -> openLink(it.url)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         String shared = it.url.isEmpty() ? it.title : it.title + "\n" + it.url;

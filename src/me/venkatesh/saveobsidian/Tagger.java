@@ -17,13 +17,22 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Background work: tag untagged links, then embed whatever has no vector yet. Blocking; runs inside BackgroundJob. */
 final class Tagger {
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
+    /** When the current run began, and whether a capture arrived while it ran (then it goes round again). A run silent for 20 minutes is taken as hung and replaced. */
+    private static volatile long began;
+    private static volatile boolean again;
     /** Set when Android stops the job: the loops end after the call in flight instead of working on unseen. */
     static volatile boolean halt;
 
     /** Provider and inbox errors end the run and are kept in prefs for Settings; the next job retries. */
     static void run(Context c) {
         String key = Model.key(c);
-        if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty() || !RUNNING.compareAndSet(false, true)) return;
+        if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
+        if (!RUNNING.compareAndSet(false, true)) {
+            if (System.currentTimeMillis() - began < 20 * 60000L) { again = true; return; } // working: it will look again when done
+            // a hung call held the lock: carry on regardless, so processing never stays stuck
+        }
+        began = System.currentTimeMillis();
+        again = false;
         halt = false;
         String problem = "";
         try {
@@ -50,6 +59,7 @@ final class Tagger {
             c.getSharedPreferences("capture", 0).edit().putString("aiProblem", problem).apply();
             RUNNING.set(false);
         }
+        if (again && !halt) run(c); // a capture arrived while this run was busy
     }
 
     private static void tag(Context c, String key) throws Exception {
@@ -61,7 +71,7 @@ final class Tagger {
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
             for (int i = all.size() - 1; i >= 0 && next == null; i--) {
                 InboxFile.Entry e = all.get(i);
-                boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty(); // a three-word note needs no summary
+                boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty() && !Ingest.ready(c); // a three-word note needs no summary; with processing on, links are tagged by the ingest call itself
                 if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title) || stale(c, e)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
             }
             if (next == null) return;
@@ -103,7 +113,7 @@ final class Tagger {
         return "article";
     }
 
-    private static String notesHash(InboxFile.Entry e) { return Long.toHexString(Index.key(e.why.trim() + "\n" + e.ideas.trim())); }
+    static String notesHash(InboxFile.Entry e) { return Long.toHexString(Index.key(e.why.trim() + "\n" + e.ideas.trim())); }
 
     /** Tagged before you wrote a Why or Idea (or changed it since): summarise once more so the summary follows your instructions. */
     static boolean stale(Context c, InboxFile.Entry e) {

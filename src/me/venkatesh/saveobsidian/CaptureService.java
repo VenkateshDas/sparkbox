@@ -322,7 +322,7 @@ public class CaptureService extends Service {
             getSystemService(NotificationManager.class).cancel(file.getName().hashCode());
             InboxWidget.refresh(this);
             sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
-            if (!duplicate) BackgroundJob.schedule(this);
+            if (!duplicate) BackgroundJob.now(this);
             openEntry = duplicate ? null : entry;
             if (!duplicate) Usage.hit(this, "capture");
             if (duplicate) stage("Already in inbox", label.isEmpty() ? "This is already in " + name : label, "Seen", 100);
