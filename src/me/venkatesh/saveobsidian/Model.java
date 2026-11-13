@@ -170,9 +170,20 @@ final class Model {
         if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
         if (schema != null) {
             request.put("response_format", new JSONObject().put("type", "json_schema").put("json_schema", new JSONObject().put("name", schemaName).put("strict", true).put("schema", schema)));
-            request.put("provider", new JSONObject().put("require_parameters", true));
-        } else if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
-        JSONObject choice = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0);
+            request.put("provider", new JSONObject().put("require_parameters", true).put("sort", "throughput")); // the fastest endpoint that supports the schema
+        } else {
+            if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
+            if (json || noReasoning) request.put("provider", new JSONObject().put("sort", "throughput"));
+        }
+        long began = System.currentTimeMillis();
+        String body = post("chat/completions", key, request, schema != null || json ? 90000 : 120000);
+        JSONObject whole = new JSONObject(body);
+        JSONObject usage = whole.optJSONObject("usage");
+        JSONObject details = usage == null ? null : usage.optJSONObject("completion_tokens_details");
+        android.util.Log.i("Sparkbox", "model " + model + " " + (System.currentTimeMillis() - began) + " ms, prompt " + (usage == null ? "?" : usage.optInt("prompt_tokens")) + " tokens, answer "
+            + (usage == null ? "?" : usage.optInt("completion_tokens")) + " tokens (reasoning " + (details == null ? "?" : details.optInt("reasoning_tokens")) + "), max " + maxTokens
+            + ", provider " + whole.optString("provider", "?") + ", structured " + (schema != null) + ", json " + json + ", lean " + noReasoning);
+        JSONObject choice = whole.getJSONArray("choices").getJSONObject(0);
         JSONObject message = choice.getJSONObject("message");
         String content = message.isNull("content") ? "" : message.optString("content", "");
         if (content.trim().isEmpty()) {
@@ -277,7 +288,8 @@ final class Model {
                 throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : why.isEmpty() ? "" : ": " + why));
             } catch (Transient | java.net.SocketException | java.net.SocketTimeoutException | java.io.EOFException | javax.net.ssl.SSLException | java.net.UnknownHostException again) {
                 last = again;
-                if (attempt >= 2 && !Net.offline(again)) break; // other trouble gets three tries
+                android.util.Log.i("Sparkbox", "model call attempt " + (attempt + 1) + " failed: " + again);
+                if (!Net.offline(again) && (attempt >= 2 || (again instanceof java.net.SocketTimeoutException && attempt >= 1))) break; // other trouble gets three tries, a slow answer only one more
             } finally { connection.disconnect(); }
         }
         if (last != null && Net.offline(last)) throw new Net.Offline("Smart tags paused: no connection to OpenRouter (" + last.getMessage() + ")");
