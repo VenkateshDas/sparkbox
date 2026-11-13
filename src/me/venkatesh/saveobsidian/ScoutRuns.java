@@ -46,6 +46,8 @@ final class ScoutRuns {
         volatile String status = "Starting…", live = "";
         /** The message just sent, shown at once; cleared when the agent has stored it (building the agent can take seconds: MCP servers connect first). */
         volatile String sent;
+        /** How many user messages the log held when the run began: the echo shows only while the log still has no newer one. */
+        int usersAtStart;
         volatile Approval pending;
         volatile boolean done;
         Run(String file) { this.file = file; }
@@ -90,6 +92,7 @@ final class ScoutRuns {
         final Context c = context.getApplicationContext();
         final Run run = new Run(file);
         run.sent = text == null ? null : text.startsWith("/research ") ? text.substring(10).trim() : text;
+        try { for (Chat.Row r : Chat.rows(session(c, file).context())) if (r.kind.equals("user")) run.usersAtStart++; } catch (java.io.IOException unreadable) { }
         runs.put(file, run);
         ScoutService.sync(c);
         new Thread(() -> execute(c, run, text, again, research)).start();

@@ -144,8 +144,9 @@ final class AskScreen extends Screen {
         if (rows.isEmpty() && run == null) intro();
         for (Chat.Row r : rows) items.add(r.kind.equals("user") ? new Question(r.text) : r.kind.equals("step") ? new Step(r.text) : answerItem(r.text));
         if (run != null) {
-            boolean stored = !rows.isEmpty() && rows.get(rows.size() - 1).kind.equals("user") && rows.get(rows.size() - 1).text.equals(run.sent);
-            if (run.sent != null && !stored) items.add(new Question(run.sent)); // the instant echo, until the log has the message
+            int users = 0;
+            for (Chat.Row r : rows) if (r.kind.equals("user")) users++;
+            if (run.sent != null && users <= run.usersAtStart) items.add(new Question(run.sent)); // the instant echo, only until the log has the message
             if (run.pending != null) items.add(new Approval(run.pending.title, run.pending.detail));
             view.running(true);
             view.status(run.pending != null ? "Waiting for your OK" : run.status);
