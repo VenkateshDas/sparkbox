@@ -47,6 +47,18 @@ final class CaptureMapScreen extends Screen {
     }
 
     /** One row: name, a count line from the graph, a New badge, and a chevron. Opens the note when it exists. */
+    /** The same rows as Compose navigation rows. */
+    static java.util.List<Nav> navs(VaultStore.Snap snap, List<String[]> rows, MainActivity host) {
+        java.util.List<Nav> out = new java.util.ArrayList<>();
+        for (String[] r : rows) {
+            Vault.Note to = snap == null ? null : snap.graph.resolve(r[1]);
+            int others = to == null ? 0 : Math.max(0, snap.graph.in(to).size() - 1);
+            String kind = r[0].equals("Topics") ? "Topic" : r[0].equals("People") ? "Person" : "Entity";
+            out.add(new Nav(r[1], kind + (to == null ? "" : ", " + others + (others == 1 ? " other source" : " other sources")), "", r[2].equals("new"), to == null ? null : () -> host.openNote(to.path)));
+        }
+        return out;
+    }
+
     static View line(Ui ui, VaultStore.Snap snap, String[] r, MainActivity host) {
         Vault.Note to = snap == null ? null : snap.graph.resolve(r[1]);
         LinearLayout row = new LinearLayout(ui.c);
