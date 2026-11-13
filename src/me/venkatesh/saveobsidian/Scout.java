@@ -45,8 +45,14 @@ final class Scout {
     private static List<String> paths(VaultStore.Snap snap) { List<String> out = new ArrayList<>(); for (Vault.Note n : snap.graph.notes) out.add(n.path); return out; }
 
     /** The prompt in named parts: Scout's own rules, the skills index, then the user's standing notes (Knowledge/Scout.md) if they wrote any. */
-    static String system(Context c, VaultStore.Snap snap) {
+    static final String RESEARCH = "RESEARCH MODE: the user wants a thorough investigation, not a quick answer. Work like this: split the question into the parts that need answering; search the notes and, where they fall short, the outside tools, "
+        + "with several differently worded queries; read the best sources in full rather than trusting snippets; cross-check important claims between at least two sources when you can; note where sources disagree and what you could not find. "
+        + "Stop when more searching would not change the answer. Finish with: a short summary, the findings with a citation after each claim (notes as [[path|Title]], web pages as their URL), then open questions or gaps. "
+        + "Cite only what you actually opened or saw in a tool result in this conversation.";
+
+    static String system(Context c, VaultStore.Snap snap, boolean research) {
         StringBuilder s = new StringBuilder(SYSTEM);
+        if (research) s.append("\n\n").append(RESEARCH);
         String skills = Skills.block(Skills.index(paths(snap), reader(c, snap)));
         if (!skills.isEmpty()) s.append("\n\n").append(skills);
         String own = reader(c, snap).apply("Knowledge/Scout.md");
@@ -85,6 +91,21 @@ final class Scout {
         return out;
     }
 
+    static final String CHECK = "[check] ";
+
+    /**
+     * After an answer: citations that appear in nothing the run read (tool results and the user's messages) are made up or misremembered. Returns the one
+     * correction message to send, or null when every citation checks out.
+     */
+    static String check(Agent a, String answer) {
+        StringBuilder evidence = new StringBuilder();
+        for (JSONObject m : a.messages()) if (m.optString("role").equals("tool") || m.optString("role").equals("user")) evidence.append(m.optString("content")).append('\n');
+        List<String> bad = Cites.unseen(answer, evidence.toString());
+        if (bad.isEmpty()) return null;
+        return CHECK + "These citations in your answer do not appear in anything you read in this conversation: " + String.join(", ", bad)
+            + ". Open them with a tool first, or remove them. Then give the corrected answer in full.";
+    }
+
     static File dir(Context c) { return new File(c.getFilesDir(), "sessions"); }
 
     /** The conversation in progress: the stored file named in preferences, or a new one. */
@@ -100,15 +121,16 @@ final class Scout {
     static void forget(Context c) { c.getSharedPreferences("capture", 0).edit().remove("scoutSession").apply(); }
 
     /** A fresh agent on this session: new snapshot, tools, and a Cancel the caller keeps. */
-    static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel, java.util.function.Consumer<String> warn) {
+    static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel, java.util.function.Consumer<String> warn, boolean research) {
         List<Tool> tools = new ArrayList<>(VaultTools.create(new Files(c, snap), confirm, VaultStore.ROOTS));
         tools.add(inbox(c));
         String problems = Mcp.connectAll(servers(c), confirm, tools, cancel); // servers that fail are reported, the others still work
         if (!problems.isEmpty()) warn.accept("Some tool servers did not start:\n" + problems.trim());
-        Agent a = new Agent(provider(c, key), Ask.model(c), system(c, snap), tools, cancel);
+        Agent a = new Agent(provider(c, key), Ask.model(c), system(c, snap, research), tools, cancel);
         a.attach(session);
         if (!Ask.model(c).equals(a.model())) a.setModel(Ask.model(c));
-        a.maxTurns = 12;
+        a.maxTurns = research ? 30 : 12; // research reads many sources; the last turn still has no tools and asks for the answer
+        if (research) a.maxTokens = 3000;
         a.hooks = new Compact(provider(c, key), Ask.model(c), session, WINDOW);
         return a;
     }

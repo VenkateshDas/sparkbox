@@ -78,7 +78,7 @@ final class AskScreen extends Screen {
             hubs.sort((a, b) -> snap.graph.in(b).size() - snap.graph.in(a).size());
             List<String> tries = new ArrayList<>();
             for (Vault.Note n : hubs.subList(0, Math.min(3, hubs.size()))) tries.add("What do my notes say about " + n.title + "?");
-            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. You confirm every change. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
+            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. You confirm every change. Start a message with /research for a thorough, multi-source investigation. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
         }
         publish();
     }
@@ -115,12 +115,16 @@ final class AskScreen extends Screen {
             Limits.interactive(true);
             try {
                 if (session == null) session = Scout.session(ui.c, false);
-                Agent a = agent = Scout.agent(ui.c, snap, key, session, (title, detail) -> approve(title, detail, cancel), cancel, msg -> main.post(() -> Toast.makeText(ui.c, msg, Toast.LENGTH_LONG).show()));
+                final boolean research = question.startsWith("/research ");
+                final String text = research ? question.substring(10).trim() : question;
+                Agent a = agent = Scout.agent(ui.c, snap, key, session, (title, detail) -> approve(title, detail, cancel), cancel, msg -> main.post(() -> Toast.makeText(ui.c, msg, Toast.LENGTH_LONG).show()), research);
                 a.subscribe((type, data) -> events(type, data));
                 Usage.hit(ui.c, "ask");
                 JSONObject last;
-                if (again) { try { last = a.resume(); } catch (IllegalStateException nothing) { last = a.prompt(Scout.expand(ui.c, snap, question)); } } else last = a.prompt(Scout.expand(ui.c, snap, question));
+                if (again) { try { last = a.resume(); } catch (IllegalStateException nothing) { last = a.prompt(Scout.expand(ui.c, snap, text)); } } else last = a.prompt(Scout.expand(ui.c, snap, text));
                 started = true;
+                String fix = last.optString("stopReason").equals("stop") && !cancel.stopped() ? Scout.check(a, last.optString("content")) : null; // one correction pass for citations the run never saw
+                if (fix != null) { main.post(() -> view.status("Checking sources…")); last = a.prompt(fix); }
                 if ("error".equals(last.optString("stopReason"))) throw new Exception(last.optString("errorMessage"));
                 answer = last.optString("content", "");
             } catch (Exception e) { String m = String.valueOf(e.getMessage()).replace("Smart tags paused: ", ""); String k = Failures.kind(m); error = k.equals(Failures.OTHER) || k.equals(Failures.CONFLICT) ? m : Failures.recovery(k, m).replace("It is tried again by itself when you are back online; Retry tries now.", "Try again when you are online."); }
@@ -222,9 +226,11 @@ final class AskScreen extends Screen {
             if (saved.isEmpty()) return;
             started = true;
             items.clear();
-            for (JSONObject m : saved) {
+            for (int i = 0; i < saved.size(); i++) {
+                JSONObject m = saved.get(i);
                 if (m.optBoolean("summary")) continue;
-                if (m.optString("role").equals("user")) items.add(new Question(m.optString("content")));
+                if (i + 1 < saved.size() && saved.get(i + 1).optString("content").startsWith(Scout.CHECK)) continue; // the answer that was corrected
+                if (m.optString("role").equals("user")) { if (!m.optString("content").startsWith(Scout.CHECK)) items.add(new Question(m.optString("content"))); }
                 else if (m.optString("role").equals("assistant") && m.optJSONArray("tool_calls") == null && !m.optString("content").isEmpty() && m.optString("stopReason", "stop").equals("stop")) items.add(answerItem(m.optString("content")));
             }
             publish();

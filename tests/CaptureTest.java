@@ -210,6 +210,10 @@ public class CaptureTest {
         check(r.text.startsWith("A [1] and B [2], again [1]. Table \\| [3] ![[img.png]]"));
         check(r.sources.size() == 3 && r.sources.get(0)[1].equals("Knowledge/Topics/X") && r.sources.get(1)[2].equals("Source S") && r.sources.get(2)[1].equals("Knowledge/Topics/Y"));
         check(Cites.number("No citations here.").sources.isEmpty() && Cites.number("No citations here.").text.equals("No citations here."));
+        String seen = "Knowledge/Topics/X.md\n- [[Knowledge/Sources/S|Source S]]\nAgents.md\nhttps://example.com/a?x=1";
+        check(Cites.unseen("A [[Knowledge/Topics/X|X]], B [[Knowledge/Sources/S|S]], C [[Knowledge/Topics/Agents|Agents]]. See https://example.com/a?x=1.", seen).isEmpty());
+        check(Cites.unseen("A [[Knowledge/Topics/Ghost|G]] and [[Knowledge/Topics/Ghost|G]] and https://made.up/page, https://example.com/a?x=1/", seen).toString().equals("[Knowledge/Topics/Ghost, https://made.up/page]"));
+        check(Cites.unseen("No citations ![[img.png]]", seen).isEmpty());
         check(Cites.notInKnowledge("Not in your knowledge base. Closest: [[A|A]]") && Cites.notInKnowledge("  **Not in your knowledge base**") && !Cites.notInKnowledge("It is not in your knowledge base maybe"));
     }
 
