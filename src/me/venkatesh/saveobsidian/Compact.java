@@ -34,10 +34,16 @@ public final class Compact implements Agent.Hooks {
 
     public Compact(Agent.Provider provider, String model, Session session, int window) { this.provider = provider; this.model = model; this.session = session; this.window = window; }
 
-    @Override public void prepareNextTurn(Agent agent) { if (estimate(agent.messages()) > window - reserve) run(agent); }
+    @Override public void prepareNextTurn(Agent agent) { if (estimate(agent.messages()) > window - reserve) run(agent, "threshold", null); }
 
     /** Provider refused the request as too long: compact once, then the agent retries. */
-    @Override public boolean onOverflow(Agent agent) { return run(agent); }
+    @Override public boolean onOverflow(Agent agent) { return run(agent, "overflow", null); }
+
+    /** The owner asked for it (optionally with what the summary should focus on). Not while the agent is running. */
+    public boolean now(Agent agent, String instructions) {
+        if (agent.running()) throw new IllegalStateException("Agent is running");
+        return run(agent, "manual", instructions);
+    }
 
     public static boolean overflow(String message) { return message != null && OVERFLOW.matcher(message).find(); }
 
@@ -77,10 +83,20 @@ public final class Compact implements Agent.Hooks {
 
     // ---- summary ----
 
-    private boolean run(Agent agent) {
+    private boolean run(Agent agent, String reason, String instructions) {
+        agent.emit("compaction_start", wrap("reason", reason));
+        String why = compact(agent, instructions);
+        try { agent.emit("compaction_end", new JSONObject().put("ok", why == null).put("why", why == null ? "" : why)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        return why == null;
+    }
+
+    private static JSONObject wrap(String key, Object v) { try { return new JSONObject().put(key, v); } catch (Exception impossible) { throw new IllegalStateException(impossible); } }
+
+    /** Null when the conversation was compacted; otherwise why it was not. */
+    private String compact(Agent agent, String instructions) {
         List<JSONObject> msgs = agent.messages();
         int cut = cutIndex(msgs, keepRecent);
-        if (cut <= 0 || msgs.get(cut).optString("entryId").isEmpty()) return false;
+        if (cut <= 0 || msgs.get(cut).optString("entryId").isEmpty()) return "nothing old enough to cut";
         boolean hasPrevious = msgs.get(0).optBoolean("summary");
         String previous = hasPrevious ? msgs.get(0).optString("content").substring(PREFIX.length()) : null;
         List<JSONObject> old = new ArrayList<>(msgs.subList(hasPrevious ? 1 : 0, cut));
@@ -88,15 +104,15 @@ public final class Compact implements Agent.Hooks {
         try {
             JSONObject request = new JSONObject().put("model", model).put("max_tokens", summaryTokens).put("messages", new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", SYSTEM))
-                .put(new JSONObject().put("role", "user").put("content", prompt(previous, old))));
+                .put(new JSONObject().put("role", "user").put("content", prompt(previous, old) + (instructions == null || instructions.trim().isEmpty() ? "" : "\n\nThe user asks the summary to focus on: " + instructions.trim()))));
             JSONObject reply = provider.stream(request, text -> { }, agent.cancel());
             String summary = reply.optString("content", "").trim();
-            if (summary.isEmpty() || reply.optString("finish_reason").equals("length")) return false; // a cut-off summary is worse than none
+            if (summary.isEmpty() || reply.optString("finish_reason").equals("length")) return "the summary came back empty or cut off"; // a cut-off summary is worse than none
             session.appendUsage("compaction", reply.optJSONObject("usage"));
             session.appendCompaction(summary + files(previous, old), msgs.get(cut).optString("entryId"), before);
             agent.setMessages(session.context());
-            return true;
-        } catch (Exception failed) { return false; } // keep going uncompacted; the provider's own overflow error is the backstop
+            return null;
+        } catch (Exception failed) { return "the summary call failed: " + failed.getMessage(); } // keep going uncompacted; the provider's own overflow error is the backstop
     }
 
     public static String prompt(String previous, List<JSONObject> old) {

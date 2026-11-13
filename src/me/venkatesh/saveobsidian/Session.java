@@ -32,6 +32,7 @@ public final class Session {
     private Session(File file, String id) { this.file = file; this.id = id; }
 
     public String id() { return id; }
+    public String exportPath() { return file.getPath(); }
 
     /** Opens the file, or starts a new session in it. */
     public static synchronized Session open(File file) throws IOException {
@@ -102,6 +103,69 @@ public final class Session {
     public void appendCustom(String kind, JSONObject data) throws IOException {
         try { append(new JSONObject().put("type", "custom").put("kind", kind).put("data", data)); }
         catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    public void appendModelChange(String model) throws IOException {
+        try { append(new JSONObject().put("type", "model_change").put("model", model)); } catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** Names the conversation (shown in the session list). */
+    public void setName(String name) throws IOException {
+        try { append(new JSONObject().put("type", "session_info").put("name", name)); } catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    private synchronized String last(String type, String key) {
+        for (int i = entries.size() - 1; i >= 0; i--) if (entries.get(i).optString("type").equals(type)) return entries.get(i).optString(key);
+        return null;
+    }
+
+    /** The model chosen last in this conversation, or null. */
+    public String model() { return last("model_change", "model"); }
+    public String name() { return last("session_info", "name"); }
+
+    /** Counts for a session screen: messages by role, tool calls, compactions, spend, file size. */
+    public synchronized JSONObject stats() {
+        int user = 0, assistant = 0, tools = 0, compactions = 0;
+        for (JSONObject e : entries) {
+            String t = e.optString("type");
+            if (t.equals("compaction")) compactions++;
+            if (!t.equals("message")) continue;
+            JSONObject m = e.optJSONObject("message");
+            String role = m == null ? "" : m.optString("role");
+            if (role.equals("user")) user++; else if (role.equals("assistant")) assistant++; else if (role.equals("tool")) tools++;
+        }
+        try { return new JSONObject().put("user", user).put("assistant", assistant).put("toolResults", tools).put("compactions", compactions).put("totals", totals()).put("bytes", file.length()); }
+        catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+    }
+
+    /** A copy of the raw JSONL (every entry, compacted ones included) for backup or sharing. */
+    public void exportTo(File target) throws IOException { Files.copy(file.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING); }
+
+    /** A new, empty session file in dir. */
+    public static Session create(File dir) throws IOException {
+        dir.mkdirs();
+        return open(new File(dir, System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 8) + ".jsonl"));
+    }
+
+    /** The sessions in dir, newest first: {file, id, name, preview (first user message), messages, modified}. Reads each file whole; fine for tens of conversations. */
+    public static List<JSONObject> list(File dir) {
+        List<JSONObject> out = new ArrayList<>();
+        File[] files = dir.listFiles((d, n) -> n.endsWith(".jsonl"));
+        if (files == null) return out;
+        java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        for (File f : files) {
+            if (f.length() == 0) continue;
+            try {
+                Session s = open(f);
+                int messages = 0;
+                String preview = "";
+                for (JSONObject e : s.entries) if (e.optString("type").equals("message")) { messages++; JSONObject m = e.getJSONObject("message"); if (preview.isEmpty() && m.optString("role").equals("user")) preview = m.optString("content"); }
+                String name = s.name();
+                out.add(new JSONObject().put("file", f.getPath()).put("id", s.id).put("name", name == null ? "" : name)
+                    .put("preview", preview.length() > 80 ? preview.substring(0, 80) : preview).put("messages", messages).put("modified", f.lastModified()));
+            } catch (Exception skip) { } // not a session file
+        }
+        return out;
     }
 
     /** The messages the next request is built from: the active branch after the last compaction (its summary first), minus omitted ones. */

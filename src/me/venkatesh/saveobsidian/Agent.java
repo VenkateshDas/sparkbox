@@ -21,7 +21,11 @@ public final class Agent {
     /** One streamed chat completion. Returns {content, tool_calls?, finish_reason?, usage?}. Model.provider(key) is the OpenRouter one. */
     public interface Provider { JSONObject stream(JSONObject request, Consumer<String> live, Cancel cancel) throws Exception; }
 
-    /** Events: agent_start, turn_start, message_start, message_update{text}, message_end, tool_execution_start, tool_execution_end, retry, turn_end, agent_end. */
+    /**
+     * Events: agent_start, turn_start, message_start, message_update{text}, message_end{message}, tool_execution_start, tool_execution_end, retry,
+     * turn_end, agent_end, queue_update{steering,followUp}, compaction_start{reason}, compaction_end{ok}, session_error, and last agent_settled{aborted}:
+     * agent_end is not "idle" (a listener may not start a new prompt yet); agent_settled is.
+     */
     public interface Listener { void on(String type, JSONObject data); }
 
     /** Extension points of Pi's loop as plain Java (no dynamic loading on Android). */
@@ -44,18 +48,24 @@ public final class Agent {
 
     private static final int PARALLEL = 6;
     private static final String TRUNCATED = "The response hit the token limit, so this call's arguments may be cut off and it was not run. Call it again with complete arguments.";
+    private static final String INTERRUPTED = "Interrupted: the app stopped while this tool was running, so it did not finish. Check the notes before repeating anything that changes them.";
 
     private final Provider provider;
-    private final String model;
+    private volatile String model;
     private final String system;
     private final List<Tool> tools;
     private final List<JSONObject> messages = new ArrayList<>();
-    private final Cancel cancel;
-    public Hooks hooks = new Hooks() { };
-    /** When set, every message is appended to it as it happens (attach(session) loads what is already there). */
+    private volatile Cancel cancel;
+    private boolean abortedLast;
     private Session session;
-    public Listener listener = (type, data) -> { };
+    private final Object lock = new Object(); // guards running and the two queues
+    private boolean running;
+    private final List<String> steering = new ArrayList<>(), followUps = new ArrayList<>();
+    private final java.util.concurrent.CopyOnWriteArrayList<Listener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    public Hooks hooks = new Hooks() { };
     public int maxTokens = 1800, maxTurns = 8;
+    /** Queue modes (Pi's steeringMode / followUpMode): false delivers one queued message per turn, true delivers all of them. */
+    public boolean steerAll, followUpAll;
     /** Pi's agent-level retry: 3 retries, doubling from 2 s, capped at 60 s. Tests set base to 0. */
     public int retries = 3;
     public long retryBaseMs = 2000, retryMaxMs = 60_000;
@@ -66,44 +76,197 @@ public final class Agent {
 
     public List<JSONObject> messages() { return messages; }
     public Cancel cancel() { return cancel; }
+    public String model() { return model; }
+    public boolean running() { synchronized (lock) { return running; } }
 
-    /** Continues a stored conversation: the agent's messages become the session's context, and new ones are appended to it. */
-    public void attach(Session s) { session = s; setMessages(s.context()); }
+    /** Listens to events (from the thread that runs the agent). Returns the way to stop listening. */
+    public Runnable subscribe(Listener l) { listeners.add(l); return () -> listeners.remove(l); }
+
+    /** Continues a stored conversation: messages and model come from the session, and new messages are appended to it. Not while running. */
+    public void attach(Session s) {
+        synchronized (lock) { if (running) throw new IllegalStateException("Agent is running"); }
+        session = s;
+        setMessages(s.context());
+        if (s.model() != null) model = s.model();
+    }
 
     /** Replaces the transcript the next request is built from (after a compaction). */
     public void setMessages(List<JSONObject> m) { messages.clear(); messages.addAll(m); }
+
+    /** Switches model for the next request; a stored session remembers it. */
+    public void setModel(String m) {
+        model = m;
+        if (session != null) try { session.appendModelChange(m); } catch (java.io.IOException e) { emit("session_error", wrap("error", String.valueOf(e.getMessage()))); }
+    }
 
     private void add(JSONObject m) {
         messages.add(m);
         if (session != null) try { session.appendMessage(m); } catch (java.io.IOException e) { emit("session_error", wrap("error", String.valueOf(e.getMessage()))); } // the run goes on; only resume is lost
     }
 
-    /** Adds the user's message, runs turns until the model stops asking for tools, returns the last assistant message. */
+    // ---- queues and abort (agent.ts) ----
+
+    /** Delivered after the current turn's tool calls finish, before the next model request. Callable from any thread, also while idle (then it goes in with the next prompt). */
+    public void steer(String text) { synchronized (lock) { steering.add(text); } queueUpdate(); }
+
+    /** Delivered only when the agent would otherwise stop. */
+    public void followUp(String text) { synchronized (lock) { followUps.add(text); } queueUpdate(); }
+
+    /** Removes everything queued and returns it (steering first), so the UI can put the text back in the input box. */
+    public List<String> clearQueue() {
+        List<String> out;
+        synchronized (lock) { out = new ArrayList<>(steering); out.addAll(followUps); steering.clear(); followUps.clear(); }
+        queueUpdate();
+        return out;
+    }
+
+    /** Stops the running prompt: the stream is cut, waiting tool calls are told "Operation aborted", the run ends with an aborted message. Queued messages stay queued. */
+    public void abort() { if (running()) cancel.stop(); }
+
+    /** Blocks until the agent is idle. */
+    public void waitForIdle() {
+        synchronized (lock) { while (running) try { lock.wait(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; } }
+    }
+
+    /** Stops any run and stops all listeners. */
+    public void dispose() { abort(); listeners.clear(); }
+
+    public JSONObject state() {
+        synchronized (lock) {
+            try { return new JSONObject().put("running", running).put("model", model).put("messages", messages.size()).put("steering", steering.size()).put("followUp", followUps.size()); }
+            catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        }
+    }
+
+    private List<String> drain(List<String> queue, boolean all) {
+        List<String> out = new ArrayList<>();
+        synchronized (lock) {
+            if (queue.isEmpty()) return out;
+            if (all) { out.addAll(queue); queue.clear(); } else out.add(queue.remove(0));
+        }
+        queueUpdate();
+        return out;
+    }
+
+    private void queueUpdate() {
+        int a, b;
+        synchronized (lock) { a = steering.size(); b = followUps.size(); }
+        try { emit("queue_update", new JSONObject().put("steering", a).put("followUp", b)); } catch (Exception ignore) { }
+    }
+
+    // ---- running ----
+
+    /** Adds the user's message and runs until the model stops asking for tools and nothing is queued. Returns the last assistant message. Blocks; run it off the UI thread. */
     public JSONObject prompt(String text) {
-        try { add(new JSONObject().put("role", "user").put("content", text)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        begin();
+        JSONObject last = null;
+        try {
+            try { add(new JSONObject().put("role", "user").put("content", text)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+            last = loop();
+            return last;
+        } finally { finish(last); }
+    }
+
+    /**
+     * Carries on from the stored transcript (Pi's continue()): after the app was killed mid-run, or to retry after an error or a stop. Tool calls that never got a
+     * result are answered "Interrupted" and not run again. A transcript that ends in a finished answer needs something queued.
+     */
+    public JSONObject resume() {
+        begin();
+        JSONObject last = null;
+        try {
+            if (messages.isEmpty()) throw new IllegalStateException("Nothing to continue");
+            answerInterruptedCalls();
+            JSONObject end = messages.get(messages.size() - 1);
+            String stop = end.optString("stopReason");
+            if (end.optString("role").equals("assistant") && !(stop.equals("error") || stop.equals("aborted") || stop.equals("max-steps"))) {
+                List<String> next = drain(steering, steerAll);
+                if (next.isEmpty()) next = drain(followUps, followUpAll);
+                if (next.isEmpty()) throw new IllegalStateException("Cannot continue after a finished answer; queue a message first");
+                for (String t : next) try { add(new JSONObject().put("role", "user").put("content", t)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+            }
+            last = loop();
+            return last;
+        } finally { finish(last); }
+    }
+
+    private void begin() {
+        synchronized (lock) {
+            if (running) throw new IllegalStateException("Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.");
+            running = true;
+            if (abortedLast) { cancel = new Cancel(); abortedLast = false; } // an abort ends one run, not the agent
+        }
+    }
+
+    private void finish(JSONObject last) {
+        synchronized (lock) { running = false; lock.notifyAll(); }
+        try { emit("agent_settled", new JSONObject().put("aborted", last != null && last.optString("stopReason").equals("aborted"))); } catch (Exception ignore) { }
+    }
+
+    /** Pi's runLoop: the inner loop runs turns while there are tool calls or steering; the outer loop continues when a follow-up arrives after the agent would stop. */
+    private JSONObject loop() {
         emit("agent_start", new JSONObject());
         JSONObject last = null;
-        boolean done = false;
-        for (int turn = 0; turn < maxTurns && !done; turn++) {
-            if (cancel.stopped()) { last = failed("aborted", "Stopped"); add(last); break; }
-            hooks.prepareNextTurn(this);
-            emit("turn_start", new JSONObject());
-            last = streamAssistant();
-            add(last);
-            emit("message_end", wrap("message", last));
-            String stop = last.optString("stopReason");
-            JSONArray calls = last.optJSONArray("tool_calls");
-            if (stop.equals("error") || stop.equals("aborted") || calls == null || calls.length() == 0) { emit("turn_end", new JSONObject()); break; }
-            List<JSONObject> results = execute(calls, stop.equals("length"));
-            for (JSONObject r : results) add(r);
-            emit("turn_end", new JSONObject());
-            boolean allTerminate = true;
-            for (JSONObject r : results) allTerminate &= r.optBoolean("terminate");
-            if (allTerminate || !hooks.finishTurn(results)) done = true;
-            else if (turn == maxTurns - 1) { last = failed("max-steps", "Stopped after " + maxTurns + " steps"); last.remove("errorMessage"); add(last); }
+        int turns = 0;
+        List<String> pending = drain(steering, steerAll); // typed while idle or before the run started
+        outer:
+        while (true) {
+            boolean more = true;
+            while (more || !pending.isEmpty()) {
+                if (cancel.stopped()) { last = failed("aborted", "Stopped"); abortedLast = true; add(last); break outer; }
+                if (turns++ >= maxTurns) { last = failed("max-steps", "Stopped after " + maxTurns + " steps"); last.remove("errorMessage"); add(last); break outer; }
+                hooks.prepareNextTurn(this);
+                if (pending.isEmpty()) pending = drain(steering, steerAll); // picked up while compaction ran
+                emit("turn_start", new JSONObject());
+                for (String t : pending) {
+                    JSONObject u = new JSONObject();
+                    try { u.put("role", "user").put("content", t); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+                    add(u);
+                    emit("message_end", wrap("message", u));
+                }
+                pending = new ArrayList<>();
+                last = streamAssistant(turns == maxTurns);
+                add(last);
+                emit("message_end", wrap("message", last));
+                String stop = last.optString("stopReason");
+                JSONArray calls = last.optJSONArray("tool_calls");
+                if (stop.equals("aborted")) abortedLast = true;
+                if (stop.equals("error") || stop.equals("aborted")) { emit("turn_end", new JSONObject()); break outer; }
+                List<JSONObject> results = new ArrayList<>();
+                more = false;
+                if (calls != null && calls.length() > 0) {
+                    results = execute(calls, stop.equals("length"));
+                    boolean allTerminate = true;
+                    for (JSONObject r : results) { add(r); allTerminate &= r.optBoolean("terminate"); }
+                    more = !allTerminate;
+                }
+                emit("turn_end", new JSONObject());
+                if (!hooks.finishTurn(results)) break outer;
+                pending = cancel.stopped() ? new ArrayList<>() : drain(steering, steerAll); // after an abort, queued messages stay queued
+            }
+            pending = drain(followUps, followUpAll); // the agent would stop here
+            if (pending.isEmpty()) break;
         }
         emit("agent_end", new JSONObject());
         return last;
+    }
+
+    /** A kill can leave an assistant message whose tool calls have no results; the next request would be refused. Answer each with an error instead of running it again. */
+    private void answerInterruptedCalls() {
+        int at = -1;
+        for (int i = messages.size() - 1; i >= 0 && at < 0; i--) if (messages.get(i).optString("role").equals("assistant") && messages.get(i).has("tool_calls")) at = i;
+        if (at < 0) return;
+        java.util.Set<String> answered = new java.util.HashSet<>();
+        for (int i = at + 1; i < messages.size(); i++) if (messages.get(i).optString("role").equals("tool")) answered.add(messages.get(i).optString("tool_call_id"));
+        JSONArray calls = messages.get(at).optJSONArray("tool_calls");
+        try {
+            for (int i = 0; i < calls.length(); i++) {
+                JSONObject c = calls.getJSONObject(i);
+                if (answered.contains(c.optString("id"))) continue;
+                add(new JSONObject().put("role", "tool").put("tool_call_id", c.optString("id")).put("name", c.optJSONObject("function") == null ? "" : c.getJSONObject("function").optString("name"))
+                    .put("content", INTERRUPTED).put("isError", true).put("terminate", false).put("details", JSONObject.NULL));
+            }
+        } catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
 
     // ---- context ----
@@ -129,11 +292,14 @@ public final class Agent {
 
     // ---- model call (never throws) ----
 
-    private JSONObject streamAssistant() {
+    /** finalTurn: the step budget is used up, so this request has no tools and asks for the answer (what Ask did before: an empty reply helps nobody). */
+    private JSONObject streamAssistant(boolean finalTurn) {
         JSONObject request = new JSONObject();
         try {
-            request.put("model", model).put("max_tokens", maxTokens).put("messages", convertToLlm());
-            if (!tools.isEmpty()) { JSONArray specs = new JSONArray(); for (Tool t : tools) specs.put(t.spec()); request.put("tools", specs); }
+            JSONArray llm = convertToLlm();
+            if (finalTurn && !tools.isEmpty()) llm.put(new JSONObject().put("role", "user").put("content", "Answer now with what you have found."));
+            request.put("model", model).put("max_tokens", maxTokens).put("messages", llm);
+            if (!tools.isEmpty() && !finalTurn) { JSONArray specs = new JSONArray(); for (Tool t : tools) specs.put(t.spec()); request.put("tools", specs); }
             hooks.prepareRequest(request);
         } catch (Exception e) { return failed("error", String.valueOf(e.getMessage())); }
         emit("message_start", new JSONObject());
@@ -249,7 +415,7 @@ public final class Agent {
 
     // ---- events ----
 
-    private void emit(String type, JSONObject data) { try { listener.on(type, data); } catch (RuntimeException ignore) { } } // a listener must not break the run
+    void emit(String type, JSONObject data) { for (Listener l : listeners) try { l.on(type, data); } catch (RuntimeException ignore) { } } // a listener must not break the run
 
     private static JSONObject text(String t) { return wrap("text", t); }
 

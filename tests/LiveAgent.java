@@ -44,13 +44,15 @@ public final class LiveAgent {
 
     static Agent agent(Agent.Provider provider, String model, Cancel cancel) {
         Agent a = new Agent(provider, model, SYSTEM, Arrays.asList(search, read), cancel);
-        a.listener = (type, data) -> {
+        a.subscribe((type, data) -> {
             if (type.equals("tool_execution_start")) System.out.println("   tool> " + data.optString("name"));
             if (type.equals("tool_execution_end") && data.optBoolean("isError")) System.out.println("   tool error from " + data.optString("name"));
             if (type.equals("retry")) System.out.println("   retry " + data);
             if (type.equals("session_error")) { System.out.println("   PROBLEM session write failed: " + data); problems++; }
-        };
+            if (type.equals("compaction_end")) System.out.println("   compaction ok=" + data.optBoolean("ok") + " " + data.optString("why"));
+        });
         a.retryBaseMs = 4000; // free models rate-limit; be patient
+        a.hooks = new Agent.Hooks() { public void prepareRequest(JSONObject request) { if (System.getenv("EFFORT") != null) request.put("reasoning", new JSONObject().put("effort", System.getenv("EFFORT"))); // opt-in: the default run shows the harness as it is } };
         return a;
     }
 
@@ -86,7 +88,11 @@ public final class LiveAgent {
         c.attach(session);
         Compact compact = new Compact(provider, model, session, 1500);
         compact.reserve = 300; compact.keepRecent = 300;
-        c.hooks = compact;
+        c.hooks = new Agent.Hooks() { // reasoning effort like agent(), plus compaction
+            public void prepareRequest(JSONObject request) { if (System.getenv("EFFORT") != null) request.put("reasoning", new JSONObject().put("effort", System.getenv("EFFORT"))); // opt-in: the default run shows the harness as it is }
+            public void prepareNextTurn(Agent x) { compact.prepareNextTurn(x); }
+            public boolean onOverflow(Agent x) { return compact.onOverflow(x); }
+        };
         ask(c, "My name is Ada and I am planning a trip to Brittany in May. Write two sentences about what to see there.");
         ask(c, "Now write two sentences about food I should try, and mention my name.");
         ask(c, "Write two sentences about the weather in May.");
@@ -100,6 +106,28 @@ public final class LiveAgent {
         Agent resumed = agent(provider, model, new Cancel());
         resumed.attach(Session.open(file));
         ask(resumed, "What is my name, and which month am I traveling?");
+
+
+        System.out.println("\n== 4. follow-up queue: queued before the run, delivered after the first answer");
+        Agent q = agent(provider, model, new Cancel());
+        q.followUp("Now reply with the single word: done");
+        ask(q, "Reply with the single word: ready");
+        long users = 0;
+        for (JSONObject m : q.messages()) if (m.optString("role").equals("user")) users++;
+        System.out.println("   INFO user messages in transcript: " + users + " (2 expected)");
+        if (users != 2) { System.out.println("   PROBLEM follow-up was not delivered"); problems++; }
+
+        System.out.println("\n== 5. abort mid-stream over the real connection, then reuse the same agent");
+        Agent ab = new Agent(provider, model, "You are a helpful writer.", java.util.Collections.<Tool>emptyList(), new Cancel());
+        ab.maxTokens = 8000; // no tools: the model must write text, so there is a stream to cut
+        ab.subscribe((type, data) -> { if (type.equals("message_update") && data.optString("text").length() > 40) ab.abort(); });
+        long began = System.currentTimeMillis();
+        JSONObject stopped = ab.prompt("Write a 500 word essay about the history of Brittany.");
+        System.out.println("   stopReason: " + stopped.optString("stopReason") + " after " + (System.currentTimeMillis() - began) + " ms, running=" + ab.running());
+        if (!stopped.optString("stopReason").equals("aborted") || ab.running()) { System.out.println("   PROBLEM abort did not end the run"); problems++; }
+        JSONObject again = ab.prompt("Reply with the single word: back");
+        System.out.println("   after abort: " + again.optString("stopReason") + " / " + again.optString("content").replace('\n', ' '));
+        if (!again.optString("stopReason").equals("stop")) { System.out.println("   PROBLEM agent not reusable after abort"); problems++; }
 
         System.out.println(problems == 0 ? "\nLive run finished with no harness problems." : "\nLive run found " + problems + " problem(s).");
         System.exit(problems == 0 ? 0 : 1);

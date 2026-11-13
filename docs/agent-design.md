@@ -214,6 +214,7 @@ truncation and compaction scenarios: **M1-M3**. Classes go in the `pure` list in
 ## Milestones
 
 M1 status: built on branch `feat/agent-design` (`Agent`, `Tool`, `Validate`, `Truncate`, `tests/AgentTest.java`, `Model.provider`); not wired into the Ask screen yet.
+M3 status: built in plain Java (`Agent` queues/abort/settle/resume, `Compact.now`, `Session` list/name/stats/export, model memory). Not built here: the Android foreground-service runner (belongs with wiring the Ask screen). Dropped from Pi: prompt dispositions (`running()` tells the UI whether to prompt or steer). Added: the last allowed turn has no tools and asks for the answer (as Ask does today).
 M2 status: built (`Session`, `Compact`, `OpenRouter` stream extracted from `Model`, overflow retry, `context_edit`, usage totals). Live check: `scripts/live-agent.sh` (needs `OPENROUTER_API_KEY` in `.env`). Context-window table still deferred: `Compact` takes the window as a constructor argument until the Ask screen is wired.
 
 1. **Core:** `Agent` loop, tool contract + validation, `Truncate`, stop-reason/error contract, retry, `Provider` seam,

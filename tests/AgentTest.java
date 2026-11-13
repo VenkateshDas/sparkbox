@@ -71,10 +71,10 @@ final class AgentTest {
         Faux f = new Faux().then(say("hi"));
         Agent a = agent(f, new Cancel());
         List<String> events = Collections.synchronizedList(new ArrayList<>());
-        a.listener = (type, data) -> events.add(type);
+        a.subscribe((type, data) -> events.add(type));
         JSONObject last = a.prompt("hello");
         check(last.getString("content").equals("hi") && last.getString("stopReason").equals("stop"));
-        check(events.toString().equals("[agent_start, turn_start, message_start, message_update, message_end, turn_end, agent_end]"));
+        check(events.toString().equals("[agent_start, turn_start, message_start, message_update, message_end, turn_end, agent_end, agent_settled]"));
         check(f.requests.get(0).getJSONArray("messages").getJSONObject(0).getString("role").equals("system") && !f.requests.get(0).has("tools"));
 
         // tool call, result, answer; the model sees the tool result but none of the bookkeeping keys
@@ -120,7 +120,7 @@ final class AgentTest {
         f = new Faux().then(calls("slow", "{}", "quick", "{}"), say("ok"));
         a = agent(f, new Cancel(), slow, quick);
         List<String> ends = Collections.synchronizedList(new ArrayList<>());
-        a.listener = (type, data) -> { if (type.equals("tool_execution_end")) ends.add(data.optString("name")); };
+        a.subscribe((type, data) -> { if (type.equals("tool_execution_end")) ends.add(data.optString("name")); });
         a.prompt("go");
         check(ends.toString().equals("[quick, slow]") && a.messages().get(2).getString("content").equals("slow") && a.messages().get(3).getString("content").equals("quick"));
 
@@ -162,6 +162,12 @@ final class AgentTest {
         a = agent(f, new Cancel(), echo);
         a.maxTurns = 3;
         check(a.prompt("go").getString("stopReason").equals("max-steps"));
+        // the last allowed turn has no tools and asks for the answer, so a looping model still ends with text
+        f = new Faux().then(calls("echo", "{\"text\":\"1\"}"), say("best answer so far"));
+        a = agent(f, new Cancel(), echo);
+        a.maxTurns = 2;
+        check(a.prompt("go").getString("content").equals("best answer so far") && !f.requests.get(1).has("tools") && f.requests.get(0).has("tools")
+            && f.requests.get(1).getJSONArray("messages").toString().contains("Answer now with what you have found."));
 
         // provider failures never throw: retry the retryable, stop at once on a bad key, hint on a 400 with tools
         f = new Faux().then(new java.io.IOException("Smart tags paused: OpenRouter answered 429"), new java.io.IOException("offline"), say("third time"));
@@ -207,6 +213,7 @@ final class AgentTest {
         check(bytes.text.equals("aaaa\nbbbb") && bytes.truncated);
         check(Truncate.tail("a\nb\nc\nd", 2, 100).text.equals("c\nd") && !Truncate.head("short").truncated);
         memory();
+        control();
         System.out.println("Agent checks passed (" + count + ").");
         check(Truncate.withFooter(Truncate.head("a\nb\nc", 2, 100), true, "Use offset=3 to continue").equals("a\nb\n\n[Showing lines 1-2 of 3. Use offset=3 to continue]"));
     }
@@ -320,5 +327,121 @@ final class AgentTest {
         f = new Faux().then(new java.io.IOException("OpenRouter answered 400: maximum context length"), new java.io.IOException("OpenRouter answered 400: maximum context length"));
         check(agent(f, new Cancel()).prompt("x").getString("stopReason").equals("error") && f.requests.size() == 1); // no hook, no retry
         check(Compact.overflow("This model's maximum context length is 8192 tokens") && Compact.overflow("prompt is too long: 250000 tokens") && !Compact.overflow("OpenRouter answered 429"));
+    }
+
+    /** Steering and follow-up queues, abort and reuse, settle, prompt while busy, resume after a kill, manual compact, session list. */
+    static void control() throws Exception {
+        Agent[] box = new Agent[1];
+        Tool steerer = tool("steerer", schema(), false, args -> { box[0].steer("change course"); box[0].steer("and another thing"); return Tool.Result.ok("x"); });
+        Tool echo = tool("echo", schema("text", "string"), false, args -> Tool.Result.ok("echo:" + args.getString("text")));
+
+        // steering typed during a tool call goes in after the tool batch, before the next request; one per turn by default
+        Faux f = new Faux().then(calls("steerer", "{}"), say("first"), say("second"));
+        Agent a = agent(f, new Cancel(), steerer);
+        box[0] = a;
+        check(a.prompt("go").getString("content").equals("second") && f.requests.size() == 3);
+        JSONArray m2 = f.requests.get(1).getJSONArray("messages");
+        check(m2.getJSONObject(m2.length() - 1).getString("content").equals("change course") && m2.getJSONObject(m2.length() - 2).getString("role").equals("tool"));
+        check(f.requests.get(2).toString().contains("and another thing"));
+
+        // all-at-once mode delivers both in one request
+        f = new Faux().then(calls("steerer", "{}"), say("done"));
+        a = agent(f, new Cancel(), steerer);
+        box[0] = a;
+        a.steerAll = true;
+        a.prompt("go");
+        check(f.requests.size() == 2 && f.requests.get(1).toString().contains("change course") && f.requests.get(1).toString().contains("and another thing"));
+
+        // a follow-up waits until the agent would stop, then starts another turn; steering typed while idle goes in with the next prompt
+        f = new Faux().then(say("one"), say("two"));
+        a = agent(f, new Cancel());
+        a.followUp("then this");
+        check(a.prompt("first").getString("content").equals("two") && f.requests.size() == 2 && f.requests.get(1).toString().contains("then this"));
+        f = new Faux().then(say("ok"));
+        a = agent(f, new Cancel());
+        a.steer("typed earlier");
+        a.prompt("now");
+        JSONArray first = f.requests.get(0).getJSONArray("messages");
+        check(first.getJSONObject(1).getString("content").equals("now") && first.getJSONObject(2).getString("content").equals("typed earlier"));
+
+        // prompt while running is refused (steer or follow up instead); events end with agent_settled; waitForIdle returns after the run
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        String[] refused = {""};
+        Tool busy = tool("busy", schema(), false, args -> { try { box[0].prompt("again"); } catch (IllegalStateException e) { refused[0] = e.getMessage(); } return Tool.Result.ok("x"); });
+        f = new Faux().then(calls("busy", "{}"), say("ok"));
+        a = agent(f, new Cancel(), busy);
+        box[0] = a;
+        a.subscribe((type, data) -> events.add(type));
+        Agent runner = a;
+        Thread worker = new Thread(() -> runner.prompt("go"));
+        worker.start();
+        while (!runner.running() && worker.isAlive()) Thread.sleep(1);
+        runner.waitForIdle();
+        worker.join();
+        check(refused[0].contains("steer()") && events.get(events.size() - 1).equals("agent_settled") && !a.running());
+
+        // abort: the run ends aborted, queued messages stay and come back from clearQueue, and the same agent runs again afterwards
+        Tool aborter = tool("aborter", schema(), false, args -> { box[0].steer("typed while running"); box[0].followUp("later"); box[0].abort(); return Tool.Result.ok("x"); });
+        f = new Faux().then(calls("aborter", "{}"), say("fresh start"));
+        a = agent(f, new Cancel(), aborter);
+        box[0] = a;
+        check(a.prompt("go").getString("stopReason").equals("aborted") && f.requests.size() == 1);
+        check(a.clearQueue().toString().equals("[typed while running, later]") && a.state().getInt("steering") == 0);
+        check(a.prompt("again").getString("content").equals("fresh start") && !f.requests.get(1).toString().contains("typed while running"));
+
+        // resume after a kill: a transcript that ends in the user's message just carries on
+        File dir = java.nio.file.Files.createTempDirectory("control").toFile();
+        Session s = Session.create(dir);
+        s.appendMessage(msg("user", "question when the app died"));
+        f = new Faux().then(say("answered after restart"));
+        a = agent(f, new Cancel());
+        a.attach(Session.open(new File(s.exportPath())));
+        check(a.resume().getString("content").equals("answered after restart") && f.requests.get(0).getJSONArray("messages").length() == 2);
+
+        // a kill during a tool batch: the call that never got a result is answered "Interrupted", not run again
+        Session s2 = Session.create(dir);
+        s2.appendMessage(msg("user", "do it"));
+        JSONObject asked = calls("echo", "{\"text\":\"a\"}", "echo", "{\"text\":\"b\"}");
+        s2.appendMessage(msg("assistant", "").put("tool_calls", asked.getJSONArray("tool_calls")).put("stopReason", "toolUse"));
+        s2.appendMessage(msg("tool", "echo:a").put("tool_call_id", "c0").put("name", "echo"));
+        int[] ran = {0};
+        Tool counted = tool("echo", schema("text", "string"), false, args -> { ran[0]++; return Tool.Result.ok("x"); });
+        f = new Faux().then(say("recovered"));
+        a = agent(f, new Cancel(), counted);
+        a.attach(Session.open(new File(s2.exportPath())));
+        a.resume();
+        check(ran[0] == 0 && f.requests.get(0).toString().contains("Interrupted") && f.requests.get(0).getJSONArray("messages").length() == 5);
+        // a finished answer has nothing to continue from, unless something is queued
+        try { a.resume(); check(false); } catch (IllegalStateException expected) { check(expected.getMessage().contains("queue a message")); }
+        // a failed run can be retried
+        f = new Faux().then(new java.io.IOException("OpenRouter answered 401"), say("works now"));
+        a = agent(f, new Cancel());
+        check(a.prompt("q").getString("stopReason").equals("error") && a.resume().getString("content").equals("works now"));
+
+        // manual compact with a focus, and its events; session name, model memory, stats, list and export
+        File file = new File(dir, "m.jsonl");
+        Session s3 = Session.open(file);
+        for (int i = 0; i < 6; i++) { s3.appendMessage(msg("user", pad("question " + i, 400))); s3.appendMessage(msg("assistant", pad("answer " + i, 400))); }
+        f = new Faux().then(say("## Goal\nfocused"));
+        a = agent(f, new Cancel());
+        a.attach(s3);
+        Compact compact = new Compact(f, "test/model", s3, 1000);
+        compact.keepRecent = 300;
+        List<String> compactionEvents = Collections.synchronizedList(new ArrayList<>());
+        a.subscribe((type, data) -> { if (type.startsWith("compaction")) compactionEvents.add(type + ":" + data.opt("reason") + data.opt("ok")); });
+        check(compact.now(a, "the dates") && f.requests.get(0).toString().contains("focus on: the dates") && compactionEvents.toString().equals("[compaction_start:manualnull, compaction_end:nulltrue]"));
+        s3.setName("Trip to Brittany");
+        a.setModel("other/model");
+        Session reopened = Session.open(file);
+        a = agent(new Faux(), new Cancel());
+        a.attach(reopened);
+        check(a.model().equals("other/model") && reopened.name().equals("Trip to Brittany") && reopened.stats().getInt("compactions") == 1);
+        List<JSONObject> listed = Session.list(dir);
+        boolean found = false;
+        for (JSONObject l : listed) found |= l.getString("name").equals("Trip to Brittany") && l.getInt("messages") == 12 && l.getString("preview").startsWith("question 0");
+        check(found && listed.size() == 3);
+        File copy = new File(dir, "backup.txt");
+        reopened.exportTo(copy);
+        check(copy.length() == file.length());
     }
 }
