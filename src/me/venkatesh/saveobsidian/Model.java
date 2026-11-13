@@ -286,16 +286,22 @@ final class Model {
     // --- key ---
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("capture", 0); }
 
-    static void saveKey(Context c, String key) throws Exception {
+    static void saveKey(Context c, String key) throws Exception { seal(c, "aiKey", key); }
+
+    /** Any secret, encrypted with the Keystore key and kept under this preference name. */
+    static void seal(Context c, String pref, String value) throws Exception {
+        String key = value;
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, secret());
-        prefs(c).edit().putString("aiKey", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":"
+        prefs(c).edit().putString(pref, Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":"
             + Base64.encodeToString(cipher.doFinal(key.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP)).apply();
     }
 
     /** The saved key, or "" when none (or when it can no longer be decrypted). */
-    static String key(Context c) {
-        String[] sealed = prefs(c).getString("aiKey", "").split(":");
+    static String key(Context c) { return unseal(c, "aiKey"); }
+
+    static String unseal(Context c, String pref) {
+        String[] sealed = prefs(c).getString(pref, "").split(":");
         if (sealed.length != 2) return "";
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -58,6 +59,28 @@ final class Scout {
         return Skills.expand(text, Skills.index(paths(snap), read), paths(snap), read);
     }
 
+    // ---- MCP servers (Settings > Scout tools): [{name, url, enabled, trusted}] in preferences, the bearer token sealed under mcpToken:<name> ----
+
+    static JSONArray serverList(Context c) {
+        try { return new JSONArray(c.getSharedPreferences("capture", 0).getString("mcpServers", "[]")); } catch (org.json.JSONException damaged) { return new JSONArray(); }
+    }
+
+    static void saveServers(Context c, JSONArray list) { c.getSharedPreferences("capture", 0).edit().putString("mcpServers", list.toString()).apply(); }
+
+    private static List<Object[]> servers(Context c) {
+        List<Object[]> out = new ArrayList<>();
+        JSONArray list = serverList(c);
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject s = list.optJSONObject(i);
+            if (s == null || !s.optBoolean("enabled", true)) continue;
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            String token = Model.unseal(c, "mcpToken:" + s.optString("name"));
+            if (!token.isEmpty()) headers.put("Authorization", "Bearer " + token);
+            out.add(new Object[]{new Mcp(s.optString("name").replaceAll("[^A-Za-z0-9_-]", "_"), s.optString("url"), headers), s.optBoolean("trusted")});
+        }
+        return out;
+    }
+
     static File dir(Context c) { return new File(c.getFilesDir(), "sessions"); }
 
     /** The conversation in progress: the stored file named in preferences, or a new one. */
@@ -73,9 +96,11 @@ final class Scout {
     static void forget(Context c) { c.getSharedPreferences("capture", 0).edit().remove("scoutSession").apply(); }
 
     /** A fresh agent on this session: new snapshot, tools, and a Cancel the caller keeps. */
-    static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel) {
+    static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel, java.util.function.Consumer<String> warn) {
         List<Tool> tools = new ArrayList<>(VaultTools.create(new Files(c, snap), confirm, VaultStore.ROOTS));
         tools.add(inbox(c));
+        String problems = Mcp.connectAll(servers(c), confirm, tools, cancel); // servers that fail are reported, the others still work
+        if (!problems.isEmpty()) warn.accept("Some tool servers did not start:\n" + problems.trim());
         Agent a = new Agent(provider(c, key), Ask.model(c), system(c, snap), tools, cancel);
         a.attach(session);
         if (!Ask.model(c).equals(a.model())) a.setModel(Ask.model(c));

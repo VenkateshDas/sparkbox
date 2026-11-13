@@ -115,7 +115,7 @@ final class AskScreen extends Screen {
             Limits.interactive(true);
             try {
                 if (session == null) session = Scout.session(ui.c, false);
-                Agent a = agent = Scout.agent(ui.c, snap, key, session, (title, detail) -> approve(title, detail, cancel), cancel);
+                Agent a = agent = Scout.agent(ui.c, snap, key, session, (title, detail) -> approve(title, detail, cancel), cancel, msg -> main.post(() -> Toast.makeText(ui.c, msg, Toast.LENGTH_LONG).show()));
                 a.subscribe((type, data) -> events(type, data));
                 Usage.hit(ui.c, "ask");
                 JSONObject last;
