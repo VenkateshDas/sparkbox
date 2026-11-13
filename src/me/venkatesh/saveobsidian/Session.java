@@ -1,0 +1,150 @@
+package me.venkatesh.saveobsidian;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.json.JSONObject;
+
+/**
+ * Port of pi packages/coding-agent/src/core/session-manager.ts + docs/session-format.md @ 3e23dd9, linear for now: an append-only JSONL file,
+ * one line per entry, so a process kill loses at most the line being written (a torn last line is skipped on load). Line 1 is the header
+ * {type:"session", version, id, timestamp}; every other line has id (8 hex), parentId, timestamp and a type: message, usage (spend that is not
+ * a conversation message), compaction {summary, firstKeptEntryId, tokensBefore}, context_edit {targetId, action omit|replace, content},
+ * custom (app state, never sent to the model). The active branch is leaf to root through parentId; fork/tree can be added without a format change.
+ * Pure Java.
+ */
+public final class Session {
+    public static final int VERSION = 1; // migrations: add a step per version in load()
+
+    private final File file;
+    private final String id;
+    private final List<JSONObject> entries = new ArrayList<>();
+    private final Map<String, JSONObject> byId = new HashMap<>();
+    private String leaf;
+
+    private Session(File file, String id) { this.file = file; this.id = id; }
+
+    public String id() { return id; }
+
+    /** Opens the file, or starts a new session in it. */
+    public static synchronized Session open(File file) throws IOException {
+        if (!file.exists() || file.length() == 0) {
+            Session s = new Session(file, UUID.randomUUID().toString());
+            try { s.write(new JSONObject().put("type", "session").put("version", VERSION).put("id", s.id).put("timestamp", java.time.Instant.now().toString())); }
+            catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+            return s;
+        }
+        String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+        String[] lines = text.split("\n");
+        Session s = null;
+        for (String line : lines) {
+            if (line.trim().isEmpty()) continue;
+            JSONObject o;
+            try { o = new JSONObject(line); } catch (org.json.JSONException torn) { continue; } // a line cut by a process kill
+            if (s == null) {
+                if (!"session".equals(o.optString("type"))) throw new IOException("Not a session file");
+                if (o.optInt("version", 0) > VERSION) throw new IOException("Session was written by a newer app version");
+                s = new Session(file, o.optString("id"));
+            } else { s.entries.add(o); s.byId.put(o.optString("id"), o); s.leaf = o.optString("id"); }
+        }
+        if (s == null) throw new IOException("Not a session file");
+        if (!text.endsWith("\n")) s.write(null); // finish a torn last line so the next entry starts on its own line
+        return s;
+    }
+
+    private void write(JSONObject line) throws IOException {
+        try (FileOutputStream out = new FileOutputStream(file, true)) { out.write(((line == null ? "" : line.toString()) + "\n").getBytes(StandardCharsets.UTF_8)); }
+    }
+
+    /** Adds an entry under the current leaf; returns its id. */
+    public synchronized String append(JSONObject entry) throws IOException {
+        try {
+            String eid;
+            do { eid = UUID.randomUUID().toString().substring(0, 8); } while (byId.containsKey(eid));
+            entry.put("id", eid).put("parentId", leaf == null ? JSONObject.NULL : leaf).put("timestamp", java.time.Instant.now().toString());
+            write(entry);
+            entries.add(entry); byId.put(eid, entry); leaf = eid;
+            return eid;
+        } catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** Stores a conversation message and tags the message object with its entryId (agent bookkeeping, stripped before a request). */
+    public String appendMessage(JSONObject message) throws IOException {
+        try { String eid = append(new JSONObject().put("type", "message").put("message", new JSONObject(message.toString()))); message.put("entryId", eid); return eid; }
+        catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** Spend that is not a message of the conversation (a compaction summary call): counted in totals(). */
+    public void appendUsage(String source, JSONObject usage) throws IOException {
+        try { if (usage != null) append(new JSONObject().put("type", "usage").put("source", source).put("usage", usage)); }
+        catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    public String appendCompaction(String summary, String firstKeptEntryId, int tokensBefore) throws IOException {
+        try { return append(new JSONObject().put("type", "compaction").put("summary", summary).put("firstKeptEntryId", firstKeptEntryId).put("tokensBefore", tokensBefore)); }
+        catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** Hides (omit) or rewrites (replace) one message in future context only; the raw entry stays in the file. */
+    public void editContext(String targetId, String action, String content) throws IOException {
+        try { append(new JSONObject().put("type", "context_edit").put("targetId", targetId).put("action", action).put("content", content == null ? "" : content)); }
+        catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** App state that never reaches the model. */
+    public void appendCustom(String kind, JSONObject data) throws IOException {
+        try { append(new JSONObject().put("type", "custom").put("kind", kind).put("data", data)); }
+        catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** The messages the next request is built from: the active branch after the last compaction (its summary first), minus omitted ones. */
+    public synchronized List<JSONObject> context() {
+        List<JSONObject> path = new ArrayList<>();
+        for (String at = leaf; at != null && byId.containsKey(at); at = byId.get(at).isNull("parentId") ? null : byId.get(at).optString("parentId")) path.add(0, byId.get(at));
+        int compaction = -1;
+        for (int i = 0; i < path.size(); i++) if (path.get(i).optString("type").equals("compaction")) compaction = i;
+        Map<String, JSONObject> edits = new HashMap<>();
+        for (JSONObject e : path) if (e.optString("type").equals("context_edit")) edits.put(e.optString("targetId"), e);
+        List<JSONObject> out = new ArrayList<>();
+        try {
+            int from = 0;
+            if (compaction >= 0) {
+                JSONObject c = path.get(compaction);
+                out.add(new JSONObject().put("role", "user").put("summary", true).put("content", Compact.PREFIX + c.optString("summary")));
+                from = compaction; // first kept entry not on the path: keep nothing from before the compaction
+                for (int i = 0; i < compaction; i++) if (path.get(i).optString("id").equals(c.optString("firstKeptEntryId"))) { from = i; break; }
+            }
+            for (int i = from; i < path.size(); i++) {
+                JSONObject e = path.get(i);
+                if (!e.optString("type").equals("message")) continue;
+                JSONObject m = new JSONObject(e.getJSONObject("message").toString()).put("entryId", e.optString("id"));
+                JSONObject edit = edits.get(e.optString("id"));
+                if (edit != null && edit.optString("action").equals("omit")) continue;
+                if (edit != null) m.put("content", edit.optString("content"));
+                out.add(m);
+            }
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        return out;
+    }
+
+    /** Spend so far: prompt and completion tokens, cost, model calls (assistant messages plus usage entries). */
+    public synchronized JSONObject totals() {
+        long prompt = 0, completion = 0, calls = 0;
+        double cost = 0;
+        for (JSONObject e : entries) {
+            JSONObject u = e.optString("type").equals("usage") ? e.optJSONObject("usage")
+                : e.optString("type").equals("message") ? e.optJSONObject("message").optJSONObject("usage") : null;
+            if (u == null) continue;
+            prompt += u.optLong("prompt_tokens"); completion += u.optLong("completion_tokens"); cost += u.optDouble("cost", 0); calls++;
+        }
+        try { return new JSONObject().put("prompt_tokens", prompt).put("completion_tokens", completion).put("cost", cost).put("calls", calls); }
+        catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+    }
+}

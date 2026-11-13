@@ -1,3 +1,4 @@
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -5,6 +6,8 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import me.venkatesh.saveobsidian.Agent;
 import me.venkatesh.saveobsidian.Cancel;
+import me.venkatesh.saveobsidian.Compact;
+import me.venkatesh.saveobsidian.Session;
 import me.venkatesh.saveobsidian.Tool;
 import me.venkatesh.saveobsidian.Truncate;
 import me.venkatesh.saveobsidian.Validate;
@@ -203,6 +206,119 @@ final class AgentTest {
         Truncate.Cut bytes = Truncate.head("aaaa\nbbbb\ncccc", 100, 9);
         check(bytes.text.equals("aaaa\nbbbb") && bytes.truncated);
         check(Truncate.tail("a\nb\nc\nd", 2, 100).text.equals("c\nd") && !Truncate.head("short").truncated);
+        memory();
+        System.out.println("Agent checks passed (" + count + ").");
         check(Truncate.withFooter(Truncate.head("a\nb\nc", 2, 100), true, "Use offset=3 to continue").equals("a\nb\n\n[Showing lines 1-2 of 3. Use offset=3 to continue]"));
+    }
+
+    static JSONObject msg(String role, String content) throws Exception { return new JSONObject().put("role", role).put("content", content); }
+    static String pad(String head, int chars) { StringBuilder s = new StringBuilder(head); while (s.length() < chars) s.append(' ').append("filler"); return s.toString(); }
+    static JSONObject withUsage(JSONObject reply, int prompt, int completion, double cost) throws Exception { return reply.put("usage", new JSONObject().put("prompt_tokens", prompt).put("completion_tokens", completion).put("cost", cost)); }
+
+    /** Session log, context_edit, compaction (cut point, summary request, projection), overflow retry, token estimate, file lists. */
+    static void memory() throws Exception {
+        Tool echo = tool("echo", schema("text", "string"), false, args -> Tool.Result.ok("echo:" + args.getString("text")));
+        File dir = java.nio.file.Files.createTempDirectory("session").toFile();
+        File file = new File(dir, "s.jsonl");
+
+        // every message is appended as it happens; reopening the file gives the same context; usage is summed
+        Session s = Session.open(file);
+        Faux f = new Faux().then(withUsage(calls("echo", "{\"text\":\"a\"}"), 10, 5, 0.5), withUsage(say("done"), 20, 5, 0.25));
+        Agent a = agent(f, new Cancel(), echo);
+        a.attach(s);
+        a.prompt("go");
+        check(s.context().size() == 4 && Session.open(file).context().size() == 4);
+        JSONObject totals = s.totals();
+        check(totals.getLong("prompt_tokens") == 30 && totals.getLong("completion_tokens") == 10 && totals.getDouble("cost") == 0.75 && totals.getLong("calls") == 2);
+
+        // a fresh agent continues from the stored conversation
+        f = new Faux().then(say("second"));
+        a = agent(f, new Cancel(), echo);
+        a.attach(Session.open(file));
+        a.prompt("again");
+        check(f.requests.get(0).getJSONArray("messages").length() == 6 && Session.open(file).context().size() == 6); // system + 4 stored + new user
+
+        // a torn last line (process killed mid-write) is skipped and the next entry starts on its own line
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(file, true)) { out.write("{\"type\":\"message\",\"mess".getBytes("UTF-8")); }
+        Session torn = Session.open(file);
+        check(torn.context().size() == 6);
+        torn.appendMessage(msg("user", "after the kill"));
+        check(Session.open(file).context().size() == 7);
+
+        // context_edit changes future context only; the raw entry stays in the file
+        String toolEntry = torn.context().get(2).getString("entryId");
+        torn.editContext(toolEntry, "replace", "[cleared]");
+        check(torn.context().get(2).getString("content").equals("[cleared]") && new String(java.nio.file.Files.readAllBytes(file.toPath()), "UTF-8").contains("echo:a"));
+        torn.editContext(toolEntry, "omit", null);
+        check(torn.context().size() == 6);
+
+        // cut point: a user message, never a tool result; an assistant message when a single turn is too big; nothing when it all fits
+        List<JSONObject> turns = new ArrayList<>();
+        String forty = pad("x", 40);
+        for (String role : new String[] {"user", "assistant", "tool", "user", "assistant", "tool", "user", "assistant"}) turns.add(msg(role, forty));
+        int cut = Compact.cutIndex(turns, 30);
+        check(cut == 3 && turns.get(cut).getString("role").equals("user"));
+        List<JSONObject> oneTurn = new ArrayList<>();
+        for (String role : new String[] {"user", "assistant", "tool", "assistant", "tool", "assistant", "tool"}) oneTurn.add(msg(role, forty));
+        cut = Compact.cutIndex(oneTurn, 30);
+        check(cut > 0 && oneTurn.get(cut).getString("role").equals("assistant"));
+        check(Compact.cutIndex(turns, 100_000) == 0);
+
+        // estimate: what the provider reported for the last assistant message plus chars/4 after it
+        List<JSONObject> est = new ArrayList<>();
+        est.add(withUsage(msg("assistant", "hi"), 100, 20, 0));
+        est.add(msg("user", pad("q", 40)));
+        check(Compact.estimate(est) == 120 + 11);
+
+        // note paths read and changed are carried across compactions
+        JSONObject readCall = calls("read", "{\"path\":\"Knowledge/A.md\"}", "edit", "{\"path\":\"Knowledge/B.md\"}");
+        JSONObject old = msg("assistant", "").put("tool_calls", readCall.getJSONArray("tool_calls"));
+        String lists = Compact.files("summary\n\n<read-files>\nKnowledge/Z.md\n</read-files>", Arrays.asList(old));
+        check(lists.contains("<read-files>\nKnowledge/Z.md\nKnowledge/A.md\n</read-files>") && lists.contains("<modified-files>\nKnowledge/B.md\n</modified-files>"));
+
+        // compaction end to end: the model is asked for a summary of the older part, the entry is stored, the original messages stay in the file
+        File file2 = new File(dir, "c.jsonl");
+        Session s2 = Session.open(file2);
+        for (int i = 0; i < 6; i++) { s2.appendMessage(msg("user", pad("question " + i, 400))); s2.appendMessage(msg("assistant", pad("answer " + i, 400))); }
+        f = new Faux().then(withUsage(say("## Goal\nfind the notes"), 50, 20, 0.001), say("final answer"));
+        a = agent(f, new Cancel());
+        a.attach(s2);
+        Compact compact = new Compact(f, "test/model", s2, 1000);
+        compact.reserve = 100; compact.keepRecent = 300;
+        a.hooks = compact;
+        check(a.prompt("next question").getString("content").equals("final answer"));
+        String summaryAsk = f.requests.get(0).getJSONArray("messages").getJSONObject(1).getString("content");
+        check(summaryAsk.contains("[User]: question 0") && summaryAsk.contains("## Goal") && !summaryAsk.contains("question 5"));
+        JSONArray sent = f.requests.get(1).getJSONArray("messages");
+        check(sent.getJSONObject(1).getString("content").startsWith(Compact.PREFIX) && sent.getJSONObject(1).getString("content").contains("find the notes") && sent.length() < 14);
+        check(new String(java.nio.file.Files.readAllBytes(file2.toPath()), "UTF-8").contains("question 0") && Session.open(file2).context().get(0).optBoolean("summary"));
+        check(s2.totals().getDouble("cost") == 0.001); // the summary call is counted
+
+        // second compaction updates the previous summary instead of starting over
+        for (int i = 6; i < 12; i++) { a.messages(); s2.appendMessage(msg("user", pad("question " + i, 400))); s2.appendMessage(msg("assistant", pad("answer " + i, 400))); }
+        f = new Faux().then(say("## Goal\nupdated"), say("later"));
+        a = agent(f, new Cancel());
+        a.attach(s2);
+        compact = new Compact(f, "test/model", s2, 1000);
+        compact.reserve = 100; compact.keepRecent = 300;
+        a.hooks = compact;
+        a.prompt("and now");
+        String update = f.requests.get(0).getJSONArray("messages").getJSONObject(1).getString("content");
+        check(update.contains("<previous-summary>") && update.contains("find the notes"));
+
+        // a provider that refuses the request as too long: compact once, build the request again, send it again
+        File file3 = new File(dir, "o.jsonl");
+        Session s3 = Session.open(file3);
+        for (int i = 0; i < 6; i++) { s3.appendMessage(msg("user", pad("question " + i, 400))); s3.appendMessage(msg("assistant", pad("answer " + i, 400))); }
+        f = new Faux().then(new java.io.IOException("Smart tags paused: OpenRouter answered 400: This endpoint's maximum context length is 1000 tokens."), say("## Goal\nshort"), say("recovered"));
+        a = agent(f, new Cancel());
+        a.attach(s3);
+        compact = new Compact(f, "test/model", s3, 1_000_000);
+        compact.keepRecent = 300;
+        a.hooks = compact;
+        check(a.prompt("big question").getString("content").equals("recovered") && f.requests.size() == 3);
+        f = new Faux().then(new java.io.IOException("OpenRouter answered 400: maximum context length"), new java.io.IOException("OpenRouter answered 400: maximum context length"));
+        check(agent(f, new Cancel()).prompt("x").getString("stopReason").equals("error") && f.requests.size() == 1); // no hook, no retry
+        check(Compact.overflow("This model's maximum context length is 8192 tokens") && Compact.overflow("prompt is too long: 250000 tokens") && !Compact.overflow("OpenRouter answered 429"));
     }
 }

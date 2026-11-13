@@ -30,8 +30,10 @@ public final class Agent {
         default List<JSONObject> transformContext(List<JSONObject> messages) { return messages; }
         /** Last look at the request (model, messages, tools) before it is sent. */
         default void prepareRequest(JSONObject request) { }
-        /** Start of each turn after the first; compaction runs here (M2). */
+        /** Start of every turn, after the user's message and any tool results are in; compaction runs here. */
         default void prepareNextTurn(Agent agent) { }
+        /** The provider refused the request as too long. True after the context was shrunk: the request is built again and sent once more. */
+        default boolean onOverflow(Agent agent) { return false; }
         /** Non-null blocks the call; the text goes to the model as the tool's error. */
         default String beforeToolCall(String name, JSONObject args) { return null; }
         /** May patch a result. */
@@ -50,6 +52,8 @@ public final class Agent {
     private final List<JSONObject> messages = new ArrayList<>();
     private final Cancel cancel;
     public Hooks hooks = new Hooks() { };
+    /** When set, every message is appended to it as it happens (attach(session) loads what is already there). */
+    private Session session;
     public Listener listener = (type, data) -> { };
     public int maxTokens = 1800, maxTurns = 8;
     /** Pi's agent-level retry: 3 retries, doubling from 2 s, capped at 60 s. Tests set base to 0. */
@@ -61,30 +65,42 @@ public final class Agent {
     }
 
     public List<JSONObject> messages() { return messages; }
+    public Cancel cancel() { return cancel; }
+
+    /** Continues a stored conversation: the agent's messages become the session's context, and new ones are appended to it. */
+    public void attach(Session s) { session = s; setMessages(s.context()); }
+
+    /** Replaces the transcript the next request is built from (after a compaction). */
+    public void setMessages(List<JSONObject> m) { messages.clear(); messages.addAll(m); }
+
+    private void add(JSONObject m) {
+        messages.add(m);
+        if (session != null) try { session.appendMessage(m); } catch (java.io.IOException e) { emit("session_error", wrap("error", String.valueOf(e.getMessage()))); } // the run goes on; only resume is lost
+    }
 
     /** Adds the user's message, runs turns until the model stops asking for tools, returns the last assistant message. */
     public JSONObject prompt(String text) {
-        try { messages.add(new JSONObject().put("role", "user").put("content", text)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        try { add(new JSONObject().put("role", "user").put("content", text)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
         emit("agent_start", new JSONObject());
         JSONObject last = null;
         boolean done = false;
         for (int turn = 0; turn < maxTurns && !done; turn++) {
-            if (cancel.stopped()) { last = failed("aborted", "Stopped"); messages.add(last); break; }
-            if (turn > 0) hooks.prepareNextTurn(this);
+            if (cancel.stopped()) { last = failed("aborted", "Stopped"); add(last); break; }
+            hooks.prepareNextTurn(this);
             emit("turn_start", new JSONObject());
             last = streamAssistant();
-            messages.add(last);
+            add(last);
             emit("message_end", wrap("message", last));
             String stop = last.optString("stopReason");
             JSONArray calls = last.optJSONArray("tool_calls");
             if (stop.equals("error") || stop.equals("aborted") || calls == null || calls.length() == 0) { emit("turn_end", new JSONObject()); break; }
             List<JSONObject> results = execute(calls, stop.equals("length"));
-            messages.addAll(results);
+            for (JSONObject r : results) add(r);
             emit("turn_end", new JSONObject());
             boolean allTerminate = true;
             for (JSONObject r : results) allTerminate &= r.optBoolean("terminate");
             if (allTerminate || !hooks.finishTurn(results)) done = true;
-            else if (turn == maxTurns - 1) { last = failed("max-steps", "Stopped after " + maxTurns + " steps"); last.remove("errorMessage"); messages.add(last); }
+            else if (turn == maxTurns - 1) { last = failed("max-steps", "Stopped after " + maxTurns + " steps"); last.remove("errorMessage"); add(last); }
         }
         emit("agent_end", new JSONObject());
         return last;
@@ -121,6 +137,7 @@ public final class Agent {
             hooks.prepareRequest(request);
         } catch (Exception e) { return failed("error", String.valueOf(e.getMessage())); }
         emit("message_start", new JSONObject());
+        boolean compacted = false;
         for (int attempt = 0; ; attempt++) {
             try {
                 JSONObject reply = provider.stream(request, text -> emit("message_update", text(text)), cancel);
@@ -128,6 +145,11 @@ public final class Agent {
             } catch (Exception e) {
                 if (cancel.stopped()) return failed("aborted", "Stopped");
                 String message = String.valueOf(e.getMessage()), kind = Failures.kind(message);
+                if (!compacted && Compact.overflow(message) && hooks.onOverflow(this)) { // too long: shrink once, rebuild, send again
+                    compacted = true;
+                    try { request.put("messages", convertToLlm()); } catch (Exception bad) { return failed("error", message); }
+                    continue;
+                }
                 boolean retry = attempt < retries && (kind.equals(Failures.OFFLINE) || kind.equals(Failures.RATE) || kind.equals(Failures.OTHER) && !message.matches("(?s).* 4\\d\\d.*")); // a 4xx other than rate limit will not fix itself
                 if (!retry) return failed("error", message.contains(" 400") && !tools.isEmpty() ? message + " (this model may not support tool calls)" : message);
                 long wait = Math.min(retryMaxMs, retryBaseMs << attempt);
