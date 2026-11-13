@@ -106,7 +106,7 @@ final class ScoutRuns {
             if (snap == null || key.isEmpty()) throw new Exception("The vault or the OpenRouter key is not set up.");
             if (text != null && text.startsWith("/research ")) { research = true; text = text.substring(10).trim(); }
             Session session = session(c, run.file);
-            if (session.name() == null && text != null) session.setName(text.length() > 60 ? text.substring(0, 60) : text);
+            if (session.name() == null && text != null) nameChat(c, session, text, key);
             Agent a = run.agent = Scout.agent(c, snap, key, session, (title, detail) -> ask(c, run, title, detail), run.cancel, w -> { run.status = w; changed(run.file); }, research);
             a.subscribe((type, data) -> events(c, run, type, data));
             Usage.hit(c, "ask");
@@ -125,6 +125,36 @@ final class ScoutRuns {
         changed(run.file);
         if (!run.file.equals(watching) && !run.cancel.stopped()) notify(c, run.file, failure == null ? "Scout finished" : "Scout could not finish", title(c, run.file));
         ScoutService.sync(c);
+    }
+
+    /** The chat's name: the start of the first message at once, then a short title from the small model (unless the user renamed it meanwhile). */
+    private static void nameChat(Context c, Session session, String text, String key) throws java.io.IOException {
+        final String first = text.length() > 40 ? text.substring(0, 40) : text;
+        session.setName(first);
+        new Thread(() -> {
+            try {
+                String model = c.getSharedPreferences("capture", 0).getString("aiModel", Model.DEFAULT);
+                String t = Model.completeLean(key, model, "Write a title of 2 to 5 words for a chat that starts with the user's message. Reply with the title only: no quotes, no final punctuation.", text.length() > 500 ? text.substring(0, 500) : text, 30);
+                t = t == null ? "" : t.trim().split("\n")[0].replaceAll("^[\"'#*\\s]+|[\"'*\\s.]+$", "");
+                if (t.length() > 48) t = t.substring(0, 48);
+                if (!t.isEmpty() && first.equals(session.name())) { session.setName(t); for (Watcher w : watchers) w.changed(""); }
+            } catch (Exception keepFirst) { } // the start of the message stays as the name
+        }).start();
+    }
+
+    static void rename(Context c, String file, String name) throws java.io.IOException {
+        if (!name.trim().isEmpty()) session(c, file).setName(name.trim().length() > 60 ? name.trim().substring(0, 60) : name.trim());
+    }
+
+    /** Stops the chat's run if any, then removes its file. */
+    static void delete(Context c, String file) {
+        Run r = run(file);
+        if (r != null) { r.cancel.stop(); r.done = true; }
+        runs.remove(file);
+        Session s = sessions.remove(file);
+        if (s != null) s.close();
+        new File(dir(c), file).delete();
+        clearNotification(c, file);
     }
 
     private static String friendly(String m) {

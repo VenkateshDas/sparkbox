@@ -60,7 +60,13 @@ public final class Session {
         return s;
     }
 
+    private volatile boolean closed;
+
+    /** After this, nothing more is written (the chat was deleted while a run was still finishing). */
+    public void close() { closed = true; }
+
     private void write(JSONObject line) throws IOException {
+        if (closed) return;
         try (FileOutputStream out = new FileOutputStream(file, true)) { out.write(((line == null ? "" : line.toString()) + "\n").getBytes(StandardCharsets.UTF_8)); }
     }
 
@@ -117,6 +123,21 @@ public final class Session {
     private synchronized String last(String type, String key) {
         for (int i = entries.size() - 1; i >= 0; i--) if (entries.get(i).optString("type").equals(type)) return entries.get(i).optString(key);
         return null;
+    }
+
+    /** True when the name or any message of the conversation contains these words (case-insensitive), for searching the chat list. */
+    public synchronized boolean contains(String query) {
+        String q = query.trim().toLowerCase(java.util.Locale.ROOT);
+        if (q.isEmpty()) return true;
+        String n = name();
+        if (n != null && n.toLowerCase(java.util.Locale.ROOT).contains(q)) return true;
+        for (JSONObject e : entries) {
+            if (!e.optString("type").equals("message")) continue;
+            JSONObject m = e.optJSONObject("message");
+            String role = m == null ? "" : m.optString("role");
+            if ((role.equals("user") || role.equals("assistant")) && m.optString("content").toLowerCase(java.util.Locale.ROOT).contains(q)) return true;
+        }
+        return false;
     }
 
     /** The model chosen last in this conversation, or null. */

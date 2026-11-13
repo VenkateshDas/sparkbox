@@ -440,6 +440,7 @@ final class AgentTest {
         boolean found = false;
         for (JSONObject l : listed) found |= l.getString("name").equals("Trip to Brittany") && l.getInt("messages") == 12 && l.getString("preview").startsWith("question 0");
         check(found && listed.size() == 3);
+        check(reopened.contains("QUESTION 0") && reopened.contains("brittany") && reopened.contains("") && !reopened.contains("zzzz-nothing"));
         File copy = new File(dir, "backup.txt");
         reopened.exportTo(copy);
         check(copy.length() == file.length());

@@ -2,7 +2,29 @@ package me.venkatesh.saveobsidian
 
 import android.content.Context
 import android.view.View
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,8 +94,15 @@ interface AskActions {
     fun addNote()
     fun draft(text: String)
     fun approve(yes: Boolean)
-    fun history()
+    fun drawer(open: Boolean)
+    fun openChat(file: String)
+    fun renameChat(file: String)
+    fun deleteChat(file: String)
+    fun searchChats(query: String)
 }
+
+/** One line of the chats drawer. status: "", "Working…" or "Needs your OK". */
+class ChatRow(val file: String, val title: String, val status: String, val current: Boolean)
 
 class AskState {
     var items by mutableStateOf(emptyList<AskItem>()); private set
@@ -83,6 +112,14 @@ class AskState {
     var input by mutableStateOf(""); private set
     var subtitle by mutableStateOf(""); private set
     var offline by mutableStateOf(false); private set
+    var title by mutableStateOf(""); private set
+    var drawer by mutableStateOf(false); private set
+    var chats by mutableStateOf(emptyList<ChatRow>()); private set
+    var query by mutableStateOf(""); private set
+    fun title(t: String) { title = t }
+    fun drawer(on: Boolean) { drawer = on; if (!on) query = "" }
+    fun chats(list: List<ChatRow>) { chats = list }
+    fun query(q: String) { query = q }
     fun publish(items: List<AskItem>) { this.items = items }
     fun running(on: Boolean) { running = on; if (!on) { status = ""; live = "" } }
     fun status(s: String) { status = s }
@@ -98,33 +135,127 @@ object AskView {
 }
 
 @Composable
+private fun RoundButton(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.size(44.dp)) { Box(contentAlignment = Alignment.Center) { content() } }
+}
+
+/** Two bars, like the reference's menu button. */
+@Composable
+private fun MenuIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
+    val w = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+    drawLine(color, Offset(2.dp.toPx(), 7.dp.toPx()), Offset(20.dp.toPx(), 7.dp.toPx()), w.width, StrokeCap.Round)
+    drawLine(color, Offset(2.dp.toPx(), 15.dp.toPx()), Offset(13.dp.toPx(), 15.dp.toPx()), w.width, StrokeCap.Round)
+}
+
+/** A square with a pen stroke: new chat. */
+@Composable
+private fun NewChatIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
+    val w = 2.2.dp.toPx()
+    drawRoundRect(color, androidx.compose.ui.geometry.Offset(2.dp.toPx(), 4.dp.toPx()), androidx.compose.ui.geometry.Size(15.dp.toPx(), 15.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), Stroke(w))
+    drawLine(color, Offset(9.dp.toPx(), 13.dp.toPx()), Offset(19.dp.toPx(), 3.dp.toPx()), w, StrokeCap.Round)
+}
+
+@Composable
+private fun SearchIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
+    val w = 2.2.dp.toPx()
+    drawCircle(color, 7.dp.toPx(), Offset(9.5.dp.toPx(), 9.5.dp.toPx()), style = Stroke(w))
+    drawLine(color, Offset(15.dp.toPx(), 15.dp.toPx()), Offset(20.dp.toPx(), 20.dp.toPx()), w, StrokeCap.Round)
+}
+
+@Composable
 private fun AskUi(s: AskState, a: AskActions) {
     val list = rememberLazyListState()
     val count = s.items.size + (if (s.running) 1 else 0)
     LaunchedEffect(count, s.live.length / 200) { if (count > 0) list.animateScrollToItem(count - 1) }
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column {
-            TopBar("Scout", null) {
-                TextButton(onClick = { a.history() }) { Text("Chats") }
-                if (s.items.any { it is Answer || it is Question }) TextButton(onClick = { a.newChat() }) { Text("New") }
-            }
-            if (s.subtitle.isNotEmpty()) Text(s.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, top = 6.dp))
-            if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Scout needs a network connection.", false)) }
-            LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(s.items) { _, it -> Item(it, a) }
-                if (s.running) item { Running(s, a) }
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                val send = { val q = s.input.trim(); if (q.isNotEmpty() && !s.offline) a.ask(q) } // while it runs, a message steers Scout
-                OutlinedTextField(value = s.input, onValueChange = { s.input(it); a.draft(it) }, enabled = !s.offline,
-                    placeholder = { Text(if (s.offline) "You are offline" else if (s.running) "Steer Scout…" else "Ask Scout") }, maxLines = 4, shape = RoundedCornerShape(24.dp),
-                    textStyle = MaterialTheme.typography.bodyLarge,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { send() }), modifier = Modifier.weight(1f))
-                FilledIconButton(onClick = send, enabled = !s.offline && s.input.isNotBlank(), modifier = Modifier.padding(start = 8.dp).size(48.dp)) {
-                    Text("↑", style = MaterialTheme.typography.titleLarge)
+    val cs = MaterialTheme.colorScheme
+    val intro = s.items.singleOrNull() as? Intro
+    Surface(Modifier.fillMaxSize(), color = cs.background) {
+        Box(Modifier.fillMaxSize()) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RoundButton({ a.drawer(true) }) { MenuIcon(cs.onSurface) }
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(s.title.ifEmpty { "Scout" }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (s.subtitle.isNotEmpty()) Text(s.subtitle, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1)
+                    }
+                    RoundButton({ a.newChat() }) { NewChatIcon(cs.onSurface) }
                 }
+                if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Scout needs a network connection.", false)) }
+                if (intro != null) {
+                    Column(Modifier.weight(1f).padding(horizontal = 24.dp), verticalArrangement = Arrangement.Center) {
+                        Text("Scout", style = MaterialTheme.typography.headlineMedium)
+                        Text(intro.text, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                    }
+                    intro.suggestions.forEach { q ->
+                        Row(Modifier.fillMaxWidth().clickable { a.ask(q) }.padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(cs.primary))
+                            Text(q, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 14.dp))
+                        }
+                    }
+                } else LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    itemsIndexed(s.items) { _, it -> Item(it, a) }
+                    if (s.running) item { Running(s, a) }
+                }
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val send = { val q = s.input.trim(); if (q.isNotEmpty() && !s.offline) a.ask(q) } // while it runs, a message steers Scout
+                    OutlinedTextField(value = s.input, onValueChange = { s.input(it); a.draft(it) }, enabled = !s.offline,
+                        placeholder = { Text(if (s.offline) "You are offline" else if (s.running) "Steer Scout…" else "Ask Scout") }, maxLines = 4, shape = RoundedCornerShape(28.dp),
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = cs.surfaceContainerHigh, unfocusedContainerColor = cs.surfaceContainerHigh, disabledContainerColor = cs.surfaceContainerHigh,
+                            focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent, disabledBorderColor = Color.Transparent),
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { send() }), modifier = Modifier.weight(1f))
+                    val stop = s.running && s.input.isBlank()
+                    FilledIconButton(onClick = { if (stop) a.cancel() else send() }, enabled = !s.offline && (stop || s.input.isNotBlank()), modifier = Modifier.padding(start = 8.dp).size(48.dp)) {
+                        Text(if (stop) "■" else "↑", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            }
+            AnimatedVisibility(s.drawer, enter = fadeIn(), exit = fadeOut()) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).pointerInput(Unit) { detectTapGestures { a.drawer(false) } })
+            }
+            AnimatedVisibility(s.drawer, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) { ChatsDrawer(s, a) }
+        }
+    }
+}
+
+@Composable
+private fun ChatsDrawer(s: AskState, a: AskActions) {
+    val cs = MaterialTheme.colorScheme
+    var searching by remember { mutableStateOf(false) }
+    Surface(Modifier.fillMaxHeight().width(320.dp), color = cs.surfaceContainerLow, shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Chats", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                RoundButton({ searching = !searching; if (!searching) a.searchChats("") }) { SearchIcon(cs.onSurface) }
+            }
+            if (searching) OutlinedTextField(value = s.query, onValueChange = { a.searchChats(it) }, placeholder = { Text("Search chats") }, singleLine = true, shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(Modifier.weight(1f)) {
+                if (s.chats.isEmpty()) item { Text(if (s.query.isEmpty()) "No chats yet." else "No chat matches.", color = cs.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) }
+                itemsIndexed(s.chats) { _, c ->
+                    var menu by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (c.current) cs.surfaceContainerHigh else Color.Transparent).clickable { a.openChat(c.file) }.padding(start = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                            Text(c.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (c.current) cs.primary else cs.onSurface)
+                            if (c.status.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(7.dp).clip(CircleShape).background(cs.primary))
+                                Text(c.status, style = MaterialTheme.typography.bodySmall, color = cs.primary, modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
+                        Box {
+                            TextButton(onClick = { menu = true }) { Text("⋯", style = MaterialTheme.typography.titleLarge, color = cs.onSurfaceVariant) }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; a.renameChat(c.file) })
+                                DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; a.deleteChat(c.file) })
+                            }
+                        }
+                    }
+                }
+            }
+            Button(onClick = { a.newChat() }, shape = RoundedCornerShape(28.dp), modifier = Modifier.padding(top = 8.dp)) {
+                Text("New chat", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
             }
         }
     }
