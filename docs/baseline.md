@@ -80,3 +80,21 @@ Not re-run in this milestone: scroll jank during an ingest and the kill test (ga
 | Feed scroll, idle | 0.00 % janky, p99 10 ms | b (idle): pass |
 
 Still on Views (they use Ui.java): Profile, Cards list, Make cards, Capture map, Capture detail, the vault browser (VaultActivity), Dashboard and the Quick capture sheet, plus the card editor and capture dialogs. Ui.java stays until those move. Link preview images still come from Thumb (a View inside Compose); Coil is not added yet.
+
+## Milestone 5 complete (every screen in Compose)
+
+| What | Value | Gate |
+|---|---|---|
+| APK size | 1.75 MB | recorded |
+| First frame, median of 5 | 147 ms | a: pass |
+| Usable Feed, median of 5 | 219 ms | a: pass |
+| Feed scroll, idle | 0.25 % janky, p99 11 ms | b (idle): pass |
+| Memory, Feed idle | 133 MB PSS (baseline 285 MB) | recorded |
+
+All screens are Compose now: Feed, Spark, Search, Ask, Settings, Profile, Source, Topic, notes lists, Cards, Make cards, capture map, Capture detail, the Quick capture sheet and the vault browser. DashboardActivity was unreachable and is deleted, as are Bars.java and the unused View helpers in Ui.java. Platform dialogs (card editor, capture, key, model, confirmations) keep their logic but take a Material 3 look from the theme.
+
+Kept on purpose:
+- Ui.java (144 lines): the palette and type scale the Compose theme reads, the main shell's bottom bar, and the text helper the Markdown reader uses.
+- Md.java renders note Markdown into a TextView with tappable links; the vault reader embeds that TextView in Compose.
+- Thumb.java: link previews already have a memory cache, a disk cache and 480 px downsampling, so Coil would add a dependency for nothing.
+- The home-screen widget stays RemoteViews (widgets cannot use Compose without Glance).

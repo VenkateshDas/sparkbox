@@ -88,19 +88,7 @@ public final class Ui {
         return view;
     }
 
-    /** Status chip, 24 dp tall. kind: 0 neutral, 1 green (done), 2 warning, 3 error. */
-    TextView chip(String label, int kind) {
-        int fill = kind == 1 ? container : kind == 2 ? warnBg : kind == 3 ? errBg : raised;
-        int color = kind == 1 ? onContainer : kind == 2 ? warn : kind == 3 ? err : sub;
-        TextView view = text(label, 12, MEDIUM, color);
-        view.setPadding(dp(8), dp(4), dp(8), dp(4));
-        view.setBackground(round(fill, kind == 0 ? line : 0, 12));
-        view.setSingleLine(true);
-        return view;
-    }
 
-    /** Section label: 14 medium, secondary. */
-    TextView label(String value) { return text(value, 14, MEDIUM, sub); }
 
     GradientDrawable round(int fill, int stroke, float radiusDp) {
         GradientDrawable shape = new GradientDrawable();
@@ -110,22 +98,7 @@ public final class Ui {
         return shape;
     }
 
-    Drawable ripple(Drawable content) {
-        return new RippleDrawable(ColorStateList.valueOf((ink & 0xFFFFFF) | 0x1F000000), content, content == null ? new ColorDrawable(Color.BLACK) : null);
-    }
 
-    /** Primary: accent fill with on-accent text. Secondary: raised surface with a hairline. */
-    TextView button(String label, boolean primary, View.OnClickListener click) {
-        TextView view = text(label, 14, MEDIUM, primary ? onAccent : ink);
-        view.setGravity(Gravity.CENTER);
-        view.setMinHeight(dp(40));
-        view.setMinWidth(dp(48));
-        view.setPadding(dp(14), 0, dp(14), 0);
-        view.setBackground(ripple(round(primary ? accent : raised, primary ? 0 : line, 24)));
-        view.setOnClickListener(click);
-        buttonRole(view);
-        return view;
-    }
 
     static void buttonRole(View view) {
         view.setFocusable(true);
@@ -136,10 +109,6 @@ public final class Ui {
                 info.setSelected(host.isSelected());
             }
         });
-    }
-    /** Back on Android 13+ through the callback API (onBackPressed is no longer called there); older versions keep onBackPressed. */
-    static void back(android.app.Activity a, Runnable r) {
-        if (android.os.Build.VERSION.SDK_INT >= 33) a.getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, r::run);
     }
 
     static void insets(View view) {
@@ -154,30 +123,7 @@ public final class Ui {
         view.requestApplyInsets();
     }
 
-    LinearLayout card(String heading) {
-        LinearLayout card = new LinearLayout(c);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(20), dp(20), dp(20));
-        card.setBackground(round(surface, line, 12));
-        if (heading != null) {
-            LinearLayout.LayoutParams p = lp(0);
-            p.bottomMargin = dp(16);
-            card.addView(label(heading), p);
-        }
-        return card;
-    }
 
-    /** Small status dot: filled accent when done, hollow hairline when not. */
-    View dot(boolean done) {
-        View v = new View(c);
-        GradientDrawable shape = new GradientDrawable();
-        shape.setShape(GradientDrawable.OVAL);
-        shape.setColor(done ? accent : 0);
-        shape.setStroke(dp(1), done ? accent : muted);
-        v.setBackground(shape);
-        v.setLayoutParams(new LinearLayout.LayoutParams(dp(8), dp(8)));
-        return v;
-    }
 
     static String host(String url) {
         String h = Uri.parse(url).getHost();
