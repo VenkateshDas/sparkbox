@@ -47,7 +47,7 @@ public final class Agent {
     }
 
     private static final int PARALLEL = 6;
-    private static final String TRUNCATED = "The response hit the token limit, so this call's arguments may be cut off and it was not run. Call it again with complete arguments.";
+    private static final String TRUNCATED = "The response hit the token limit, so this call's arguments may be cut off and it was not run. Call it again with complete arguments; if the content is long, send a short first part and add the rest in several smaller calls.";
     private static final String INTERRUPTED = "Interrupted: the app stopped while this tool was running, so it did not finish. Check the notes before repeating anything that changes them.";
 
     private final Provider provider;
@@ -254,6 +254,7 @@ public final class Agent {
                 more = false;
                 if (calls != null && calls.length() > 0) {
                     results = execute(calls, stop.equals("length"));
+                    if (stop.equals("length") && !grown) { grown = true; maxTokens = budget * 2; } // a long note needs room: the next try gets double
                     boolean allTerminate = true;
                     for (JSONObject r : results) { add(r); allTerminate &= r.optBoolean("terminate"); }
                     more = !allTerminate;
@@ -327,7 +328,7 @@ public final class Agent {
         for (int attempt = 0; ; attempt++) {
             try {
                 JSONObject reply = provider.stream(request, text -> emit("message_update", text(text)), cancel);
-                return assistant(reply);
+                return assistant(reply, request.optInt("max_tokens"));
             } catch (Exception e) {
                 if (cancel.stopped()) return failed("aborted", "Stopped");
                 String message = String.valueOf(e.getMessage()), kind = Failures.kind(message);
@@ -345,7 +346,7 @@ public final class Agent {
         }
     }
 
-    private JSONObject assistant(JSONObject reply) {
+    private JSONObject assistant(JSONObject reply, int max) {
         try {
             JSONObject m = new JSONObject().put("role", "assistant").put("content", reply.optString("content", ""));
             JSONArray calls = reply.optJSONArray("tool_calls");
@@ -354,6 +355,8 @@ public final class Agent {
                 m.put("tool_calls", calls);
             }
             String finish = reply.optString("finish_reason", "");
+            JSONObject used = reply.optJSONObject("usage");
+            if (calls != null && calls.length() > 0 && used != null && max > 0 && used.optInt("completion_tokens") >= max) finish = "length"; // some providers say tool_calls for a call the limit cut short
             m.put("stopReason", cancel.stopped() ? "aborted" : finish.equals("length") ? "length" : calls != null && calls.length() > 0 ? "toolUse" : "stop");
             if (reply.has("usage")) m.put("usage", reply.get("usage"));
             return m;

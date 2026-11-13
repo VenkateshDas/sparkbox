@@ -125,6 +125,15 @@ final class AgentTest {
         check(a.messages().size() == 2 && a.messages().get(1).getString("content").equals("one two three") && a.messages().get(1).getString("stopReason").equals("stop")
             && cont.getJSONObject(cont.length() - 2).getString("content").equals("one two ") && cont.getJSONObject(cont.length() - 1).getString("role").equals("user"));
 
+        // a tool call that used the whole budget is a cut one even when the provider says tool_calls; the next request gets double
+        f = new Faux().then(calls("counted", "{}").put("usage", new JSONObject().put("completion_tokens", 3000)), say("ok"));
+        ran[0] = 0;
+        a = agent(f, new Cancel(), counted);
+        int cap = a.maxTokens;
+        a.maxTokens = 3000;
+        a.prompt("go");
+        check(ran[0] == 0 && f.requests.get(1).getInt("max_tokens") == 6000 && a.maxTokens == 3000);
+
         // prepareArguments shim runs before validation; coercion turns "5" into 5
         Tool shim = new Tool("shim", "shim", schema("count", "integer"), false) {
             public JSONObject prepareArguments(JSONObject args) throws org.json.JSONException { if (args.has("n")) args.put("count", args.remove("n")); return args; }
