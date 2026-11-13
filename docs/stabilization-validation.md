@@ -1,5 +1,7 @@
 # Sparkbox 1.2.1 stabilization validation
 
+> Historical: validation of release 1.2.1. Current checks and measurements are in [baseline.md](baseline.md).
+
 ## Executed locally
 
 - 82 runnable JVM checks pass, including the existing capture/append checks.
