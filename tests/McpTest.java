@@ -114,6 +114,9 @@ final class McpTest {
             String problems = Mcp.connectAll(Arrays.asList(new Object[]{new Mcp("dead", "http://127.0.0.1:1/mcp", headers), false}, new Object[]{new Mcp("ok", url, headers), false}), (t, d) -> true, into, cancel);
             check(problems.startsWith("dead: ") && into.size() == 5 && into.get(0).name.startsWith("mcp__ok__"));
             check(Mcp.toolName("s", "x".repeat(80), new HashSet<>()).length() == 64);
+            // an allowlist exposes only the named tools
+            List<Tool> only = Mcp.tools(new Mcp("o", url, headers), false, (t, d) -> true, new HashSet<>(), cancel, new HashSet<>(Arrays.asList("echo", "big")));
+            check(only.size() == 2 && only.get(0).name.equals("mcp__o__echo") && only.get(1).name.equals("mcp__o__big"));
         } finally { server.stop(0); }
         System.out.println("MCP checks passed (" + count + ").");
     }

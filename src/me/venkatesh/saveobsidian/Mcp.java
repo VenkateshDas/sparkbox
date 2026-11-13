@@ -28,7 +28,7 @@ public final class Mcp {
     private final Map<String, String> headers;
     private String session, protocol;
     private int next = 1;
-    public int timeoutMs = 60_000;
+    public int timeoutMs = 180_000; // search and fetch are synchronous and can take a while
 
     public Mcp(String name, String url, Map<String, String> headers) { this.name = name; this.url = url; this.headers = headers; }
 
@@ -188,11 +188,15 @@ public final class Mcp {
     }
 
     /** One agent tool per MCP tool of this server. Names already in use (by other servers' tools) get a hash suffix. */
-    public static List<Tool> tools(final Mcp server, final boolean trusted, final VaultTools.Confirm confirm, Set<String> taken, Cancel cancel) throws Exception {
+    public static List<Tool> tools(Mcp server, boolean trusted, VaultTools.Confirm confirm, Set<String> taken, Cancel cancel) throws Exception { return tools(server, trusted, confirm, taken, cancel, null); }
+
+    /** allow: only these server-side tool names are exposed (null = all). Keeps big servers cheap in context and paid tools out of reach. */
+    public static List<Tool> tools(final Mcp server, final boolean trusted, final VaultTools.Confirm confirm, Set<String> taken, Cancel cancel, Set<String> allow) throws Exception {
         List<Tool> out = new ArrayList<>();
         JSONArray listed = server.listTools(cancel);
         for (int i = 0; i < listed.length(); i++) {
             final JSONObject t = listed.getJSONObject(i);
+            if (allow != null && !allow.contains(t.getString("name"))) continue;
             final String remote = t.getString("name"), local = toolName(server.name, remote, taken);
             taken.add(local);
             final boolean readOnly = t.optJSONObject("annotations") != null && t.getJSONObject("annotations").optBoolean("readOnlyHint");
@@ -213,9 +217,9 @@ public final class Mcp {
         StringBuilder problems = new StringBuilder();
         Set<String> taken = new HashSet<>();
         for (Tool t : into) taken.add(t.name);
-        for (Object[] s : servers) { // {Mcp, Boolean trusted}
+        for (Object[] s : servers) { // {Mcp, Boolean trusted, Set<String> allow or absent}
             Mcp m = (Mcp) s[0];
-            try { m.connect(cancel); into.addAll(tools(m, (Boolean) s[1], confirm, taken, cancel)); }
+            try { m.connect(cancel); into.addAll(tools(m, (Boolean) s[1], confirm, taken, cancel, s.length > 2 ? (Set<String>) s[2] : null)); }
             catch (Exception e) { problems.append(m.name).append(": ").append(e.getMessage()).append('\n'); }
         }
         return problems.toString();

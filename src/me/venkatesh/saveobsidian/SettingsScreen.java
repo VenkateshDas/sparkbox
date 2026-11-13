@@ -195,14 +195,27 @@ final class SettingsScreen extends Screen {
         org.json.JSONObject s = list.optJSONObject(at);
         if (s == null) return;
         boolean on = s.optBoolean("enabled", true), trusted = s.optBoolean("trusted");
-        new android.app.AlertDialog.Builder(host).setTitle(s.optString("name")).setItems(new String[]{on ? "Turn off" : "Turn on", trusted ? "Ask before every call" : "Trust its read-only tools (no question)", "Remove"}, (d, which) -> {
+        new android.app.AlertDialog.Builder(host).setTitle(s.optString("name")).setItems(new String[]{on ? "Turn off" : "Turn on", trusted ? "Ask before every call" : "Trust its read-only tools (no question)", "Allowed tools: " + (s.optString("allow").isEmpty() ? "all" : s.optString("allow")), "Remove"}, (d, which) -> {
             try {
+                if (which == 2) { allowDialog(at); return; }
                 if (which == 0) s.put("enabled", !on);
                 else if (which == 1) s.put("trusted", !trusted);
-                else { org.json.JSONArray keep = new org.json.JSONArray(); for (int i = 0; i < list.length(); i++) if (i != at) keep.put(list.get(i)); Scout.saveServers(ui.c, keep); ui.c.getSharedPreferences("capture", 0).edit().remove("mcpToken:" + s.optString("name")).apply(); draw(); return; }
+                else if (which == 3) { org.json.JSONArray keep = new org.json.JSONArray(); for (int i = 0; i < list.length(); i++) if (i != at) keep.put(list.get(i)); Scout.saveServers(ui.c, keep); ui.c.getSharedPreferences("capture", 0).edit().remove("mcpToken:" + s.optString("name")).apply(); draw(); return; }
                 Scout.saveServers(ui.c, list);
             } catch (Exception ignored) { }
             draw();
         }).show();
+    }
+
+    private void allowDialog(int at) {
+        org.json.JSONArray list = Scout.serverList(ui.c);
+        org.json.JSONObject s = list.optJSONObject(at);
+        if (s == null) return;
+        LinearLayout box = new LinearLayout(ui.c);
+        box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
+        android.widget.EditText e = field(box, "search, fetch_content (empty = every tool)", false);
+        e.setText(s.optString("allow"));
+        new android.app.AlertDialog.Builder(host).setTitle("Allowed tools").setMessage("The server's own tool names, separated by commas. Only these are offered to Scout. Fewer tools means less to send each time, and keeps paid tools out of reach.").setView(box)
+            .setPositiveButton("Save", (d, w) -> { try { s.put("allow", e.getText().toString().trim()); Scout.saveServers(ui.c, list); } catch (Exception ignored) { } draw(); }).setNegativeButton("Cancel", null).show();
     }
 }
