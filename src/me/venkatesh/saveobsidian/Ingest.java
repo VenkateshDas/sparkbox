@@ -73,14 +73,21 @@ final class Ingest {
                 if (done >= PER_RUN || Tagger.halt || SetupActivity.editing || System.currentTimeMillis() - started > RUN_BUDGET) break;
                 String ek = entryKey(e);
                 int tries = prog.getInt("tries:" + ek, 0);
-                if (!eligible(c, e) || tries >= MAX_TRIES || System.currentTimeMillis() < prog.getLong("next:" + ek, 0)) continue;
+                if (!eligible(c, e) || tries >= MAX_TRIES || System.currentTimeMillis() < prog.getLong("next:" + ek, 0)) {
+                    android.util.Log.i("Sparkbox", "ingest skip " + e.shownTitle() + " eligible=" + eligible(c, e) + " tries=" + tries + " waitMs=" + (prog.getLong("next:" + ek, 0) - System.currentTimeMillis()));
+                    continue;
+                }
+                android.util.Log.i("Sparkbox", "ingest start " + e.shownTitle() + " tries=" + tries);
+                long began = System.currentTimeMillis();
                 try {
                     process(c, key, e, ek, snap, tries);
+                    android.util.Log.i("Sparkbox", "ingest done " + e.shownTitle() + " in " + (System.currentTimeMillis() - began) + " ms");
                     done++;
                     prefs.edit().remove("ingestProblem").apply();
                     prog.edit().remove("err:" + ek).remove("next:" + ek).apply();
                 } catch (Exception failed) {
                     prog.edit().remove("stage:" + ek).apply();
+                    android.util.Log.i("Sparkbox", "ingest failed " + e.shownTitle() + " after " + (System.currentTimeMillis() - began) + " ms: " + failed);
                     if (Net.offline(failed)) { // no connection is not this capture's fault: no try is used, and the job comes back in a couple of minutes
                         prog.edit().putLong("next:" + ek, System.currentTimeMillis() + 2 * MINUTE).putString("err:" + ek, OFFLINE).apply();
                         prefs.edit().putString("ingestProblem", OFFLINE).apply();
@@ -169,6 +176,9 @@ final class Ingest {
                 int tries = prog.getInt("tries:" + ek, 0);
                 if ((tries > 0 || prog.getString("err:" + ek, "").equals(OFFLINE)) && tries < MAX_TRIES && eligible(c, e)) soonest = Math.min(soonest, prog.getLong("next:" + ek, 0) - now);
             }
+            if (soonest == Long.MAX_VALUE) { // a capture that is ready but was never picked up (a run ended just before it arrived): look again in a minute
+                for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) if (queued(c, e)) return MINUTE;
+            }
             return soonest == Long.MAX_VALUE ? -1 : Math.max(soonest, MINUTE);
         } catch (Exception unreadable) { return -1; }
     }
@@ -209,7 +219,7 @@ final class Ingest {
             final String pageForLane = page;
             Thread laneThread = new Thread(() -> laneBox[0] = Classify.of(c, key, e.shownTitle(), e.url, e.tldr, e.why, e.ideas, pageForLane, ""));
             laneThread.start();
-            try { plan = Model.completeJson(key, use, SYSTEM, user, 3500, "ingest_plan", Schemas.plan(), FALLBACK_MODEL); }
+            try { plan = Model.completeJson(key, use, SYSTEM, user, 4500, "ingest_plan", Schemas.plan(), FALLBACK_MODEL); }
             catch (Exception failed) { laneThread.interrupt(); throw failed; }
             if (plan.optJSONArray("topics") == null || plan.optJSONArray("topics").length() == 0) throw new IOException("The model's answer had no topics");
             stage(prog, ek, 3);

@@ -167,7 +167,7 @@ final class Model {
     static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json, String schemaName, JSONObject schema) throws Exception {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
             .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
-        if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
+        if (noReasoning) request.put("reasoning", "low".equals(REASONING.get(model)) ? new JSONObject().put("effort", "low") : new JSONObject().put("enabled", false));
         if (schema != null) {
             request.put("response_format", new JSONObject().put("type", "json_schema").put("json_schema", new JSONObject().put("name", schemaName).put("strict", true).put("schema", schema)));
             request.put("provider", new JSONObject().put("require_parameters", true));
@@ -198,6 +198,11 @@ final class Model {
     /** Why the last reply came back empty (finish reason, reasoning size), for the error shown to the owner. */
     private static final ThreadLocal<String> LAST_EMPTY = new ThreadLocal<>();
 
+    /** Per model: "low" once it has answered that its thinking cannot be switched off (GLM 5.3 Flash), so the app asks for the least thinking instead. */
+    private static final java.util.Map<String, String> REASONING = java.util.Collections.synchronizedMap(new java.util.HashMap<String, String>());
+
+    private static boolean mandatoryThinking(Rejected r) { return String.valueOf(r.getMessage()).toLowerCase(java.util.Locale.ROOT).contains("mandatory"); }
+
     private static final java.util.Set<String> NO_REASONING_FIELD = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     private static final java.util.Set<String> NO_JSON_MODE = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
 
@@ -205,7 +210,10 @@ final class Model {
     static String completeLean(String key, String model, String system, String user, int maxTokens) throws Exception {
         if (NO_REASONING_FIELD.contains(model)) return complete(key, model, system, user, maxTokens, false);
         try { return complete(key, model, system, user, maxTokens, true); }
-        catch (Rejected refused) { NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false); }
+        catch (Rejected refused) {
+            if (mandatoryThinking(refused) && !"low".equals(REASONING.get(model))) { REASONING.put(model, "low"); return complete(key, model, system, user, maxTokens, true); }
+            NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false);
+        }
     }
 
     /**
@@ -247,6 +255,7 @@ final class Model {
                 return reply;
             } catch (Rejected refused) {
                 android.util.Log.i("Sparkbox", "model " + model + " refused (structured " + structured + ", json " + json + ", lean " + lean + "): " + refused.getMessage());
+                if (lean && mandatoryThinking(refused) && !"low".equals(REASONING.get(model))) { REASONING.put(model, "low"); continue; } // not the format's fault: this model always thinks, so ask for the least
                 if (structured) { structured = false; droppedSchema = true; }
                 else if (json) { json = false; droppedJson = true; }
                 else if (lean) { lean = false; droppedLean = true; }
