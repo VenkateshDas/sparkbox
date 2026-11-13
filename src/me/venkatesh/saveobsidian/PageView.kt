@@ -66,11 +66,16 @@ class Act(val label: String, val onClick: Runnable)
 /** A card in a list: tags, a bold first line, body, a quiet note, and text actions under it. */
 class Entry(val tags: List<Tag>, val title: String, val body: String, val note: String, val acts: List<Act>) : Block
 /** A text field. Typing reports through onChange; publishing a new value (a chip tap) replaces the text. chips add a prefix when tapped. */
-class Field(val label: String, val value: String, val minLines: Int, val chips: List<Act>, val onChange: java.util.function.Consumer<String>) : Block
+class Field @JvmOverloads constructor(val label: String, val value: String, val minLines: Int, val chips: List<Act>, val onChange: java.util.function.Consumer<String>, val hint: String = "") : Block
 class Meter(val done: Int, val total: Int) : Block
 /** A View drawn inside the page (a link preview). */
 class Picture(val height: Int, val make: java.util.function.Supplier<View>) : Block
 class Buttons(val acts: List<Act>) : Block
+/** Chips that open something (a note's topics). */
+class Chips(val acts: List<Act>) : Block
+class Tabs(val labels: List<String>, val selected: Int, val onSelect: java.util.function.IntConsumer) : Block
+/** A View that sizes itself (rendered Markdown). Made again on every publish. */
+class Rich(val make: java.util.function.Supplier<View>) : Block
 /** A big avatar letter with a title and subtitle, for profile-style headers. */
 class Hero(val letter: String, val title: String, val sub: String) : Block
 class Danger(val text: String, val onClick: Runnable) : Block
@@ -79,7 +84,9 @@ class Editor(val label: String, val saved: String, val draft: String, val hint: 
 
 class PageState {
     var blocks by mutableStateOf(emptyList<Block>()); private set
+    var title by mutableStateOf(""); private set
     fun publish(b: List<Block>) { blocks = b }
+    fun publish(title: String, b: List<Block>) { this.title = title; blocks = b }
 }
 
 object PageView {
@@ -103,7 +110,7 @@ fun TopBar(title: String, back: Runnable?, actions: @Composable () -> Unit = {})
 private fun Page(title: String, state: PageState, back: Runnable) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column {
-            TopBar(title, back)
+            TopBar(state.title.ifEmpty { title }, back)
             LazyColumn(contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 itemsIndexed(state.blocks, contentType = { _, b -> b::class }) { _, b -> BlockUi(b) }
             }
@@ -198,17 +205,25 @@ fun BlockUi(b: Block) {
             }
         }
         is Field -> Column {
-            Text(b.label, style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+            if (b.label.isNotEmpty()) Text(b.label, style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
             if (b.chips.isNotEmpty()) Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 b.chips.forEach { c -> androidx.compose.material3.AssistChip(onClick = { c.onClick.run() }, label = { Text(c.label) }) }
             }
             var text by remember(b.value) { mutableStateOf(b.value) }
-            OutlinedTextField(value = text, onValueChange = { text = it; b.onChange.accept(it) }, minLines = b.minLines, textStyle = MaterialTheme.typography.bodyLarge,
+            OutlinedTextField(value = text, onValueChange = { text = it; b.onChange.accept(it) }, minLines = b.minLines, singleLine = b.minLines == 1,
+                placeholder = if (b.hint.isEmpty()) null else ({ Text(b.hint) }), shape = RoundedCornerShape(if (b.minLines == 1) 24.dp else 8.dp), textStyle = MaterialTheme.typography.bodyLarge,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences),
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
         }
         is Meter -> androidx.compose.material3.LinearProgressIndicator(progress = { if (b.total == 0) 0f else b.done.toFloat() / b.total }, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)))
-        is Picture -> androidx.compose.ui.viewinterop.AndroidView(factory = { b.make.get() }, modifier = Modifier.fillMaxWidth().heightIn(min = b.height.dp, max = b.height.dp).clip(RoundedCornerShape(12.dp)))
+        is Picture -> androidx.compose.runtime.key(b) { androidx.compose.ui.viewinterop.AndroidView(factory = { b.make.get() }, modifier = Modifier.fillMaxWidth().heightIn(min = b.height.dp, max = b.height.dp).clip(RoundedCornerShape(12.dp))) }
+        is Rich -> androidx.compose.runtime.key(b) { androidx.compose.ui.viewinterop.AndroidView(factory = { b.make.get() }, modifier = Modifier.fillMaxWidth()) }
+        is Chips -> androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(b.acts.size) { i -> androidx.compose.material3.SuggestionChip(onClick = { b.acts[i].onClick.run() }, label = { Text(b.acts[i].label) }) }
+        }
+        is Tabs -> androidx.compose.material3.PrimaryTabRow(selectedTabIndex = b.selected, containerColor = androidx.compose.ui.graphics.Color.Transparent) {
+            b.labels.forEachIndexed { i, l -> androidx.compose.material3.Tab(selected = i == b.selected, onClick = { b.onSelect.accept(i) }, text = { Text(l) }) }
+        }
         is Buttons -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             b.acts.forEachIndexed { i, a ->
                 if (i == 0) Button(onClick = { a.onClick.run() }, modifier = Modifier.weight(1f)) { Text(a.label) }
