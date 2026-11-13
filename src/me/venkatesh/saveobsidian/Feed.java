@@ -26,6 +26,8 @@ public final class Feed {
         /** Source notes a topic gained recently, mentions of a person. */
         public int count, cards;
         public boolean kept;
+        /** Other notes that share a topic with this one, best first: {title, path}. When there are none, the topics themselves. */
+        public List<String[]> related = new ArrayList<>();
         /** Epoch minute of the capture (or the start of its day when only a date is known) and the tie-break. */
         long minute, tie;
         /** The inbox entry for a capture that has no note yet. */
@@ -77,7 +79,7 @@ public final class Feed {
 
     /** A link without tracking tail, fragment or trailing slash, for matching an inbox entry with the note made from it. */
     static String norm(String url) {
-        String u = url.trim().toLowerCase(Locale.ROOT).replaceFirst("[?#].*$", "").replaceFirst("^https?://(www\\.)?", "");
+        String u = Capture.identity(url).toLowerCase(Locale.ROOT).replaceFirst("^https?://(www\\.)?", "");
         return u.endsWith("/") ? u.substring(0, u.length() - 1) : u;
     }
 
@@ -101,6 +103,25 @@ public final class Feed {
         return s.toString();
     }
 
+    /** Up to three notes related to this Source: other Sources under the same topics (most topics in common, then newest), else the topics. {title, path} each. */
+    static List<String[]> related(Vault.Note n, Vault.Graph graph) {
+        List<String[]> out = new ArrayList<>();
+        if (graph == null) return out;
+        List<Vault.Note> topics = new ArrayList<>();
+        for (Vault.Note t : graph.out(n)) if (t.path.startsWith("Knowledge/Topics/") && !t.catalog) topics.add(t);
+        final java.util.Map<Vault.Note, Integer> shared = new java.util.HashMap<>();
+        for (Vault.Note t : topics) for (Vault.Note s : graph.in(t)) {
+            if (s == n || s.catalog || !Layout.inSources(s.path) || s.path.endsWith("/My cards.md") || s.path.endsWith("/Inbox.md")) continue;
+            Integer have = shared.get(s);
+            shared.put(s, have == null ? 1 : have + 1);
+        }
+        List<Vault.Note> ranked = new ArrayList<>(shared.keySet());
+        Collections.sort(ranked, (a, b) -> shared.get(a).equals(shared.get(b)) ? Long.compare(b.mtime, a.mtime) : shared.get(b) - shared.get(a));
+        for (int i = 0; i < ranked.size() && out.size() < 3; i++) out.add(new String[]{ranked.get(i).title, ranked.get(i).path});
+        if (out.isEmpty()) for (int i = 0; i < topics.size() && out.size() < 3; i++) out.add(new String[]{topics.get(i).title, topics.get(i).path});
+        return out;
+    }
+
     /** All items, newest first (people last, by note change time). Topic cards need two sources in the last seven days. */
     public static List<Item> build(Collection<Vault.Note> notes, Vault.Graph graph, List<InboxFile.Entry> inbox, LocalDateTime now) {
         List<Item> out = new ArrayList<>();
@@ -122,6 +143,7 @@ public final class Feed {
             it.tldr = n.description.equals(n.title) ? "" : n.description.replaceAll("\\s*\\((high|medium|low)\\)\\s*$", ""); // the confidence tag is for the Unit screen
             it.why = n.why.startsWith("Reason was not recorded") ? "" : n.why; // the agent writes this placeholder when the owner gave no reason
             it.made = made(n);
+            it.related = related(n, graph);
             boolean[] time = new boolean[1];
             LocalDateTime at = when(n.meta("captured"), time);
             if (at == null) at = when(n.path.substring(n.path.lastIndexOf('/') + 1), time);

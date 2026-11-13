@@ -7,7 +7,19 @@ import java.util.Map;
 public final class Lane {
     public static final String CRAFT = "Craft", LIFE = "Life";
 
+    public static final String[] CRAFT_FOLDERS = {"AI Systems", "Models & Training", "Data & Knowledge", "Developer Tools", "Research Workflow"};
+    public static final String[] LIFE_FOLDERS = {"Health & Biology", "People & Society"};
+
     private Lane() { }
+
+    /** {lane, folder} from what a model named, made consistent: a valid folder decides its own lane; with no valid folder, "life" gets People & Society. Null when neither is usable. */
+    public static String[] pick(String lane, String category) {
+        String cat = category == null ? "" : category.trim();
+        for (String f : CRAFT_FOLDERS) if (f.equalsIgnoreCase(cat)) return new String[]{CRAFT, f};
+        for (String f : LIFE_FOLDERS) if (f.equalsIgnoreCase(cat)) return new String[]{LIFE, f};
+        if (lane != null && lane.trim().equalsIgnoreCase("life")) return new String[]{LIFE, LIFE_FOLDERS[1]};
+        return null;
+    }
 
     /** "Craft", "Life", or "" when the path is not a Source note and no key says otherwise. */
     public static String of(String path, Map<String, String> meta) {

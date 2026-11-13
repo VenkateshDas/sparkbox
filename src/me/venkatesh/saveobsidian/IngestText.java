@@ -38,9 +38,9 @@ public final class IngestText {
 
     /** The Source note: front matter, then Raw Content, Why, Ideas and Claude's Extraction as Agents.md describes. */
     public static String sourceNote(String title, String url, String author, String captured, List<String> topics, List<String> people,
-                                    String why, String ideas, String raw, List<String> claims, List<String> flags) {
+                                    String why, String ideas, String raw, List<String> claims, List<String> flags, String lane) {
         StringBuilder s = new StringBuilder("---\ntype: source\nsource: \"" + url.replace("\"", "%22") + "\"\nauthor: \"" + author.replace("\"", "'") + "\"\ncaptured: " + captured
-            + "\nvia: Sparkbox\ntopics: " + quoteList(topics) + "\npeople: " + quoteList(people) + "\nprocessed: true\n---\n\n# " + title + "\n");
+            + "\nvia: Sparkbox\n" + (lane == null || lane.isEmpty() ? "" : "lane: " + lane.toLowerCase(java.util.Locale.ROOT) + "\n") + "topics: " + quoteList(topics) + "\npeople: " + quoteList(people) + "\nprocessed: true\n---\n\n# " + title + "\n");
         if (!raw.isEmpty()) s.append("\n## Raw Content\n").append(raw).append('\n');
         if (!why.trim().isEmpty()) s.append("\n## Why I captured this\n").append(why.trim()).append('\n');
         if (!ideas.trim().isEmpty()) s.append("\n## My ideas\n").append(ideas.trim()).append('\n');

@@ -10,7 +10,7 @@ import java.util.Set;
 
 /** The readable text fetched for a link while it was tagged, kept privately so Ask can use it without fetching the page again. */
 final class Content {
-    private static String name(String url) { return Long.toHexString(Index.key(url.replaceFirst("[?#].*$", ""))); }
+    private static String name(String url) { return Long.toHexString(Index.key(Capture.identity(url))); }
 
     private static File file(Context c, String url) { return new File(new File(c.getFilesDir(), "content"), name(url) + ".txt"); }
 
@@ -21,6 +21,8 @@ final class Content {
             Files.write(f.toPath(), text.getBytes(StandardCharsets.UTF_8));
         } catch (Exception ignored) { } // a cache: losing it only costs a refetch
     }
+
+    static void remove(Context c, String url) { file(c, url).delete(); }
 
     static boolean has(Context c, String url) { return file(c, url).length() > 0; }
 

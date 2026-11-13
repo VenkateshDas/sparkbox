@@ -13,6 +13,9 @@ import me.venkatesh.saveobsidian.Cards;
 import me.venkatesh.saveobsidian.Sched;
 import me.venkatesh.saveobsidian.Spark;
 import me.venkatesh.saveobsidian.CardPrompt;
+import me.venkatesh.saveobsidian.Extract;
+import me.venkatesh.saveobsidian.Transcript;
+import me.venkatesh.saveobsidian.JsonFix;
 import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
@@ -78,6 +81,7 @@ public class CaptureTest {
         citesChecks();
         entityChecks();
         cardChecks();
+        readingChecks();
         check(AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,2,3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{3}));
         check(!AppendCheck.matches(new byte[]{1,2}, new byte[]{3}, new byte[]{1,9,3}));
@@ -148,7 +152,7 @@ public class CaptureTest {
     }
     static void feedChecks() {
         Layout.detect(new ArrayList<String>());
-        String note = "---\ntype: source\nsource: \"https://www.example.com/a?utm=1\"\ncaptured: 2026-11-11\nvia: Sparkbox\nprocessed: true\ncuriosity: \"What changes?\"\nmade-topics-new: [\"[[T1]]\"]\nmade-topics-updated: [\"[[T2]]\"]\nmade-people-updated: [\"[[P]]\"]\n---\n\n# Stop coding\n\n## Why I captured this\nIdea to test.\n\n## Raw Content\none two three four\n\n## Claude's Extraction\n- x\n";
+        String note = "---\ntype: source\nsource: \"https://www.example.com/a?utm_source=1\"\ncaptured: 2026-11-11\nvia: Sparkbox\nprocessed: true\ncuriosity: \"What changes?\"\nmade-topics-new: [\"[[T1]]\"]\nmade-topics-updated: [\"[[T2]]\"]\nmade-people-updated: [\"[[P]]\"]\n---\n\n# Stop coding\n\n## Why I captured this\nIdea to test.\n\n## Raw Content\none two three four\n\n## Claude's Extraction\n- x\n";
         Vault.Note src = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-11 - Stop coding.md", 1000, note);
         check(src.processed() && src.meta("curiosity").equals("What changes?") && src.why.equals("Idea to test.") && src.words == 4);
         check(Vault.bullets("## Claude's Extraction\n### Key claims\n- One (high)\n- Two (low)\n### Topics identified\n- [[X]]\n", "Key claims").equals(Arrays.asList("One (high)", "Two (low)")));
@@ -519,5 +523,70 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(Index.load(file).size() == 0 && Index.load(new java.io.File(file.getPath() + ".none")).size() == 0);
         file.delete();
     }
+    /** Page extraction, YouTube parsing, model-reply repair, lane choice. */
+    private static void readingChecks() throws Exception {
+        // an article page: navigation, a sidebar of links and a footer around the real text
+        String para = "The cache keeps recent results close to the reader, which saves a long trip to the database, and it is cleared when the data changes. ";
+        String html = "<html><head><title>Fast caches | Example Blog</title><meta property='og:site_name' content='Example Blog'><meta name='author' content='Ada Lovelace'>"
+            + "<meta property='og:image' content='/img/cover.png'></head><body><nav><a href='/'>Home</a><a href='/about'>About</a><a href='/x'>Archive</a></nav>"
+            + "<div class='sidebar'><a href='/a'>Popular one</a><a href='/b'>Popular two</a><a href='/c'>Popular three</a></div>"
+            + "<div class='post-content'><h1>Fast caches</h1><p>" + para + para + "</p><p>" + para + para + "</p><h2>Why it works</h2><p>" + para + para + "</p><ul><li>Keep it small and fast to read from memory</li></ul></div>"
+            + "<footer>Copyright Example Blog. All rights reserved. Privacy. Terms.</footer></body></html>";
+        Extract.Page page = Extract.parse(html, "https://blog.example.com/fast-caches");
+        check(page.title.equals("Fast caches"));
+        check(page.byline.equals("Ada Lovelace"));
+        check(page.image.equals("https://blog.example.com/img/cover.png"));
+        check(page.text.contains("saves a long trip to the database"));
+        check(page.text.contains("### Why it works"));
+        check(!page.text.contains("Popular two") && !page.text.contains("Copyright") && !page.text.contains("About"));
+        check(!page.blocked);
+        // structured data wins when the visible page is a thin app shell
+        String shell = "<html><head><title>Post</title><script type='application/ld+json'>{\"@context\":\"https://schema.org\",\"@graph\":[{\"@type\":\"BlogPosting\",\"headline\":\"From JSON\",\"author\":{\"name\":\"Grace\"},\"articleBody\":\"" + para.repeat(4).trim() + "\"}]}</script></head><body><div id='root'></div></body></html>";
+        Extract.Page ld = Extract.parse(shell, "https://x.example/p");
+        check(ld.title.equals("From JSON") && ld.byline.equals("Grace") && ld.text.contains("saves a long trip"));
+        // a bot check is reported as blocked, not as the article
+        Extract.Page wall = Extract.parse("<html><head><title>Just a moment...</title></head><body><h1>Just a moment...</h1><p>Enable JavaScript and cookies to continue</p></body></html>", "https://x.example/");
+        check(wall.blocked && wall.text.isEmpty());
+        check(Extract.parse("", "https://x.example/").text.isEmpty());
+
+        // YouTube links
+        check(Transcript.videoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://youtu.be/dQw4w9WgXcQ?si=abc").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://m.youtube.com/shorts/dQw4w9WgXcQ").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://www.youtube.com/live/dQw4w9WgXcQ?feature=share").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://music.youtube.com/watch?list=x&v=dQw4w9WgXcQ").equals("dQw4w9WgXcQ"));
+        check(Transcript.videoId("https://www.youtube.com/channel/UC1234567890").isEmpty());
+        check(Transcript.videoId("https://example.com/watch?v=dQw4w9WgXcQ").isEmpty());
+        check(Transcript.videoId("not a url").isEmpty());
+        // caption tracks: written English beats automatic English beats other languages
+        org.json.JSONArray tracks = new org.json.JSONArray("[{\"baseUrl\":\"a\",\"languageCode\":\"de\"},{\"baseUrl\":\"b\",\"languageCode\":\"en\",\"kind\":\"asr\"},{\"baseUrl\":\"c\",\"languageCode\":\"en\"}]");
+        check(Transcript.pick(tracks).getString("baseUrl").equals("c"));
+        check(Transcript.pick(new org.json.JSONArray("[{\"baseUrl\":\"a\",\"languageCode\":\"de\"},{\"baseUrl\":\"b\",\"languageCode\":\"en\",\"kind\":\"asr\"}]")).getString("baseUrl").equals("b"));
+        check(Transcript.pick(new org.json.JSONArray("[]")) == null && Transcript.pick(null) == null);
+        // caption XML, both formats; a pause starts a paragraph; entities are decoded
+        String f3 = "<?xml version=\"1.0\"?><timedtext format=\"3\"><body><p t=\"1000\" d=\"2000\">We&#39;re no strangers</p><p t=\"3000\" d=\"2000\">to love &amp; war</p><p t=\"9000\" d=\"1000\">A new idea</p></body></timedtext>";
+        check(Transcript.fromXml(f3).equals("We're no strangers to love & war\n\nA new idea"));
+        String srv1 = "<transcript><text start=\"0\" dur=\"2\">Don&amp;#39;t panic</text><text start=\"2\" dur=\"2\">it works</text></transcript>";
+        check(Transcript.fromXml(srv1).equals("Don't panic it works"));
+        check(Transcript.fromXml("<timedtext><body><p t=\"0\" d=\"1\">[Music]</p><p t=\"1000\" d=\"1\">Hello</p></body></timedtext>").equals("Hello"));
+        check(Transcript.fromXml("").isEmpty() && Transcript.fromXml("<timedtext><body></body></timedtext>").isEmpty());
+
+        // model replies that are almost JSON
+        check(JsonFix.object("Here you go:\n```json\n{\"a\": 1, \"b\": [1, 2,],}\n```").getInt("a") == 1);
+        check(JsonFix.object("{\"a\": \"line one\nline two\"}").getString("a").equals("line one\nline two"));
+        org.json.JSONObject cut = JsonFix.object("{\"topics\": [{\"title\": \"One\"}, {\"title\": \"Two\", \"claims\": [{\"claim\": \"cut o");
+        check(cut != null && cut.getJSONArray("topics").length() == 2 && cut.getJSONArray("topics").getJSONObject(0).getString("title").equals("One"));
+        check(JsonFix.object("no json here") == null && JsonFix.object("") == null && JsonFix.object(null) == null);
+        check(JsonFix.object("{\"a\":{\"b\":2}}").getJSONObject("a").getInt("b") == 2);
+
+        // two videos are two links; tracking noise and fragments are not part of a link's identity
+        check(!Capture.identity("https://www.youtube.com/watch?v=aaaaaaaaaaa").equals(Capture.identity("https://www.youtube.com/watch?v=bbbbbbbbbbb")));
+        check(Capture.identity("https://a.com/p?id=7&utm_source=x#top").equals("https://a.com/p?id=7") && Capture.identity("https://a.com/p#x").equals("https://a.com/p"));
+        // lane and folder from the classifier
+        check(Lane.pick("craft", "Developer Tools")[0].equals("Craft") && Lane.pick("life", "developer tools")[0].equals("Craft")); // a real folder decides its own lane
+        check(Lane.pick("life", "Health & Biology")[1].equals("Health & Biology") && Lane.pick("craft", "Health & Biology")[0].equals("Life"));
+        check(Lane.pick("life", "nonsense")[1].equals("People & Society") && Lane.pick("craft", "nonsense") == null && Lane.pick("", "") == null);
+    }
+
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("check #" + count); }
 }

@@ -128,6 +128,12 @@ final class UnitScreen extends Screen {
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         p.topMargin = ui.dp(16);
         page.addView(ask, p);
+        TextView delete = ui.text("Delete note", 14, Ui.MEDIUM, ui.err);
+        delete.setGravity(Gravity.CENTER);
+        delete.setMinHeight(ui.dp(48));
+        delete.setOnClickListener(v -> Edits.confirmDelete(host, n.path, n.title, () -> host.onBackPressed()));
+        Ui.buttonRole(delete);
+        page.addView(delete, ui.lp(8));
     }
 
     /** "In my words": the note's "## My ideas" section as a text box. Save shows only when the text changed. */

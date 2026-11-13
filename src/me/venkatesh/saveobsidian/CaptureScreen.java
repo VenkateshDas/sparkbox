@@ -53,6 +53,20 @@ final class CaptureScreen extends Screen {
         if (!entry.tags.isEmpty()) page.addView(ui.text("#" + entry.tags.replace(", ", "  #"), 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         page.addView(ui.text("Saved on this phone. When ingest runs it becomes a note, then it is processed into topics and cards.", 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
 
+        String problem = Ingest.problem(ui.c, entry);
+        if (!problem.isEmpty()) {
+            TextView warn = ui.text(problem, 13, Typeface.DEFAULT, ui.warn);
+            warn.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+            warn.setBackground(ui.round(ui.warnBg, 0, 8));
+            page.addView(warn, ui.lp(0));
+        }
+        if (!entry.url.isEmpty() && entry.file.isEmpty() && !Model.key(ui.c).isEmpty()) {
+            page.addView(ui.button(problem.isEmpty() ? "Process now" : "Retry now", true, v -> {
+                Ingest.retry(ui.c, entry);
+                Toast.makeText(ui.c, "Processing in the background", Toast.LENGTH_SHORT).show();
+                host.onBackPressed();
+            }), ui.lp(12));
+        }
         if (!entry.url.isEmpty()) {
             LinearLayout row = new LinearLayout(ui.c);
             row.addView(ui.button("Open source", true, v -> open()), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));

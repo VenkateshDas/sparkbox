@@ -449,6 +449,29 @@ final class FeedScreen extends Screen {
         if (!it.waiting.isEmpty()) card.addView(ui.text(it.waiting, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (!it.made.isEmpty()) card.addView(ui.text(it.made, 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
         if (it.cards > 0) card.addView(ui.text(it.cards + (it.cards == 1 ? " card" : " cards") + (it.kept ? ", up first in Spark" : ""), 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
+        String problem = it.entry == null ? "" : Ingest.problem(ui.c, it.entry);
+        if (!problem.isEmpty()) {
+            TextView warn = ui.text(problem, 13, Typeface.DEFAULT, ui.warn);
+            warn.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
+            warn.setBackground(ui.round(ui.warnBg, 0, 8));
+            card.addView(warn, ui.lp(8));
+        }
+        if (!it.related.isEmpty()) {
+            LinearLayout rel = new LinearLayout(ui.c);
+            rel.setOrientation(LinearLayout.VERTICAL);
+            rel.addView(ui.text("Related", 12, Ui.BOLD, ui.sub));
+            for (final String[] r : it.related) {
+                TextView link = ui.text(r[0], 14, Ui.MEDIUM, ui.accent);
+                link.setSingleLine(true);
+                link.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                link.setMinHeight(ui.dp(40));
+                link.setGravity(Gravity.CENTER_VERTICAL);
+                link.setOnClickListener(v -> host.openNote(r[1]));
+                Ui.buttonRole(link);
+                rel.addView(link);
+            }
+            card.addView(rel, ui.lp(12));
+        }
 
         View rule = new View(ui.c);
         rule.setBackgroundColor(ui.line);
@@ -457,13 +480,25 @@ final class FeedScreen extends Screen {
         card.addView(rule, rp);
         LinearLayout bar = new LinearLayout(ui.c);
         if (it.entry == null) bar.addView(action("Ask", R.drawable.ic_nav_ask, v -> host.ask("Tell me about " + it.title)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
+        else if (!it.entry.url.isEmpty() && it.entry.file.isEmpty() && Model.key(ui.c).length() > 0) bar.addView(action(problem.isEmpty() ? "Process" : "Retry", R.drawable.ic_retry, v -> retry(it.entry)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         if (it.cards > 0) bar.addView(action(it.kept ? "Kept" : "Keep", R.drawable.ic_keep, v -> { it.kept = !it.kept; CardStore.keep(ui.c, it.path, it.kept); drawRows(); }), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         if (!it.url.isEmpty()) bar.addView(action("Open", R.drawable.ic_open, v -> openLink(it.url)), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         String shared = it.url.isEmpty() ? it.title : it.title + "\n" + it.url;
         bar.addView(action("Share", R.drawable.ic_share, v -> host.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shared), null))), new LinearLayout.LayoutParams(0, ui.dp(48), 1));
         card.addView(bar);
         card.setOnClickListener(v -> open(it));
+        if (source && it.entry == null && !it.path.isEmpty()) card.setOnLongClickListener(v -> { Edits.confirmDelete(host, it.path, it.title, this::scan); return true; });
         return wrap(card);
+    }
+
+    /** Runs the whole pipeline again for this capture now: tagging, reading the page, ingest. */
+    private void retry(InboxFile.Entry entry) {
+        if (!Ingest.on(ui.c)) {
+            // ingest is off: tagging is all that runs; still ask for it
+            Toast.makeText(ui.c, "Turn on Process captures in Settings to make notes", Toast.LENGTH_LONG).show();
+        } else Toast.makeText(ui.c, "Processing in the background", Toast.LENGTH_SHORT).show();
+        Ingest.retry(ui.c, entry);
+        main.postDelayed(this::refreshFromCache, 3000);
     }
 
     private void openLink(String url) {

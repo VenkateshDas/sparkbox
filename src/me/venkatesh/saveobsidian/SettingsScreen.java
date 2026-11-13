@@ -79,6 +79,14 @@ final class SettingsScreen extends Screen {
         }));
         ingest.addView(row("Vault write access", canWrite ? "Granted" : "Not granted", canWrite ? null : v -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
         ingest.addView(row("Ingest model", Ingest.model(ui.c), v -> modelDialog("Model for ingest", "An OpenRouter model id. A stronger model gives better topics.", "ingestModel", Ingest.model(ui.c), Ingest.DEFAULT_MODEL)));
+        ingest.addView(row("Lane and folder model", Classify.model(ui.c), v -> modelDialog("Model for Craft or Life", "An OpenRouter model id. It decides the lane and the subject folder of each new note.", "classifyModel", Classify.model(ui.c), Classify.DEFAULT_MODEL)));
+        ingest.addView(row("Retry failed captures", "", v -> {
+            int n = Ingest.retryAll(ui.c);
+            android.widget.Toast.makeText(ui.c, n == 0 ? "Nothing has failed" : "Trying " + n + (n == 1 ? " capture" : " captures") + " again", android.widget.Toast.LENGTH_SHORT).show();
+            draw();
+        }));
+        String classifyProblem = prefs().getString("classifyProblem", "");
+        if (!classifyProblem.isEmpty()) { TextView w = ui.text("Lane and folder model: " + classifyProblem, 13, Typeface.DEFAULT, ui.warn); w.setPadding(0, ui.dp(8), 0, ui.dp(8)); ingest.addView(w); }
         String problem = prefs().getString("ingestProblem", ""), log = prefs().getString("ingestLog", "");
         if (!problem.isEmpty()) { TextView w = ui.text(problem, 13, Typeface.DEFAULT, ui.warn); w.setPadding(0, ui.dp(8), 0, ui.dp(8)); ingest.addView(w); }
         if (!log.isEmpty()) { TextView w = ui.text("Recently ingested\n" + String.join("\n", java.util.Arrays.copyOf(log.split("\n"), Math.min(5, log.split("\n").length))), 12, Typeface.DEFAULT, ui.sub); w.setPadding(0, ui.dp(8), 0, ui.dp(12)); ingest.addView(w); }
