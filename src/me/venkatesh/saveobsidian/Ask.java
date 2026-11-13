@@ -12,7 +12,7 @@ import org.json.JSONObject;
  * links across Knowledge, Sources and the inbox, then answers with citations. Read-only.
  */
 final class Ask {
-    static final String DEFAULT = "anthropic/claude-haiku-5.5"; // cheap, 1M context, reliable tool calls on OpenRouter
+    static final String DEFAULT = "z-ai/glm-5.3-flash"; // same fast, cheap model as ingest; supports tool calls on OpenRouter
     static String inbox() { return Layout.inbox(); }
     private static final int STEPS = 8, READ = 20000, LIST = 60, CALLS = 6, EXCERPT = 300;
 
