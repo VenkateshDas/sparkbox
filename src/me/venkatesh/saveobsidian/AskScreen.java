@@ -47,6 +47,7 @@ final class AskScreen extends Screen {
         int n = 0;
         if (snap != null) for (Vault.Note note : snap.graph.notes) if (!note.catalog && !note.path.endsWith("/My cards.md")) n++;
         view.header(n == 0 ? "Your vault is not loaded yet" : String.format(java.util.Locale.US, "%,d notes in your vault", n), !online());
+        deliver();
         if (pendingQuestion != null) { String q = pendingQuestion; pendingQuestion = null; ask(q); }
     }
 
@@ -78,7 +79,7 @@ final class AskScreen extends Screen {
             hubs.sort((a, b) -> snap.graph.in(b).size() - snap.graph.in(a).size());
             List<String> tries = new ArrayList<>();
             for (Vault.Note n : hubs.subList(0, Math.min(3, hubs.size()))) tries.add("What do my notes say about " + n.title + "?");
-            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. You confirm every change. Start a message with /research for a thorough, multi-source investigation. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
+            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. You confirm every change. Start a message with /research for a thorough, multi-source investigation, or /later to have Scout work on it in the background. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
         }
         publish();
     }
@@ -86,6 +87,15 @@ final class AskScreen extends Screen {
     // ---- asking ----
 
     private void ask(String question) {
+        if (question.startsWith("/later ") && !question.substring(7).trim().isEmpty()) { // queued for the background job, not run now
+            ScoutJob.enqueue(ui.c, question.substring(7).trim());
+            if (!started) items.clear();
+            items.add(new Question(question));
+            items.add(new Answer("Queued. Scout will work on this in the background and notify you when it is done. It can read your notes and use the web tools of servers you marked trusted; it cannot change notes.", false, new ArrayList<>()));
+            draft = ""; view.input("");
+            publish();
+            return;
+        }
         if (busy && agent != null && !question.isEmpty()) { // steering: delivered after the current tools finish, before the next model call
             agent.steer(question);
             items.add(new Question(question));
@@ -213,6 +223,26 @@ final class AskScreen extends Screen {
         if (Layout.isInbox(path)) { host.select(0); return; } // the inbox lives in the Feed
         if (note == null) { Toast.makeText(ui.c, "That note is not in your vault", Toast.LENGTH_SHORT).show(); return; }
         host.openNote(note.path);
+    }
+
+    /** Background results that arrived while the screen was closed: shown, and added to the conversation so follow-ups have them. */
+    private void deliver() {
+        if (busy) return;
+        List<JSONObject> done = ScoutJob.takeDone(ui.c);
+        if (done.isEmpty()) return;
+        try {
+            if (session == null) session = Scout.session(ui.c, false);
+            if (!started) items.clear();
+            for (JSONObject r : done) {
+                String question = "Later: " + r.optString("task"), answer = r.optString("answer");
+                session.appendMessage(new JSONObject().put("role", "user").put("content", question));
+                session.appendMessage(new JSONObject().put("role", "assistant").put("content", answer).put("stopReason", "stop"));
+                items.add(new Question(question));
+                items.add(answerItem(answer));
+                started = true;
+            }
+            publish();
+        } catch (Exception failed) { Toast.makeText(ui.c, "Could not show the background result", Toast.LENGTH_SHORT).show(); }
     }
 
     // ---- history ----
