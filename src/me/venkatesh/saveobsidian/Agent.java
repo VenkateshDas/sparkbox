@@ -64,6 +64,8 @@ public final class Agent {
     private final java.util.concurrent.CopyOnWriteArrayList<Listener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     public Hooks hooks = new Hooks() { };
     public int maxTokens = 1800, maxTurns = 8;
+    /** Applied to the text of a final answer (no tool calls) before it is stored and shown: the place to drop what cannot be verified. */
+    public java.util.function.UnaryOperator<String> polish = t -> t;
     /** Queue modes (Pi's steeringMode / followUpMode): false delivers one queued message per turn, true delivers all of them. */
     public boolean steerAll, followUpAll;
     /** Pi's agent-level retry: 3 retries, doubling from 2 s, capped at 60 s. Tests set base to 0. */
@@ -226,6 +228,7 @@ public final class Agent {
                 }
                 pending = new ArrayList<>();
                 last = streamAssistant(turns == maxTurns);
+                if (last.optString("stopReason").equals("stop") && last.optJSONArray("tool_calls") == null) try { last.put("content", polish.apply(last.optString("content"))); } catch (Exception keep) { }
                 add(last);
                 emit("message_end", wrap("message", last));
                 String stop = last.optString("stopReason");

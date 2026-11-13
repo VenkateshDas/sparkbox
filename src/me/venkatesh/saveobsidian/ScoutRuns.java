@@ -117,8 +117,6 @@ final class ScoutRuns {
             JSONObject last;
             if (again) last = a.resume();
             else last = a.prompt(Scout.expand(c, snap, text));
-            String fix = last.optString("stopReason").equals("stop") && !run.cancel.stopped() ? Scout.check(a, last.optString("content")) : null; // one correction pass for citations the run never saw
-            if (fix != null) { run.status = "Checking sources…"; changed(run.file); last = a.prompt(fix); }
             if ("error".equals(last.optString("stopReason"))) { failure = last.optString("errorMessage"); loggedByAgent = true; } // the agent already stored its failed turn
         } catch (Exception e) { failure = String.valueOf(e.getMessage()); }
         if (failure != null && !loggedByAgent) { // kept in the log as a failed turn, so the chat shows it and offers to continue
@@ -181,6 +179,10 @@ final class ScoutRuns {
 
     /** Blocks the run until the user answers the card in the chat (or stops the run). */
     private static boolean ask(Context c, Run run, String title, String detail) {
+        synchronized (run) { return askOne(c, run, title, detail); } // parallel tool calls ask one after another: one card at a time, none lost
+    }
+
+    private static boolean askOne(Context c, Run run, String title, String detail) {
         Approval a = new Approval(title, detail);
         run.pending = a;
         changed(run.file);

@@ -91,19 +91,11 @@ final class Scout {
         return out;
     }
 
-    static final String CHECK = Chat.CHECK;
-
-    /**
-     * After an answer: citations that appear in nothing the run read (tool results and the user's messages) are made up or misremembered. Returns the one
-     * correction message to send, or null when every citation checks out.
-     */
-    static String check(Agent a, String answer) {
+    /** The answer without citations that appear in nothing the run read (tool results, the user's messages): made up or misremembered, so dropped, not asked again. */
+    static String fix(Agent a, String answer) {
         StringBuilder evidence = new StringBuilder();
         for (JSONObject m : a.messages()) if (m.optString("role").equals("tool") || m.optString("role").equals("user")) evidence.append(m.optString("content")).append('\n');
-        List<String> bad = Cites.unseen(answer, evidence.toString());
-        if (bad.isEmpty()) return null;
-        return CHECK + "These citations in your answer do not appear in anything you read in this conversation: " + String.join(", ", bad)
-            + ". Open them with a tool first, or remove them. Then give the corrected answer in full.";
+        return Cites.strip(answer, Cites.unseen(answer, evidence.toString()));
     }
 
     static File dir(Context c) { return new File(c.getFilesDir(), "sessions"); }
@@ -119,6 +111,7 @@ final class Scout {
         if (!Ask.model(c).equals(a.model())) a.setModel(Ask.model(c));
         a.maxTurns = research ? 30 : 12; // research reads many sources; the last turn still has no tools and asks for the answer
         if (research) a.maxTokens = 3000;
+        a.polish = text -> fix(a, text);
         a.hooks = new Compact(provider(c, key), Ask.model(c), session, WINDOW);
         return a;
     }

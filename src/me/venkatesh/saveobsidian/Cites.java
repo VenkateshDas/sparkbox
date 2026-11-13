@@ -68,6 +68,29 @@ public final class Cites {
         return bad;
     }
 
+    /**
+     * The answer without the citations that {@link #unseen} found: a note link becomes its title, a web link keeps its text, a bare URL goes. No second model
+     * call (that cost a minute and a half and an apology in the answer); the claim stays, only the unverifiable pointer is dropped.
+     */
+    public static String strip(String answer, List<String> bad) {
+        if (bad.isEmpty()) return answer;
+        Matcher m = Vault.LINK.matcher(answer);
+        StringBuffer out = new StringBuffer();
+        while (m.find()) {
+            String path = Vault.target(m.group(2));
+            boolean drop = !m.group(1).equals("!") && !path.isEmpty() && bad.contains(path);
+            m.appendReplacement(out, Matcher.quoteReplacement(drop ? Vault.label(m.group(2)) : m.group()));
+        }
+        m.appendTail(out);
+        String text = out.toString();
+        for (String b : bad) {
+            if (!b.startsWith("http")) continue;
+            String q = java.util.regex.Pattern.quote(b);
+            text = text.replaceAll("\\[([^\\]]*)\\]\\(" + q + "/*\\)", "$1").replaceAll("\\(\\s*" + q + "/*\\s*\\)", "").replaceAll(q + "/*", "");
+        }
+        return text.replaceAll("(?<=\\S)[ \\t]{2,}", " ").replaceAll("[ \\t]+([.,;:])", "$1").replaceAll("(?m)[ \\t]+$", "");
+    }
+
     /** True when the model said the vault does not cover the question (the exact phrase the system prompt demands, at the start). */
     public static boolean notInKnowledge(String answer) {
         String t = answer.trim().replaceFirst("^[\\s\"'“”*_>#-]+", "");

@@ -104,7 +104,7 @@ public class CaptureTest {
         check(Layout.sources().equals("Sources") && Layout.inbox().equals("Sources/Inbox")); // only the old layout has notes
         Layout.detect(Arrays.asList("Knowledge/Sources/A/2026/x.md", "Sources/A/2026/y.md"));
         check(Layout.sources().equals("Knowledge/Sources")); // both present: the new one wins
-        Layout.detect(new ArrayList<String>());
+        Layout.detect(new java.util.ArrayList<String>());
         check(Layout.sources().equals("Knowledge/Sources") && Layout.other("Sources/X").equals("Knowledge/Sources/X") && Layout.other("Knowledge/Sources/X").equals("Sources/X") && Layout.other("Knowledge/Topics/X") == null);
         check(Layout.conflict("a.sync-conflict-20261112-ABC.md") && !Layout.conflict("a.md") && Layout.isInbox("Sources/Inbox") && Layout.isInbox("Knowledge/Sources/Inbox"));
         Vault.Graph moved = Vault.build(Arrays.asList(Vault.parse("Knowledge/Sources/A/2026/2026-01-01 - One.md", 1, "# One\ntext"), Vault.parse("Sources/B/2026/2026-01-02 - Two.md", 1, "# Two\ntext")));
@@ -162,7 +162,7 @@ public class CaptureTest {
         check(t.contains("memory core") && !t.contains("memory zebra") && src.contains("harness job"));
     }
     static void feedChecks() {
-        Layout.detect(new ArrayList<String>());
+        Layout.detect(new java.util.ArrayList<String>());
         String note = "---\ntype: source\nsource: \"https://www.example.com/a?utm_source=1\"\ncaptured: 2026-11-11\nvia: Sparkbox\nprocessed: true\ncuriosity: \"What changes?\"\nmade-topics-new: [\"[[T1]]\"]\nmade-topics-updated: [\"[[T2]]\"]\nmade-people-updated: [\"[[P]]\"]\n---\n\n# Stop coding\n\n## Why I captured this\nIdea to test.\n\n## Raw Content\none two three four\n\n## Claude's Extraction\n- x\n";
         Vault.Note src = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-11-11 - Stop coding.md", 1000, note);
         check(src.processed() && src.meta("curiosity").equals("What changes?") && src.why.equals("Idea to test.") && src.words == 4);
@@ -214,6 +214,10 @@ public class CaptureTest {
         check(Cites.unseen("A [[Knowledge/Topics/X|X]], B [[Knowledge/Sources/S|S]], C [[Knowledge/Topics/Agents|Agents]]. See https://example.com/a?x=1.", seen).isEmpty());
         check(Cites.unseen("A [[Knowledge/Topics/Ghost|G]] and [[Knowledge/Topics/Ghost|G]] and https://made.up/page, https://example.com/a?x=1/", seen).toString().equals("[Knowledge/Topics/Ghost, https://made.up/page]"));
         check(Cites.unseen("No citations ![[img.png]]", seen).isEmpty());
+        java.util.List<String> gone = Cites.unseen("Real [[Knowledge/Topics/X|X]], fake [[Knowledge/Topics/Ghost|The Ghost]] and [site](https://made.up/page) and (https://made.up/b) or https://made.up/c. Kept https://example.com/a?x=1.", seen);
+        check(Cites.strip("Real [[Knowledge/Topics/X|X]], fake [[Knowledge/Topics/Ghost|The Ghost]] and [site](https://made.up/page) and (https://made.up/b) or https://made.up/c. Kept https://example.com/a?x=1.", gone)
+            .equals("Real [[Knowledge/Topics/X|X]], fake The Ghost and site and or. Kept https://example.com/a?x=1."));
+        check(Cites.strip("Nothing wrong [[A|A]]", new java.util.ArrayList<String>()).equals("Nothing wrong [[A|A]]"));
         check(Cites.notInKnowledge("Not in your knowledge base. Closest: [[A|A]]") && Cites.notInKnowledge("  **Not in your knowledge base**") && !Cites.notInKnowledge("It is not in your knowledge base maybe"));
     }
 

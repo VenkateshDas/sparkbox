@@ -77,6 +77,12 @@ final class AgentTest {
         check(events.toString().equals("[agent_start, turn_start, message_start, message_update, message_end, turn_end, agent_end, agent_settled]"));
         check(f.requests.get(0).getJSONArray("messages").getJSONObject(0).getString("role").equals("system") && !f.requests.get(0).has("tools"));
 
+        // polish rewrites a final answer before it is stored; a tool-call turn is left alone
+        f = new Faux().then(say("raw"));
+        a = agent(f, new Cancel());
+        a.polish = t -> t + "!";
+        check(a.prompt("hello").getString("content").equals("raw!") && a.messages().get(1).getString("content").equals("raw!"));
+
         // tool call, result, answer; the model sees the tool result but none of the bookkeeping keys
         Tool echo = tool("echo", schema("text", "string"), false, args -> Tool.Result.ok("echo:" + args.getString("text")));
         f = new Faux().then(calls("echo", "{\"text\":\"a\"}"), say("done"));
