@@ -51,11 +51,16 @@ final class SettingsScreen extends Screen {
         LinearLayout r = new LinearLayout(ui.c);
         r.setGravity(Gravity.CENTER_VERTICAL);
         r.setMinimumHeight(ui.dp(56));
-        r.addView(ui.text(title, 16, Typeface.DEFAULT, ui.ink), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 5));
-        TextView v = ui.text(value, 13, Typeface.DEFAULT, ui.sub);
-        v.setMaxLines(2);
+        boolean longValue = value.length() > 14; // a path or model id reads better under the label than squeezed beside it
+        LinearLayout names = new LinearLayout(ui.c);
+        names.setOrientation(LinearLayout.VERTICAL);
+        names.setPadding(0, ui.dp(8), 0, ui.dp(8));
+        names.addView(ui.text(title, 16, Typeface.DEFAULT, ui.ink));
+        if (longValue) { TextView sub = ui.text(value, 13, Typeface.DEFAULT, ui.sub); sub.setMaxLines(2); names.addView(sub); }
+        r.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView v = ui.text(longValue ? "" : value, 14, Typeface.DEFAULT, ui.sub);
         v.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 4);
+        LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(ui.dp(64), ViewGroup.LayoutParams.WRAP_CONTENT);
         vp.leftMargin = ui.dp(8);
         r.addView(v, vp);
         LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(ui.dp(92), ui.dp(40));
