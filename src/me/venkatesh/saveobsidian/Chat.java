@@ -16,10 +16,17 @@ public final class Chat {
 
     private Chat() { }
 
+    /** kind: user | work | answer. A work row is a turn's tool steps (text, one per line); secs is how long the turn took, UNKNOWN, or RUNNING for a turn with no answer yet. */
     public static final class Row {
-        public final String kind, text; // kind: user | step | answer
-        Row(String kind, String text) { this.kind = kind; this.text = text; }
+        public final String kind, text;
+        public final long secs;
+        Row(String kind, String text, long secs) { this.kind = kind; this.text = text; this.secs = secs; }
     }
+
+    public static final long UNKNOWN = -1, RUNNING = -2;
+
+    /** 83 seconds as "1:23". */
+    public static String clock(long secs) { return (secs / 60) + ":" + String.format(java.util.Locale.US, "%02d", secs % 60); }
 
     /** The line for one tool call. */
     public static String step(String tool, JSONObject a) {
@@ -39,23 +46,37 @@ public final class Chat {
 
     public static List<Row> rows(List<JSONObject> messages) {
         List<Row> out = new ArrayList<>();
+        List<String> steps = new ArrayList<>();
+        long userAt = 0;
         for (int i = 0; i < messages.size(); i++) {
             JSONObject m = messages.get(i);
             String role = m.optString("role"), content = m.optString("content", "");
             if (m.optBoolean("summary")) continue;
-            if (role.equals("user")) { if (!content.startsWith(CHECK)) out.add(new Row("user", content)); continue; }
+            if (role.equals("user")) {
+                if (content.startsWith(CHECK)) continue;
+                if (!steps.isEmpty()) { out.add(new Row("work", String.join("\n", steps), UNKNOWN)); steps.clear(); } // steps of a turn that a new message cut short
+                out.add(new Row("user", content, 0));
+                userAt = m.optLong("ts");
+                continue;
+            }
             if (!role.equals("assistant")) continue;
             JSONArray calls = m.optJSONArray("tool_calls");
             if (calls != null && calls.length() > 0) {
                 for (int c = 0; c < calls.length(); c++) {
                     JSONObject fn = calls.optJSONObject(c) == null ? null : calls.optJSONObject(c).optJSONObject("function");
-                    if (fn != null) out.add(new Row("step", step(fn.optString("name"), JsonFix.object(fn.optString("arguments", "{}")))));
+                    if (fn != null) steps.add(step(fn.optString("name"), JsonFix.object(fn.optString("arguments", "{}"))));
                 }
                 continue;
             }
             boolean corrected = i + 1 < messages.size() && messages.get(i + 1).optString("content").startsWith(CHECK);
-            if (!content.isEmpty() && m.optString("stopReason", "stop").equals("stop") && !corrected) out.add(new Row("answer", content));
+            if (!content.isEmpty() && m.optString("stopReason", "stop").equals("stop") && !corrected) {
+                long end = m.optLong("ts");
+                if (!steps.isEmpty()) out.add(new Row("work", String.join("\n", steps), userAt > 0 && end >= userAt ? (end - userAt) / 1000 : UNKNOWN));
+                steps.clear();
+                out.add(new Row("answer", content, 0));
+            }
         }
+        if (!steps.isEmpty()) out.add(new Row("work", String.join("\n", steps), RUNNING)); // a turn still going, or cut off
         return out;
     }
 

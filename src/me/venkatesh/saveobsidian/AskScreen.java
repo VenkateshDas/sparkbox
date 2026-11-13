@@ -142,13 +142,14 @@ final class AskScreen extends Screen {
         List<Chat.Row> rows = Chat.rows(messages);
         ScoutRuns.Run run = ScoutRuns.run(file);
         if (rows.isEmpty() && run == null) intro();
-        for (Chat.Row r : rows) items.add(r.kind.equals("user") ? new Question(r.text) : r.kind.equals("step") ? new Step(r.text) : answerItem(r.text));
+        for (Chat.Row r : rows) items.add(r.kind.equals("user") ? new Question(r.text) : r.kind.equals("work") ? new Work(r.secs, java.util.Arrays.asList(r.text.split("\n"))) : answerItem(r.text));
         if (run != null) {
             int users = 0;
             for (Chat.Row r : rows) if (r.kind.equals("user")) users++;
             if (run.sent != null && users <= run.usersAtStart) items.add(new Question(run.sent)); // the instant echo, only until the log has the message
             if (run.pending != null) items.add(new Approval(run.pending.title, run.pending.detail));
             view.running(true);
+            view.began(run.began);
             view.status(run.pending != null ? "Waiting for your OK" : run.status);
             view.live(run.live);
         } else {

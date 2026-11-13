@@ -210,6 +210,7 @@ public final class Session {
                 JSONObject e = path.get(i);
                 if (!e.optString("type").equals("message")) continue;
                 JSONObject m = new JSONObject(e.getJSONObject("message").toString()).put("entryId", e.optString("id"));
+                try { m.put("ts", java.time.Instant.parse(e.optString("timestamp")).toEpochMilli()); } catch (RuntimeException noTime) { } // when it happened, for "worked for m:ss"
                 JSONObject edit = edits.get(e.optString("id"));
                 if (edit != null && edit.optString("action").equals("omit")) continue;
                 if (edit != null) m.put("content", edit.optString("content"));

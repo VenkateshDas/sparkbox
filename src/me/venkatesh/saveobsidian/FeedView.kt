@@ -186,7 +186,7 @@ private fun CardBox(onClick: (() -> Unit)? = null, onLong: (() -> Unit)? = null,
 private fun SparkCard(r: SparkRow, a: FeedActions) = CardBox(onClick = { a.spark() }) {
     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("Morning Spark", style = MaterialTheme.typography.titleMedium)
+            Text(sparkTitle(), style = MaterialTheme.typography.titleMedium)
             Text("${r.cards} ${if (r.cards == 1) "card" else "cards"} due, about ${r.minutes} min", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Button(onClick = { a.spark() }) { Text("Start") }
@@ -340,4 +340,10 @@ private fun ItemSheet(r: ItemRow, a: FeedActions, close: () -> Unit) {
 private fun SheetItem(title: String, sub: String, danger: Boolean = false, onClick: () -> Unit) {
     ListItem(headlineContent = { Text(title, color = if (danger) MaterialTheme.colorScheme.error else Color.Unspecified) },
         supportingContent = { Text(sub) }, modifier = Modifier.combinedClickable(onClick = onClick))
+}
+
+/** The Spark card's title follows the time of day, so it never says "Morning" at night. */
+private fun sparkTitle(): String {
+    val hour = java.time.LocalTime.now().hour
+    return when { hour in 5..11 -> "Morning Spark"; hour in 12..16 -> "Afternoon Spark"; hour in 17..20 -> "Evening Spark"; else -> "Night Spark" }
 }

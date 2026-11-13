@@ -56,6 +56,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,8 +82,8 @@ class Failure(val message: String) : AskItem
 /** A stopped answer: what had arrived is kept, never sent again by itself. */
 class Stopped(val partial: String) : AskItem
 class Intro(val text: String, val suggestions: List<String>) : AskItem
-/** One line for a tool call Scout made ("Searched …"). */
-class Step(val text: String) : AskItem
+/** A turn's tool steps, folded under "Worked for m:ss". secs: Chat.UNKNOWN or Chat.RUNNING when there is no time. */
+class Work(val secs: Long, val steps: List<String>) : AskItem
 /** A change or call waiting for the user's OK; the run waits for it, whenever the user comes back. */
 class Approval(val title: String, val detail: String) : AskItem
 
@@ -113,6 +115,8 @@ class AskState {
     var subtitle by mutableStateOf(""); private set
     var offline by mutableStateOf(false); private set
     var title by mutableStateOf(""); private set
+    var began by mutableStateOf(0L); private set
+    fun began(ms: Long) { began = ms }
     var drawer by mutableStateOf(false); private set
     var chats by mutableStateOf(emptyList<ChatRow>()); private set
     var query by mutableStateOf(""); private set
@@ -207,7 +211,8 @@ private fun AskUi(s: AskState, a: AskActions) {
                         keyboardActions = KeyboardActions(onSend = { send() }), modifier = Modifier.weight(1f))
                     val stop = s.running && s.input.isBlank()
                     FilledIconButton(onClick = { if (stop) a.cancel() else send() }, enabled = !s.offline && (stop || s.input.isNotBlank()), modifier = Modifier.padding(start = 8.dp).size(48.dp)) {
-                        Text(if (stop) "■" else "↑", style = MaterialTheme.typography.titleLarge)
+                        if (stop) Canvas(Modifier.size(16.dp)) { drawRoundRect(Color.White, cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx())) }
+                        else Text("↑", style = MaterialTheme.typography.titleLarge)
                     }
                 }
             }
@@ -274,7 +279,18 @@ private fun Item(it: AskItem, a: AskActions) {
                 }
             }
         }
-        is Step -> Text("•  " + it.text, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
+        is Work -> {
+            var open by rememberSaveable { mutableStateOf(it.secs == Chat.RUNNING) } // an unfinished turn shows its steps
+            Column {
+                Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(when { it.secs >= 0 -> "Worked for " + Chat.clock(it.secs); it.secs == Chat.RUNNING -> "Working…"; else -> "Worked" }, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                    Text(if (open) "  ⌃" else "  ⌄", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                }
+                if (open) Column(Modifier.padding(start = 4.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    it.steps.forEach { step -> Text("•  $step", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant) }
+                }
+            }
+        }
         is Approval -> Surface(shape = RoundedCornerShape(14.dp), color = cs.surfaceContainerHigh, border = androidx.compose.foundation.BorderStroke(1.dp, cs.primary)) {
             Column(Modifier.padding(16.dp)) {
                 Text("Scout needs your OK", style = MaterialTheme.typography.labelMedium, color = cs.primary)
@@ -330,8 +346,12 @@ private fun Item(it: AskItem, a: AskActions) {
 @Composable
 private fun Sources(label: String, refs: List<SourceRef>) {
     if (refs.isEmpty()) return
-    Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
-    NavCard(refs.map { Nav("${it.num}  ${it.title}", it.meta, "", false, it.onClick) })
+    var open by rememberSaveable(label, refs.size, refs.first().title) { mutableStateOf(false) }
+    Row(Modifier.padding(top = 10.dp).clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("$label · ${refs.size}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (open) "  ⌃" else "  ⌄", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (open) NavCard(refs.map { Nav("${it.num}  ${it.title}", it.meta, "", false, it.onClick) })
 }
 
 /** The answer while it streams: a draft, not yet checked for citations. */
@@ -340,10 +360,8 @@ private fun Running(s: AskState, a: AskActions) {
     val cs = MaterialTheme.colorScheme
     Column {
         LinearProgressIndicator(Modifier.fillMaxWidth().clip(CircleShape))
-        Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(s.status.ifEmpty { "Thinking…" }, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = { a.cancel() }) { Text("Cancel") }
-        }
+        val elapsed by produceState(0L, s.began) { while (true) { value = if (s.began > 0) (System.currentTimeMillis() - s.began) / 1000 else 0; kotlinx.coroutines.delay(1000) } }
+        Text(s.status.ifEmpty { "Thinking…" } + (if (s.began > 0) "  ·  " + Chat.clock(elapsed) else ""), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
         if (s.live.isNotEmpty()) Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(cs.surfaceContainerHigh).padding(14.dp)) {
             Text("Draft, still checking sources", style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
             Text(s.live, style = MaterialTheme.typography.bodyLarge, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))

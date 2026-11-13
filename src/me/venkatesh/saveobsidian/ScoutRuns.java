@@ -41,6 +41,7 @@ final class ScoutRuns {
 
     static final class Run {
         final String file;
+        final long began = System.currentTimeMillis();
         final Cancel cancel = new Cancel();
         volatile Agent agent;
         volatile String status = "Starting…", live = "";
