@@ -161,14 +161,32 @@ final class Model {
     static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning) throws Exception { return complete(key, model, system, user, maxTokens, noReasoning, false); }
 
     /** json asks the provider to guarantee a JSON object. A provider that does not know the field answers 400 (Rejected). */
-    static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json) throws Exception {
+    static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json) throws Exception { return complete(key, model, system, user, maxTokens, noReasoning, json, null, null); }
+
+    /** schema (with its name) asks for structured output: the provider is held to that JSON Schema, and only providers that support it are used (require_parameters). */
+    static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json, String schemaName, JSONObject schema) throws Exception {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
             .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
         if (noReasoning) request.put("reasoning", new JSONObject().put("enabled", false));
-        if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
-        JSONObject message = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0).getJSONObject("message");
-        return message.isNull("content") ? "" : message.optString("content", "");
+        if (schema != null) {
+            request.put("response_format", new JSONObject().put("type", "json_schema").put("json_schema", new JSONObject().put("name", schemaName).put("strict", true).put("schema", schema)));
+            request.put("provider", new JSONObject().put("require_parameters", true));
+        } else if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
+        JSONObject choice = new JSONObject(post("chat/completions", key, request)).getJSONArray("choices").getJSONObject(0);
+        JSONObject message = choice.getJSONObject("message");
+        String content = message.isNull("content") ? "" : message.optString("content", "");
+        if (content.trim().isEmpty()) {
+            // a thinking model can spend the whole budget on hidden reasoning and leave the answer empty; the JSON is sometimes in the reasoning text instead
+            String thought = message.isNull("reasoning") ? "" : message.optString("reasoning", "");
+            if (thought.isEmpty() && !message.isNull("reasoning_content")) thought = message.optString("reasoning_content", "");
+            LAST_EMPTY.set("finish: " + choice.optString("finish_reason", "?") + (thought.isEmpty() ? ", no reasoning text" : ", " + thought.length() + " chars of reasoning"));
+            if (schema != null || json) { int open = thought.indexOf('{'); if (open >= 0 && JsonFix.object(thought) != null) return thought.substring(open); }
+        }
+        return content;
     }
+
+    /** Why the last reply came back empty (finish reason, reasoning size), for the error shown to the owner. */
+    private static final ThreadLocal<String> LAST_EMPTY = new ThreadLocal<>();
 
     private static final java.util.Set<String> NO_REASONING_FIELD = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     private static final java.util.Set<String> NO_JSON_MODE = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
@@ -185,28 +203,41 @@ final class Model {
      * provider refuses them; a reply that is empty, fenced, cut off or has stray commas is repaired; one that is still unusable is asked for once more.
      * Throws IOException when nothing usable came back.
      */
-    static JSONObject completeJson(String key, String model, String system, String user, int maxTokens) throws Exception {
+    static JSONObject completeJson(String key, String model, String system, String user, int maxTokens) throws Exception { return completeJson(key, model, system, user, maxTokens, null, null, null); }
+
+    /**
+     * The ladder, best method first: (1) structured output, the reply held to a JSON Schema; if the model or its providers refuse it, (2) JSON mode, then (3) plain text, each remembered per model;
+     * a reply that is empty or unreadable is repaired locally, asked for once more with a bigger budget, and finally asked of the fallback model when one is given.
+     */
+    static JSONObject completeJson(String key, String model, String system, String user, int maxTokens, String schemaName, JSONObject schema, String fallbackModel) throws Exception {
         String reply = "";
-        for (int attempt = 0; attempt < 2; attempt++) {
+        String[] models = fallbackModel == null || fallbackModel.equals(model) ? new String[]{model, model} : new String[]{model, model, fallbackModel};
+        for (int attempt = 0; attempt < models.length; attempt++) {
             String ask = attempt == 0 ? user : user + "\n\nYour last reply could not be read. Reply with one complete JSON object and nothing else.";
-            reply = chatJson(key, model, system, ask, attempt == 0 ? maxTokens : maxTokens + 1500);
+            LAST_EMPTY.remove();
+            reply = chatJson(key, models[attempt], system, ask, attempt == 0 ? maxTokens : Math.max(maxTokens * 2, maxTokens + 1500), schemaName, schema);
             JSONObject o = JsonFix.object(reply);
             if (o != null) return o;
         }
         String shown = reply.trim().replaceAll("\\s+", " ");
-        throw new IOException("The model did not return usable JSON" + (shown.isEmpty() ? " (empty reply)" : ": " + (shown.length() > 120 ? shown.substring(0, 120) : shown)));
+        throw new IOException("The model did not return usable JSON" + (shown.isEmpty() ? " (empty reply" + (LAST_EMPTY.get() == null ? "" : "; " + LAST_EMPTY.get()) + ")" : ": " + (shown.length() > 120 ? shown.substring(0, 120) : shown)));
     }
 
-    private static String chatJson(String key, String model, String system, String user, int maxTokens) throws Exception {
-        boolean json = !NO_JSON_MODE.contains(model), lean = !NO_REASONING_FIELD.contains(model), droppedJson = false, droppedLean = false;
+    private static final java.util.Set<String> NO_SCHEMA = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+    private static String chatJson(String key, String model, String system, String user, int maxTokens, String schemaName, JSONObject schema) throws Exception {
+        boolean structured = schema != null && !NO_SCHEMA.contains(model), json = !NO_JSON_MODE.contains(model), lean = !NO_REASONING_FIELD.contains(model);
+        boolean droppedSchema = false, droppedJson = false, droppedLean = false;
         for (;;) {
             try {
-                String reply = complete(key, model, system, user, maxTokens, lean, json);
-                if (droppedJson) NO_JSON_MODE.add(model); // only remembered once the plainer request worked, so a refused input is not blamed on the model
+                String reply = complete(key, model, system, user, maxTokens, lean, json, structured ? schemaName : null, structured ? schema : null);
+                if (droppedSchema) NO_SCHEMA.add(model); // only remembered once a plainer request worked, so a refused input is not blamed on the model
+                if (droppedJson) NO_JSON_MODE.add(model);
                 if (droppedLean) NO_REASONING_FIELD.add(model);
                 return reply;
             } catch (Rejected refused) {
-                if (json) { json = false; droppedJson = true; }
+                if (structured) { structured = false; droppedSchema = true; }
+                else if (json) { json = false; droppedJson = true; }
                 else if (lean) { lean = false; droppedLean = true; }
                 else throw refused;
             }
@@ -218,12 +249,12 @@ final class Model {
 
     private static String post(String path, String key, JSONObject request) throws Exception { return post(path, key, request, 120000); }
 
-    /** Up to three tries: a dropped connection, a timeout, a 429 or a 5xx waits a moment and goes again. A refusal (400s) or a bad key is not retried. */
+    /** A dropped connection, a timeout, a 429 or a 5xx waits a moment and goes again (three tries); a failed lookup or missing connection gets six, spread over about 40 seconds, because it is usually a short blip. A refusal (400s) or a bad key is not retried. */
     private static String post(String path, String key, JSONObject request, int readTimeout) throws Exception {
         byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
         IOException last = null;
-        for (int attempt = 0; attempt < 3; attempt++) {
-            if (attempt > 0) Thread.sleep(attempt == 1 ? 2000 : 5000);
+        for (int attempt = 0; attempt < 6; attempt++) {
+            if (attempt > 0) Thread.sleep(new long[]{0, 2000, 5000, 8000, 12000, 15000}[attempt]);
             HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
             connection.setRequestMethod("POST");
             connection.setConnectTimeout(10000);
@@ -241,13 +272,15 @@ final class Model {
                     return body;
                 }
                 String why = detail(errorBody(connection));
-                if (code == 400 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this request (" + code + (why.isEmpty() ? "" : ": " + why) + ")");
+                if (code == 400 || code == 404 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this request (" + code + (why.isEmpty() ? "" : ": " + why) + ")");
                 if (code == 408 || code == 425 || code == 429 || code >= 500) throw new Transient("OpenRouter answered " + code + (why.isEmpty() ? "" : ": " + why));
                 throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : why.isEmpty() ? "" : ": " + why));
-            } catch (Transient | java.net.SocketException | java.net.SocketTimeoutException | java.io.EOFException | javax.net.ssl.SSLException again) {
+            } catch (Transient | java.net.SocketException | java.net.SocketTimeoutException | java.io.EOFException | javax.net.ssl.SSLException | java.net.UnknownHostException again) {
                 last = again;
+                if (attempt >= 2 && !Net.offline(again)) break; // other trouble gets three tries
             } finally { connection.disconnect(); }
         }
+        if (last != null && Net.offline(last)) throw new Net.Offline("Smart tags paused: no connection to OpenRouter (" + last.getMessage() + ")");
         throw new IOException("Smart tags paused: " + (last == null ? "connection failed" : last.getMessage()));
     }
 

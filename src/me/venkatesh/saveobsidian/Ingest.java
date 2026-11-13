@@ -25,6 +25,7 @@ final class Ingest {
     private static final int PAGE_FOR_MODEL = 30000, PER_RUN = 8;
     /** A capture that fails is tried again after 2 minutes, 10 minutes, 30 minutes, 2 hours, 6 hours, then left for the owner's Retry. */
     static final int MAX_TRIES = 6;
+    static final String OFFLINE = "Offline: waiting for a connection";
     private static final long MINUTE = 60000L, RUN_BUDGET = 8 * MINUTE;
     private static final long[] BACKOFF = {0, 2 * MINUTE, 10 * MINUTE, 30 * MINUTE, 120 * MINUTE, 360 * MINUTE};
     /** From the third try on, a second, steadier model is used, so one flaky model does not stop a capture for good. */
@@ -79,6 +80,11 @@ final class Ingest {
                     prefs.edit().remove("ingestProblem").apply();
                     prog.edit().remove("err:" + ek).remove("next:" + ek).apply();
                 } catch (Exception failed) {
+                    if (Net.offline(failed)) { // no connection is not this capture's fault: no try is used, and the job comes back in a couple of minutes
+                        prog.edit().putLong("next:" + ek, System.currentTimeMillis() + 2 * MINUTE).putString("err:" + ek, OFFLINE).apply();
+                        prefs.edit().putString("ingestProblem", OFFLINE).apply();
+                        break; // the rest would fail the same way
+                    }
                     String m = failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage();
                     int n = tries + 1;
                     prog.edit().putInt("tries:" + ek, n).putLong("next:" + ek, System.currentTimeMillis() + BACKOFF[Math.min(n, BACKOFF.length - 1)]).putString("err:" + ek, m).apply();
@@ -94,6 +100,7 @@ final class Ingest {
         SharedPreferences prog = c.getSharedPreferences("ingest", 0);
         String ek = entryKey(e), err = prog.getString("err:" + ek, "").replaceFirst("^Smart tags paused: ", "");
         if (err.isEmpty()) return "";
+        if (err.equals(OFFLINE)) return "No connection to the AI service (a failed lookup of openrouter.ai). This is retried by itself every couple of minutes; Retry tries now.";
         if (prog.getInt("tries:" + ek, 0) >= MAX_TRIES) return "Processing stopped after " + MAX_TRIES + " tries: " + err;
         long wait = prog.getLong("next:" + ek, 0) - System.currentTimeMillis();
         return "Processing failed: " + err + (wait > MINUTE ? " Trying again in " + (wait / MINUTE) + " min." : " Trying again soon.");
@@ -133,7 +140,7 @@ final class Ingest {
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
                 String ek = entryKey(e);
                 int tries = prog.getInt("tries:" + ek, 0);
-                if (tries > 0 && tries < MAX_TRIES && eligible(c, e)) soonest = Math.min(soonest, prog.getLong("next:" + ek, 0) - now);
+                if ((tries > 0 || prog.getString("err:" + ek, "").equals(OFFLINE)) && tries < MAX_TRIES && eligible(c, e)) soonest = Math.min(soonest, prog.getLong("next:" + ek, 0) - now);
             }
             return soonest == Long.MAX_VALUE ? -1 : Math.max(soonest, MINUTE);
         } catch (Exception unreadable) { return -1; }
@@ -168,7 +175,7 @@ final class Ingest {
                 + "\n\nTitle: " + e.shownTitle() + "\nURL: " + Capture.identity(e.url) + (e.tldr.isEmpty() ? "" : "\nSummary: " + e.tldr) + Enrich.notes(e.why, e.ideas)
                 + "\nPage text:\n" + (page.replaceAll("(?m)^(Channel|Length):.*$", "").trim().length() < 80 ? "(nothing could be read from the page: judge only from the title and URL, keep tldr empty, and never invent facts)" : page);
             String use = tries >= 2 && !model(c).equals(FALLBACK_MODEL) ? FALLBACK_MODEL : model(c);
-            plan = Model.completeJson(key, use, SYSTEM, user, 3500);
+            plan = Model.completeJson(key, use, SYSTEM, user, 3500, "ingest_plan", Schemas.plan(), FALLBACK_MODEL);
             if (plan.optJSONArray("topics") == null || plan.optJSONArray("topics").length() == 0) throw new IOException("The model's answer had no topics");
             String[] filed = Classify.of(c, key, plan.optString("title").isEmpty() ? e.shownTitle() : plan.optString("title"), e.url, e.tldr.isEmpty() ? plan.optString("tldr") : e.tldr, e.why, e.ideas, page, IngestText.category(plan.optString("category")));
             if (filed != null) plan.put("category", filed[1]).put("lane", filed[0]);
@@ -201,7 +208,7 @@ final class Ingest {
         List<Topic> topics = new ArrayList<>();
         JSONArray ts = plan.optJSONArray("topics");
         for (int i = 0; ts != null && i < ts.length() && topics.size() < 4; i++) {
-            JSONObject o = ts.getJSONObject(i);
+            JSONObject o = item(ts, i, "title");
             String t = IngestText.safe(o.optString("title"));
             if (t.isEmpty()) continue;
             Topic topic = new Topic();
@@ -211,7 +218,7 @@ final class Ingest {
             if (dup) continue;
             topic.core = o.optString("core").trim();
             JSONArray cl = o.optJSONArray("claims");
-            for (int k = 0; cl != null && k < cl.length() && k < 4; k++) topic.claims.add(new String[]{cl.getJSONObject(k).optString("claim"), cl.getJSONObject(k).optString("confidence", "low")});
+            for (int k = 0; cl != null && k < cl.length() && k < 4; k++) { JSONObject ck = item(cl, k, "claim"); topic.claims.add(new String[]{ck.optString("claim"), ck.optString("confidence", "low")}); }
             JSONArray rel = o.optJSONArray("related"), qs = o.optJSONArray("open_questions");
             for (int k = 0; rel != null && k < rel.length(); k++) { String r = IngestText.safe(rel.optString(k)); if (topicNames.containsKey(r.toLowerCase(Locale.ROOT))) topic.related.add(topicNames.get(r.toLowerCase(Locale.ROOT))); }
             for (int k = 0; qs != null && k < qs.length() && k < 3; k++) if (!qs.optString(k).trim().isEmpty()) topic.questions.add(qs.optString(k));
@@ -221,11 +228,12 @@ final class Ingest {
         List<Person> people = new ArrayList<>();
         JSONArray ps = plan.optJSONArray("people");
         for (int i = 0; ps != null && i < ps.length() && people.size() < 4; i++) {
-            String n = IngestText.safe(ps.getJSONObject(i).optString("name"));
+            JSONObject po = item(ps, i, "name");
+            String n = IngestText.safe(po.optString("name"));
             if (n.isEmpty()) continue;
             Person p = new Person();
             p.name = peopleNames.containsKey(n.toLowerCase(Locale.ROOT)) ? peopleNames.get(n.toLowerCase(Locale.ROOT)) : n;
-            p.role = ps.getJSONObject(i).optString("role").replaceAll("\\s+", " ").trim();
+            p.role = po.optString("role").replaceAll("\\s+", " ").trim();
             boolean dup = false;
             for (Person x : people) dup |= x.name.equals(p.name);
             if (!dup) people.add(p);
@@ -233,8 +241,7 @@ final class Ingest {
         List<Entity> entities = new ArrayList<>();
         JSONArray es = plan.optJSONArray("entities");
         for (int i = 0; es != null && i < es.length() && entities.size() < 4; i++) {
-            JSONObject o = es.optJSONObject(i);
-            if (o == null) continue;
+            JSONObject o = item(es, i, "name");
             String n = IngestText.safe(o.optString("name"));
             if (n.isEmpty()) continue;
             Entity x = new Entity();
@@ -250,7 +257,7 @@ final class Ingest {
         for (Topic t : topics) topicTitles.add(t.title);
         for (Person p : people) personNames.add(p.name);
         JSONArray kc = plan.optJSONArray("key_claims");
-        for (int i = 0; kc != null && i < kc.length() && i < 8; i++) claims.add(kc.getJSONObject(i).optString("claim") + " (" + kc.getJSONObject(i).optString("confidence", "low") + ")");
+        for (int i = 0; kc != null && i < kc.length() && i < 8; i++) { JSONObject kj = item(kc, i, "claim"); claims.add(kj.optString("claim") + " (" + kj.optString("confidence", "low") + ")"); }
         JSONArray fl = plan.optJSONArray("relevance_flags");
         for (int i = 0; fl != null && i < fl.length(); i++) if (!fl.optString(i).trim().isEmpty()) flags.add(fl.optString(i));
 
@@ -355,6 +362,13 @@ final class Ingest {
         prog.edit().remove(ek).remove("plan:" + ek).remove("tries:" + ek).apply();
         Usage.hit(c, "ingest");
         VaultStore.last = null; // the next scan picks up the new and changed notes
+    }
+
+    /** Item i of a model-written list as an object: a model that sends plain strings instead of objects is read as {field: string} rather than failing the whole capture. */
+    private static JSONObject item(JSONArray list, int i, String field) throws Exception {
+        Object v = list.opt(i);
+        if (v instanceof JSONObject) return (JSONObject) v;
+        return new JSONObject().put(field, v == null ? "" : String.valueOf(v));
     }
 
     /** made-topics-new and made-topics-updated from what this run created or touched. */

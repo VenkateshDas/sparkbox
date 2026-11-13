@@ -16,6 +16,7 @@ import me.venkatesh.saveobsidian.CardPrompt;
 import me.venkatesh.saveobsidian.Extract;
 import me.venkatesh.saveobsidian.Transcript;
 import me.venkatesh.saveobsidian.JsonFix;
+import me.venkatesh.saveobsidian.Net;
 import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
@@ -580,6 +581,10 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(JsonFix.object("{\"a\":{\"b\":2}}").getJSONObject("a").getInt("b") == 2);
 
         // two videos are two links; tracking noise and fragments are not part of a link's identity
+        check(Net.offline(new java.net.UnknownHostException("Unable to resolve host \"openrouter.ai\": No address associated with hostname")));
+        check(Net.offline(new java.io.IOException("wrapped", new java.net.ConnectException("failed to connect"))));
+        check(Net.offline(new Net.Offline("Smart tags paused: no connection")));
+        check(!Net.offline(new java.io.IOException("OpenRouter refused this request (400)")) && !Net.offline(new java.net.SocketTimeoutException("Read timed out")));
         check(!Capture.identity("https://www.youtube.com/watch?v=aaaaaaaaaaa").equals(Capture.identity("https://www.youtube.com/watch?v=bbbbbbbbbbb")));
         check(Capture.identity("https://a.com/p?id=7&utm_source=x#top").equals("https://a.com/p?id=7") && Capture.identity("https://a.com/p#x").equals("https://a.com/p"));
         // lane and folder from the classifier
