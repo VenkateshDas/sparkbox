@@ -7,49 +7,75 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.widget.Toast;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import org.json.JSONObject;
 
-/** The Scout tab (Ask until v2): an agent chat over your vault. Answers carry numbered markers and a list of the notes they came from. Drawn by AskView; the logic stays here. */
+/**
+ * The Scout tab: one chat at a time, drawn from its stored session plus the live state of its run (ScoutRuns). Runs do not belong to this screen: leaving the
+ * app, switching chats or changing tabs does not stop them, and a change waiting for your OK shows as a card in the chat, answered whenever you come back.
+ */
 final class AskScreen extends Screen {
     private final Handler main = new Handler(Looper.getMainLooper());
-    private Agent agent;
-    private Session session;
-    private boolean started; // the stored conversation has at least one message
-    private android.app.Dialog confirming;
     private final AskState view = new AskState();
     private final List<AskItem> items = new ArrayList<>();
     private Ui ui;
-    private boolean busy;
-    private Cancel asking;
-    private String lastQuestion = "", pendingQuestion, draft = "";
+    private String file; // the chat on screen (a file in files/sessions), or null for a new one not started yet
+    private String pendingQuestion, draft = "";
+
+    private final ScoutRuns.Watcher watcher = new ScoutRuns.Watcher() {
+        @Override public void changed(String f) { if (f.equals(file)) main.post(AskScreen.this::refresh); }
+        @Override public void live(String f, String text) { if (f.equals(file)) main.post(() -> view.live(text)); }
+    };
 
     @Override View build(Ui ui) {
         this.ui = ui;
         view.input(draft); // a half-typed question survives tab switches and theme changes
-        if (items.isEmpty()) { intro(); restore(); } else publish();
+        if (file == null) {
+            String saved = ui.c.getSharedPreferences("capture", 0).getString("scoutSession", "");
+            if (!saved.isEmpty() && new File(ScoutRuns.dir(ui.c), saved).exists()) file = saved;
+        }
+        refresh();
         return AskView.create(ui.c, ui, view, actions);
     }
 
     private final AskActions actions = new AskActions() {
         @Override public void ask(String q) { AskScreen.this.ask(q); }
-        @Override public void cancel() { if (asking != null) { asking.stop(); view.status("Cancelling…"); } }
-        @Override public void retry() { if (!lastQuestion.isEmpty()) { removeLastProblem(); run(lastQuestion, true); } }
-        @Override public void newChat() { if (!busy) { Scout.forget(ui.c); session = null; started = false; intro(); } }
+        @Override public void cancel() { if (file != null) ScoutRuns.cancel(file); }
+        @Override public void retry() { if (file != null && ScoutRuns.start(ui.c, file, null, true, false)) refresh(); }
+        @Override public void newChat() { open(null); }
         @Override public void searchVault() { host.select(2); }
         @Override public void addNote() { ui.c.startActivity(new Intent(ui.c, QuickActivity.class)); }
         @Override public void draft(String text) { draft = text; }
+        @Override public void approve(boolean yes) { if (file != null) ScoutRuns.approve(file, yes); }
+        @Override public void history() { host.push(new ScoutHistoryScreen()); }
     };
 
+    /** Shows this chat (null: a new one). Whatever was running keeps running. */
+    void open(String f) {
+        file = f;
+        ScoutRuns.watching = f;
+        if (ui != null) {
+            ui.c.getSharedPreferences("capture", 0).edit().putString("scoutSession", f == null ? "" : f).apply();
+            ScoutRuns.clearNotification(ui.c, f);
+            refresh();
+        }
+    }
+
     @Override void onShow() {
+        ScoutRuns.watch(watcher);
+        ScoutRuns.watching = file;
+        ScoutRuns.clearNotification(ui.c, file);
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         int n = 0;
         if (snap != null) for (Vault.Note note : snap.graph.notes) if (!note.catalog && !note.path.endsWith("/My cards.md")) n++;
         view.header(n == 0 ? "Your vault is not loaded yet" : String.format(java.util.Locale.US, "%,d notes in your vault", n), !online());
-        deliver();
+        refresh();
         if (pendingQuestion != null) { String q = pendingQuestion; pendingQuestion = null; ask(q); }
     }
+
+    @Override void onHide() { ScoutRuns.unwatch(watcher); ScoutRuns.watching = null; ScoutRuns.leaving(ui.c, file); }
 
     /** A question from another screen (Ask about this): asked when this tab opens. */
     void prefill(String question) {
@@ -62,14 +88,40 @@ final class AskScreen extends Screen {
         return cm == null || cm.getActiveNetwork() != null;
     }
 
-    private void publish() { view.publish(new ArrayList<>(items)); }
+    // ---- drawing: stored messages plus the live state of the run ----
 
-    private void removeLastProblem() {
-        if (!items.isEmpty() && (items.get(items.size() - 1) instanceof Failure || items.get(items.size() - 1) instanceof Stopped)) items.remove(items.size() - 1);
+    private void refresh() {
+        items.clear();
+        List<JSONObject> messages = new ArrayList<>();
+        try { if (file != null) messages = ScoutRuns.session(ui.c, file).context(); } catch (Exception unreadable) { file = null; }
+        List<Chat.Row> rows = Chat.rows(messages);
+        ScoutRuns.Run run = ScoutRuns.run(file);
+        if (rows.isEmpty() && run == null) intro();
+        for (Chat.Row r : rows) items.add(r.kind.equals("user") ? new Question(r.text) : r.kind.equals("step") ? new Step(r.text) : answerItem(r.text));
+        if (run != null) {
+            if (run.sent != null) items.add(new Question(run.sent));
+            if (run.pending != null) items.add(new Approval(run.pending.title, run.pending.detail));
+            view.running(true);
+            view.status(run.pending != null ? "Waiting for your OK" : run.status);
+            view.live(run.live);
+        } else {
+            view.running(false);
+            if (Chat.interrupted(messages)) items.add(problem(messages));
+        }
+        view.publish(new ArrayList<>(items));
+    }
+
+    /** Why the last run has no answer: it failed, was stopped, or the app was closed under it. */
+    private AskItem problem(List<JSONObject> messages) {
+        JSONObject last = messages.get(messages.size() - 1);
+        String stop = last.optString("stopReason");
+        if (stop.equals("aborted")) return new Stopped("");
+        if (stop.equals("error")) return new Failure("Could not finish the answer. " + last.optString("errorMessage"));
+        if (stop.equals("max-steps")) return new Failure("Scout ran out of steps before it could answer.");
+        return new Failure("This run did not finish: the app was closed while it was working.");
     }
 
     private void intro() {
-        items.clear();
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         if (!VaultStore.ready(ui.c) || snap == null) items.add(new Intro("Choose your vault folder first.", new ArrayList<>()));
         else if (Model.key(ui.c).isEmpty()) items.add(new Intro("Scout needs an OpenRouter key. Add one in Settings.", new ArrayList<>()));
@@ -79,121 +131,25 @@ final class AskScreen extends Screen {
             hubs.sort((a, b) -> snap.graph.in(b).size() - snap.graph.in(a).size());
             List<String> tries = new ArrayList<>();
             for (Vault.Note n : hubs.subList(0, Math.min(3, hubs.size()))) tries.add("What do my notes say about " + n.title + "?");
-            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. You confirm every change. Start a message with /research for a thorough, multi-source investigation, or /later to have Scout work on it in the background. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
+            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. Every chat keeps working when you leave the app, and asks for your OK in the chat. Start a message with /research for a thorough, multi-source investigation. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
         }
-        publish();
     }
 
     // ---- asking ----
 
     private void ask(String question) {
-        if (question.startsWith("/later ") && !question.substring(7).trim().isEmpty()) { // queued for the background job, not run now
-            ScoutJob.enqueue(ui.c, question.substring(7).trim());
-            if (!started) items.clear();
-            items.add(new Question(question));
-            items.add(new Answer("Queued. Scout will work on this in the background and notify you when it is done. It can read your notes and use the web tools of servers you marked trusted; it cannot change notes.", false, new ArrayList<>()));
-            draft = ""; view.input("");
-            publish();
-            return;
-        }
-        if (busy && agent != null && !question.isEmpty()) { // steering: delivered after the current tools finish, before the next model call
-            agent.steer(question);
-            items.add(new Question(question));
-            draft = ""; view.input("");
-            publish();
-            return;
-        }
-        run(question, false);
-    }
-
-    private void run(String question, boolean again) {
-        if (busy || question.isEmpty()) return;
+        question = question.trim();
+        if (question.isEmpty()) return;
+        if (ScoutRuns.run(file) != null) { ScoutRuns.steer(file, question); draft = ""; view.input(""); return; } // delivered after the current tools finish, before the next model call
         VaultStore.Snap snap = VaultStore.cached(ui.c);
-        String key = Model.key(ui.c);
-        if (snap == null || key.isEmpty()) { intro(); return; }
+        if (snap == null || Model.key(ui.c).isEmpty()) { refresh(); return; }
         if (!online()) { view.header("", true); Toast.makeText(ui.c, "You are offline", Toast.LENGTH_SHORT).show(); return; }
-        if (!started && !again) items.clear();
-        if (!again) { draft = ""; view.input(""); }
-        busy = true;
-        lastQuestion = question;
-        final Cancel cancel = asking = new Cancel();
-        if (!again) items.add(new Question(question));
-        publish();
-        view.running(true);
-        new Thread(() -> {
-            String answer = null, error = null;
-            Limits.interactive(true);
-            try {
-                if (session == null) session = Scout.session(ui.c, false);
-                final boolean research = question.startsWith("/research ");
-                final String text = research ? question.substring(10).trim() : question;
-                Agent a = agent = Scout.agent(ui.c, snap, key, session, (title, detail) -> approve(title, detail, cancel), cancel, msg -> main.post(() -> Toast.makeText(ui.c, msg, Toast.LENGTH_LONG).show()), research);
-                a.subscribe((type, data) -> events(type, data));
-                Usage.hit(ui.c, "ask");
-                JSONObject last;
-                if (again) { try { last = a.resume(); } catch (IllegalStateException nothing) { last = a.prompt(Scout.expand(ui.c, snap, text)); } } else last = a.prompt(Scout.expand(ui.c, snap, text));
-                started = true;
-                String fix = last.optString("stopReason").equals("stop") && !cancel.stopped() ? Scout.check(a, last.optString("content")) : null; // one correction pass for citations the run never saw
-                if (fix != null) { main.post(() -> view.status("Checking sources…")); last = a.prompt(fix); }
-                if ("error".equals(last.optString("stopReason"))) throw new Exception(last.optString("errorMessage"));
-                answer = last.optString("content", "");
-            } catch (Exception e) { String m = String.valueOf(e.getMessage()).replace("Smart tags paused: ", ""); String k = Failures.kind(m); error = k.equals(Failures.OTHER) || k.equals(Failures.CONFLICT) ? m : Failures.recovery(k, m).replace("It is tried again by itself when you are back online; Retry tries now.", "Try again when you are online."); }
-            final String ans = answer, err = error;
-            main.post(() -> finish(question, ans, err));
-        }).start();
-    }
-
-    /** Agent events arrive on the agent's thread: everything the UI shows goes through main. */
-    private void events(String type, JSONObject data) {
-        if (type.equals("message_update")) main.post(() -> view.live(data.optString("text")));
-        else if (type.equals("message_end")) { JSONObject m = data.optJSONObject("message"); if (m != null && m.optJSONArray("tool_calls") != null) main.post(() -> view.live("")); } // preamble to tool calls, not the answer
-        else if (type.equals("tool_execution_start")) { String line = status(data.optString("name"), data.optJSONObject("args")); main.post(() -> view.status(line)); }
-        else if (type.equals("tool_execution_end") && !data.optBoolean("isError") && (data.optString("name").equals("edit") || data.optString("name").equals("write")))
-            new Thread(() -> { try { VaultStore.scan(ui.c); } catch (Exception stale) { } }).start(); // the note list and links catch up with the change
-        else if (type.equals("retry")) main.post(() -> view.status("Retrying…"));
-        else if (type.equals("compaction_start")) main.post(() -> view.status("Summarising the conversation so far…"));
-    }
-
-    private static String status(String tool, JSONObject a) {
-        if (a == null) a = new JSONObject();
-        switch (tool) {
-            case "search": return "Searching “" + a.optString("query") + "”";
-            case "grep": return "Looking for “" + a.optString("pattern") + "”";
-            case "find": return "Finding " + a.optString("pattern");
-            case "ls": return "Looking in " + (a.optString("path").isEmpty() ? "the vault" : a.optString("path"));
-            case "read": return "Reading " + a.optString("path");
-            case "inbox": return "Looking at the inbox";
-            case "edit": case "write": return "Changing " + a.optString("path");
-            default: return "Using " + tool;
-        }
-    }
-
-    /** Asks the user before a change; blocks the agent's thread until they answer (or the run is cancelled). */
-    private boolean approve(String title, String detail, Cancel cancel) {
-        final java.util.concurrent.ArrayBlockingQueue<Boolean> answer = new java.util.concurrent.ArrayBlockingQueue<>(1);
-        main.post(() -> confirming = new android.app.AlertDialog.Builder(ui.c).setTitle(title).setMessage(detail).setCancelable(false)
-            .setPositiveButton("Allow", (d, w) -> answer.offer(true)).setNegativeButton("Decline", (d, w) -> answer.offer(false)).show());
         try {
-            while (true) {
-                Boolean r = answer.poll(300, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (r != null) return r;
-                if (cancel.stopped()) { main.post(() -> { if (confirming != null) confirming.dismiss(); }); return false; }
-            }
-        } catch (InterruptedException interrupted) { return false; }
-    }
-
-    private void finish(String question, String answer, String error) {
-        busy = false;
-        boolean cancelled = asking != null && asking.stopped();
-        asking = null;
-        String partial = view.getLive();
-        view.running(false);
-        if (cancelled) items.add(new Stopped(answer != null && !answer.isEmpty() ? answer : partial)); // kept as it is; never asked again by itself
-        else if (answer == null || answer.isEmpty()) items.add(new Failure(error != null && !error.isEmpty() ? "Could not finish the answer. " + error : "Could not finish the answer. The model returned nothing."));
-        else {
-            items.add(answerItem(answer));
-        }
-        publish();
+            if (file == null) { file = ScoutRuns.create(ui.c); ui.c.getSharedPreferences("capture", 0).edit().putString("scoutSession", file).apply(); ScoutRuns.watching = file; }
+        } catch (java.io.IOException e) { Toast.makeText(ui.c, "Could not start a chat", Toast.LENGTH_SHORT).show(); return; }
+        draft = ""; view.input("");
+        ScoutRuns.start(ui.c, file, question, false, false);
+        refresh();
     }
 
     private AskItem answerItem(String answer) {
@@ -223,47 +179,5 @@ final class AskScreen extends Screen {
         if (Layout.isInbox(path)) { host.select(0); return; } // the inbox lives in the Feed
         if (note == null) { Toast.makeText(ui.c, "That note is not in your vault", Toast.LENGTH_SHORT).show(); return; }
         host.openNote(note.path);
-    }
-
-    /** Background results that arrived while the screen was closed: shown, and added to the conversation so follow-ups have them. */
-    private void deliver() {
-        if (busy) return;
-        List<JSONObject> done = ScoutJob.takeDone(ui.c);
-        if (done.isEmpty()) return;
-        try {
-            if (session == null) session = Scout.session(ui.c, false);
-            if (!started) items.clear();
-            for (JSONObject r : done) {
-                String question = "Later: " + r.optString("task"), answer = r.optString("answer");
-                session.appendMessage(new JSONObject().put("role", "user").put("content", question));
-                session.appendMessage(new JSONObject().put("role", "assistant").put("content", answer).put("stopReason", "stop"));
-                items.add(new Question(question));
-                items.add(answerItem(answer));
-                started = true;
-            }
-            publish();
-        } catch (Exception failed) { Toast.makeText(ui.c, "Could not show the background result", Toast.LENGTH_SHORT).show(); }
-    }
-
-    // ---- history ----
-
-    /** Shows the stored conversation: questions and final answers (tool traffic stays in the log). */
-    private void restore() {
-        try {
-            if (VaultStore.cached(ui.c) == null || !new java.io.File(Scout.dir(ui.c), ui.c.getSharedPreferences("capture", 0).getString("scoutSession", "none")).exists()) return;
-            session = Scout.session(ui.c, false);
-            List<JSONObject> saved = session.context();
-            if (saved.isEmpty()) return;
-            started = true;
-            items.clear();
-            for (int i = 0; i < saved.size(); i++) {
-                JSONObject m = saved.get(i);
-                if (m.optBoolean("summary")) continue;
-                if (i + 1 < saved.size() && saved.get(i + 1).optString("content").startsWith(Scout.CHECK)) continue; // the answer that was corrected
-                if (m.optString("role").equals("user")) { if (!m.optString("content").startsWith(Scout.CHECK)) items.add(new Question(m.optString("content"))); }
-                else if (m.optString("role").equals("assistant") && m.optJSONArray("tool_calls") == null && !m.optString("content").isEmpty() && m.optString("stopReason", "stop").equals("stop")) items.add(answerItem(m.optString("content")));
-            }
-            publish();
-        } catch (Exception damaged) { session = null; started = false; }
     }
 }

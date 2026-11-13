@@ -58,6 +58,10 @@ class Failure(val message: String) : AskItem
 /** A stopped answer: what had arrived is kept, never sent again by itself. */
 class Stopped(val partial: String) : AskItem
 class Intro(val text: String, val suggestions: List<String>) : AskItem
+/** One line for a tool call Scout made ("Searched …"). */
+class Step(val text: String) : AskItem
+/** A change or call waiting for the user's OK; the run waits for it, whenever the user comes back. */
+class Approval(val title: String, val detail: String) : AskItem
 
 interface AskActions {
     fun ask(q: String)
@@ -67,6 +71,8 @@ interface AskActions {
     fun searchVault()
     fun addNote()
     fun draft(text: String)
+    fun approve(yes: Boolean)
+    fun history()
 }
 
 class AskState {
@@ -98,7 +104,10 @@ private fun AskUi(s: AskState, a: AskActions) {
     LaunchedEffect(count, s.live.length / 200) { if (count > 0) list.animateScrollToItem(count - 1) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column {
-            TopBar("Scout", null) { if (s.items.any { it is Answer || it is Question } && !s.running) TextButton(onClick = { a.newChat() }) { Text("New chat") } }
+            TopBar("Scout", null) {
+                TextButton(onClick = { a.history() }) { Text("Chats") }
+                if (s.items.any { it is Answer || it is Question }) TextButton(onClick = { a.newChat() }) { Text("New") }
+            }
             if (s.subtitle.isNotEmpty()) Text(s.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp, top = 6.dp))
             if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Scout needs a network connection.", false)) }
             LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -131,6 +140,19 @@ private fun Item(it: AskItem, a: AskActions) {
             it.suggestions.forEach { q ->
                 OutlinedButton(onClick = { a.ask(q) }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
                     Text(q, style = MaterialTheme.typography.bodyLarge, color = cs.onSurface, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        is Step -> Text("•  " + it.text, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
+        is Approval -> Surface(shape = RoundedCornerShape(14.dp), color = cs.surfaceContainerHigh, border = androidx.compose.foundation.BorderStroke(1.dp, cs.primary)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Scout needs your OK", style = MaterialTheme.typography.labelMedium, color = cs.primary)
+                Text(it.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp))
+                if (it.detail.isNotEmpty()) Text(it.detail, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(cs.surfaceContainerLow).padding(10.dp))
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { a.approve(true) }, modifier = Modifier.weight(1f)) { Text("Allow") }
+                    OutlinedButton(onClick = { a.approve(false) }, modifier = Modifier.weight(1f)) { Text("Decline") }
                 }
             }
         }

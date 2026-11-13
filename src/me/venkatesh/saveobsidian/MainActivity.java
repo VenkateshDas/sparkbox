@@ -185,6 +185,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ((AskScreen) tabs[3]).prefill(question);
     }
 
+    /** Opens one Scout chat (from the Chats list or a notification). */
+    void openSession(String file) {
+        select(3);
+        ((AskScreen) tabs[3]).open(file);
+    }
+
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
@@ -194,6 +200,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     private void handleIntent(android.content.Intent intent) {
         String q = intent.getStringExtra(AskActivity.QUESTION);
         if (q != null && !q.trim().isEmpty()) { intent.removeExtra(AskActivity.QUESTION); ask(q.trim()); }
+        else if (intent.hasExtra(ScoutRuns.SESSION)) { String f = intent.getStringExtra(ScoutRuns.SESSION); intent.removeExtra(ScoutRuns.SESSION); openSession(f); }
         else if (intent.hasExtra(TAB)) select(Math.max(0, Math.min(3, intent.getIntExtra(TAB, 0))));
     }
 

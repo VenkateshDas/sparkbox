@@ -91,7 +91,7 @@ final class Scout {
         return out;
     }
 
-    static final String CHECK = "[check] ";
+    static final String CHECK = Chat.CHECK;
 
     /**
      * After an answer: citations that appear in nothing the run read (tool results and the user's messages) are made up or misremembered. Returns the one
@@ -107,18 +107,6 @@ final class Scout {
     }
 
     static File dir(Context c) { return new File(c.getFilesDir(), "sessions"); }
-
-    /** The conversation in progress: the stored file named in preferences, or a new one. */
-    static Session session(Context c, boolean fresh) throws java.io.IOException {
-        android.content.SharedPreferences p = c.getSharedPreferences("capture", 0);
-        String name = fresh ? "" : p.getString("scoutSession", "");
-        if (!name.isEmpty() && new File(dir(c), name).exists()) return Session.open(new File(dir(c), name));
-        Session s = Session.create(dir(c));
-        p.edit().putString("scoutSession", new File(s.exportPath()).getName()).apply();
-        return s;
-    }
-
-    static void forget(Context c) { c.getSharedPreferences("capture", 0).edit().remove("scoutSession").apply(); }
 
     /** A fresh agent on this session: new snapshot, tools, and a Cancel the caller keeps. */
     static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel, java.util.function.Consumer<String> warn, boolean research) {

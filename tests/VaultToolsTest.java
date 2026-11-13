@@ -120,6 +120,23 @@ final class VaultToolsTest {
         req = new JSONObject();
         me.venkatesh.saveobsidian.OpenRouter.thinking(req, "auto");
         check(!req.has("reasoning"));
+        // chat rows
+        List<JSONObject> convo = new ArrayList<>();
+        convo.add(new JSONObject("{role:user,content:'What about RAG?'}"));
+        convo.add(new JSONObject("{role:assistant,content:'',tool_calls:[{id:c1,function:{name:search,arguments:'{\"query\":\"rag\"}'}},{id:c2,function:{name:mcp__tinyfish__fetch_content,arguments:'{}'}}],stopReason:toolUse}"));
+        convo.add(new JSONObject("{role:tool,tool_call_id:c1,content:'result'}"));
+        check(me.venkatesh.saveobsidian.Chat.interrupted(convo));
+        convo.add(new JSONObject("{role:assistant,content:'Draft [[X|X]]',stopReason:stop}"));
+        check(!me.venkatesh.saveobsidian.Chat.interrupted(convo));
+        convo.add(new JSONObject("{role:user,content:'[check] fix it'}"));
+        convo.add(new JSONObject("{role:assistant,content:'Fixed',stopReason:stop}"));
+        List<me.venkatesh.saveobsidian.Chat.Row> rows = me.venkatesh.saveobsidian.Chat.rows(convo);
+        StringBuilder shown = new StringBuilder();
+        for (me.venkatesh.saveobsidian.Chat.Row r : rows) shown.append(r.kind).append(":").append(r.text).append("|");
+        check(shown.toString().equals("user:What about RAG?|step:Searched “rag”|step:Used tinyfish: fetch_content|answer:Fixed|"));
+        convo.add(new JSONObject("{role:user,content:'more'}"));
+        convo.add(new JSONObject("{role:assistant,content:'',stopReason:aborted}"));
+        check(me.venkatesh.saveobsidian.Chat.interrupted(convo) && !me.venkatesh.saveobsidian.Chat.interrupted(new ArrayList<>()));
         System.out.println("Vault tools checks passed (" + count + ").");
     }
 }
