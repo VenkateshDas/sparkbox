@@ -35,7 +35,7 @@ final class Captures {
         SharedPreferences filed = c.getSharedPreferences("filed", 0);
         int written = 0;
         for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
-            if (written >= 10 || Tagger.halt || SetupActivity.editing) return;
+            if (written >= 10 || Tagger.halt()) return;
             if (e.text || e.url.isEmpty() || !e.file.isEmpty() || e.type.isEmpty() || e.heading.isEmpty()) continue; // links that are tagged and titled
             String key = Long.toHexString(Index.key(e.time + "|" + e.url));
             byte[] bytes = Enrich.sourceNote(e.heading, e.url, e.time, e.tags, e.tldr, e.why, e.ideas, Content.load(c, e.url, 400000)).getBytes(StandardCharsets.UTF_8);

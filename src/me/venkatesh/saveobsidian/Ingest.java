@@ -70,7 +70,7 @@ final class Ingest {
             VaultStore.Snap snap = VaultStore.cached(c);
             if (snap == null) snap = VaultStore.scan(c);
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
-                if (done >= PER_RUN || Tagger.halt || SetupActivity.editing || System.currentTimeMillis() - started > RUN_BUDGET) break;
+                if (done >= PER_RUN || Tagger.halt() || System.currentTimeMillis() - started > RUN_BUDGET) break;
                 String ek = entryKey(e);
                 int tries = prog.getInt("tries:" + ek, 0);
                 if (!eligible(c, e) || tries >= MAX_TRIES || System.currentTimeMillis() < prog.getLong("next:" + ek, 0)) {
@@ -94,8 +94,10 @@ final class Ingest {
                         break; // the rest would fail the same way
                     }
                     String m = failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage();
-                    int n = tries + 1;
-                    prog.edit().putInt("tries:" + ek, n).putLong("next:" + ek, System.currentTimeMillis() + BACKOFF[Math.min(n, BACKOFF.length - 1)]).putString("err:" + ek, m).apply();
+                    String kind = Failures.kind(m);
+                    int n = Failures.retries(kind) ? tries + 1 : MAX_TRIES; // a bad key stops the ladder until the owner fixes it (Retry, or Retry failed captures)
+                    long wait = Math.max(BACKOFF[Math.min(n, BACKOFF.length - 1)], Failures.minWaitMs(kind));
+                    prog.edit().putInt("tries:" + ek, n).putLong("next:" + ek, System.currentTimeMillis() + wait).putString("err:" + ek, m).apply();
                     prefs.edit().putString("ingestProblem", e.shownTitle() + ": " + m).apply();
                     if (m.startsWith("Smart tags paused")) break; // the provider or the network is down: the next captures would fail the same way
                 }
@@ -107,7 +109,12 @@ final class Ingest {
     static final String[] STEPS = {"Saved to your inbox", "Reading the page", "Understanding it with AI", "Choosing Craft or Life", "Writing the note", "Updating topics and people", "Filing and indexing"};
     private static final long STAGE_FRESH = 6 * MINUTE;
 
-    private static void stage(SharedPreferences prog, String ek, int n) { prog.edit().putString("stage:" + ek, n + "|" + System.currentTimeMillis()).apply(); }
+    /** Told (on the worker thread) whenever a capture moves to another step, so the Feed redraws then instead of polling. */
+    static volatile Runnable onStage;
+    private static void stage(SharedPreferences prog, String ek, int n) {
+        prog.edit().putString("stage:" + ek, n + "|" + System.currentTimeMillis()).apply();
+        Runnable r = onStage; if (r != null) r.run();
+    }
 
     /** The step this capture is on right now (1 to 6), or -1 when it is not being processed. A step silent for six minutes is taken as dead. */
     static int stage(Context c, InboxFile.Entry e) {
@@ -134,10 +141,11 @@ final class Ingest {
         SharedPreferences prog = c.getSharedPreferences("ingest", 0);
         String ek = entryKey(e), err = prog.getString("err:" + ek, "").replaceFirst("^Smart tags paused: ", "");
         if (err.isEmpty()) return "";
-        if (err.equals(OFFLINE)) return "No connection to the AI service (a failed lookup of openrouter.ai). This is retried by itself every couple of minutes; Retry tries now.";
-        if (prog.getInt("tries:" + ek, 0) >= MAX_TRIES) return "Processing stopped after " + MAX_TRIES + " tries: " + err;
+        String kind = err.equals(OFFLINE) ? Failures.OFFLINE : Failures.kind(err), say = Failures.recovery(kind, err);
+        if (kind.equals(Failures.OFFLINE) || kind.equals(Failures.KEY)) return say;
+        if (prog.getInt("tries:" + ek, 0) >= MAX_TRIES) return "Processing stopped after " + MAX_TRIES + " tries. " + say;
         long wait = prog.getLong("next:" + ek, 0) - System.currentTimeMillis();
-        return "Processing failed: " + err + (wait > MINUTE ? " Trying again in " + (wait / MINUTE) + " min." : " Trying again soon.");
+        return say + (wait > MINUTE ? " Next try in " + (wait / MINUTE) + " min." : " Next try soon.");
     }
 
     /** Clears what is remembered about one capture (tries, waits, the model's plan) and runs the whole pipeline now. For the owner's Retry. */
@@ -161,7 +169,7 @@ final class Ingest {
 
     private static void forget(Context c, InboxFile.Entry e) {
         String ek = entryKey(e);
-        c.getSharedPreferences("ingest", 0).edit().remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek).remove("plan:" + ek).apply();
+        c.getSharedPreferences("ingest", 0).edit().remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek).remove("plan:" + ek).remove("planHash:" + ek).apply();
         c.getSharedPreferences("enriched", 0).edit().remove("tagfail:" + Tagger.notesKey(e)).apply();
         if (!Transcript.videoId(e.url).isEmpty()) Content.remove(c, e.url); // a video is read again, including its transcript
     }
@@ -198,6 +206,12 @@ final class Ingest {
         return out;
     }
 
+    /** The entry as the inbox has it now (same capture time and link), or the given one when it is gone. */
+    private static InboxFile.Entry current(Context c, InboxFile.Entry e) {
+        try { for (InboxFile.Entry now : InboxFile.parse(CaptureService.readText(c))) if (now.time.equals(e.time) && now.url.equals(e.url)) return now; } catch (Exception unreadable) { }
+        return e;
+    }
+
     private static void process(Context c, String key, InboxFile.Entry e, String ek, VaultStore.Snap snap, int tries) throws Exception {
         SharedPreferences prog = c.getSharedPreferences("ingest", 0);
         Set<String> done = new HashSet<>(prog.getStringSet(ek, new HashSet<String>()));
@@ -205,6 +219,7 @@ final class Ingest {
 
         // 1. ask the model once; the answer is kept so a retry does not pay again
         String saved = prog.getString("plan:" + ek, "");
+        if (!IngestText.samePlanInputs(prog.getString("planHash:" + ek, ""), Tagger.notesHash(e))) saved = ""; // asked with older Why or Ideas: ask again
         JSONObject plan;
         if (saved.isEmpty()) {
             stage(prog, ek, 1);
@@ -226,7 +241,7 @@ final class Ingest {
             laneThread.join(45000);
             String[] filed = laneBox[0];
             if (filed != null) plan.put("category", filed[1]).put("lane", filed[0]);
-            prog.edit().putString("plan:" + ek, plan.toString()).apply();
+            prog.edit().putString("plan:" + ek, plan.toString()).putString("planHash:" + ek, Tagger.notesHash(e)).apply();
         } else plan = new JSONObject(saved);
 
         // 1b. the same answer tags the capture, so it shows its type, tags and title in the inbox at once
@@ -308,6 +323,15 @@ final class Ingest {
         JSONArray fl = plan.optJSONArray("relevance_flags");
         for (int i = 0; fl != null && i < fl.length(); i++) if (!fl.optString(i).trim().isEmpty()) flags.add(fl.optString(i));
 
+        // the owner may have changed Why or Ideas while the model worked: never file an answer to older instructions
+        String planHash = prog.getString("planHash:" + ek, "");
+        if (!IngestText.samePlanInputs(planHash, Tagger.notesHash(current(c, e)))) {
+            prog.edit().remove("plan:" + ek).remove("planHash:" + ek).apply();
+            throw new IOException("Why or Ideas changed while processing: it will be processed again");
+        }
+
+        VaultLock.L.lock(); // every read, edit and write below is one step against other in-app writers
+        try {
         // 3. write, one recorded step at a time
         stage(prog, ek, 4);
         if (!done.contains("source")) {
@@ -400,6 +424,8 @@ final class Ingest {
             c.sendBroadcast(new android.content.Intent(CaptureService.CHANGED).setPackage(c.getPackageName()));
             step(prog, ek, done, "inbox");
         }
+
+        } finally { VaultLock.L.unlock(); }
 
         int created = 0;
         for (Topic t : topics) if (done.contains("new:topic:" + t.title)) created++;

@@ -93,7 +93,7 @@ final class CardGen {
         for (final Vault.Note n : batch) finished.submit(() -> {
             Result r = new Result();
             r.note = n;
-            if (abort.get() || stop || Tagger.halt) { r.skipped = true; return r; }
+            if (abort.get() || stop || Tagger.halt()) { r.skipped = true; return r; }
             try { process(c, key, n); } catch (Exception e) { r.error = e; }
             return r;
         });

@@ -19,111 +19,57 @@ final class CaptureScreen extends Screen {
     private static final String[] INTENTS = {"To read", "To try", "To cite", "Idea"};
     private final InboxFile.Entry entry;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final PageState page = new PageState();
     private Ui ui;
-    private EditText why, ideas;
-    private TextView save, delete;
+    private String why, ideas;
     private boolean busy;
 
     CaptureScreen(InboxFile.Entry entry) { this.entry = entry; }
 
+    /** Drawn by PageView: the capture, its status, and your Why and Ideas. */
     @Override View build(Ui ui) {
         this.ui = ui;
-        LinearLayout root = new LinearLayout(ui.c);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.addView(Bars.header(ui, "Capture", v -> host.onBackPressed()));
-        ScrollView scroll = new ScrollView(ui.c);
-        scroll.setFillViewport(true);
-        LinearLayout page = new LinearLayout(ui.c);
-        page.setOrientation(LinearLayout.VERTICAL);
-        page.setPadding(ui.dp(16), ui.dp(12), ui.dp(16), ui.dp(24));
-        scroll.addView(page);
-        root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        if (why == null) { why = entry.why; ideas = entry.ideas; }
+        draw();
+        return PageView.create(ui.c, ui, "Capture", page, () -> host.onBackPressed());
+    }
 
-        if (!entry.text) page.addView(Thumb.view(ui.c, ui, entry, 0, 180));
-        LinearLayout meta = new LinearLayout(ui.c);
-        meta.setGravity(Gravity.CENTER_VERTICAL);
-        meta.addView(ui.chip(Feed.CAPTURED, 0));
-        TextView where = ui.text(entry.url.isEmpty() ? (entry.text ? "Note" : "File") : Ui.host(entry.url), 13, Typeface.DEFAULT, ui.sub);
-        where.setPadding(ui.dp(8), 0, 0, 0);
-        meta.addView(where);
-        page.addView(meta, ui.lp(entry.text ? 0 : 12));
-        page.addView(ui.text(entry.shownTitle(), 20, Ui.BOLD, ui.ink), ui.lp(8));
+    private void draw() {
+        java.util.List<Block> b = new java.util.ArrayList<>();
+        if (!entry.text) b.add(new Picture(180, () -> Thumb.view(ui.c, ui, entry, 0, 180)));
+        b.add(new Tags(java.util.Collections.singletonList(new Tag(Feed.CAPTURED, 0)), entry.url.isEmpty() ? (entry.text ? "Note" : "File") : Ui.host(entry.url)));
+        b.add(new Title(entry.shownTitle()));
         String summary = entry.tldr.isEmpty() && entry.text ? entry.body : entry.tldr;
-        if (!summary.isEmpty()) page.addView(ui.text(summary, 15, Typeface.DEFAULT, ui.sub), ui.lp(8));
-        if (!entry.tags.isEmpty()) page.addView(ui.text("#" + entry.tags.replace(", ", "  #"), 13, Typeface.DEFAULT, ui.sub), ui.lp(8));
-        page.addView(ui.text("Saved on this phone. When ingest runs it becomes a note, then it is processed into topics and cards.", 13, Typeface.DEFAULT, ui.sub), ui.lp(12));
-
+        if (!summary.isEmpty()) b.add(new Panel(entry.text ? "Your note" : "Summary", summary, entry.text ? Origin.YOU : Origin.AI));
+        if (!entry.tags.isEmpty()) b.add(new Body("#" + entry.tags.replace(", ", "  #"), true, false));
+        b.add(new Body("Saved on this phone. When ingest runs it becomes a note, then it is processed into topics and cards.", true, false));
         String problem = Ingest.problem(ui.c, entry);
-        if (!problem.isEmpty()) {
-            TextView warn = ui.text(problem, 13, Typeface.DEFAULT, ui.warn);
-            warn.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
-            warn.setBackground(ui.round(ui.warnBg, 0, 8));
-            page.addView(warn, ui.lp(0));
-        }
-        if (!entry.url.isEmpty() && entry.file.isEmpty() && !Model.key(ui.c).isEmpty()) {
-            page.addView(ui.button(problem.isEmpty() ? "Process now" : "Retry now", true, v -> {
+        if (!problem.isEmpty()) b.add(new Banner(problem, false));
+        if (!entry.url.isEmpty() && entry.file.isEmpty() && !Model.key(ui.c).isEmpty())
+            b.add(new Primary(problem.isEmpty() ? "Process now" : "Retry now", () -> {
                 Ingest.retry(ui.c, entry);
                 Toast.makeText(ui.c, "Processing in the background", Toast.LENGTH_SHORT).show();
                 host.onBackPressed();
-            }), ui.lp(12));
-        }
+            }));
         if (!entry.url.isEmpty()) {
-            LinearLayout row = new LinearLayout(ui.c);
-            row.addView(ui.button("Open source", true, v -> open()), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            View gap = new View(ui.c);
-            row.addView(gap, new LinearLayout.LayoutParams(ui.dp(8), 1));
-            row.addView(ui.button("Copy link", false, v -> {
+            java.util.List<Act> acts = new java.util.ArrayList<>();
+            acts.add(new Act("Open source", this::open));
+            acts.add(new Act("Copy link", () -> {
                 ((android.content.ClipboardManager) ui.c.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(android.content.ClipData.newPlainText("link", entry.url));
                 Toast.makeText(ui.c, "Link copied", Toast.LENGTH_SHORT).show();
-            }), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-            page.addView(row, ui.lp(16));
+            }));
+            b.add(new Buttons(acts));
         }
-
-        page.addView(ui.label("Why I saved this"), ui.lp(20));
-        LinearLayout chips = new LinearLayout(ui.c);
-        why = field(entry.why, 2);
-        for (String name : INTENTS) {
-            TextView c = ui.button(name, false, v -> {
-                String now = why.getText().toString();
-                why.setText(now.startsWith(name) ? now.substring(name.length()).replaceFirst("^[.:,]?\\s*", "") : name + (now.isEmpty() ? "" : ". " + now));
-                why.setSelection(why.getText().length());
-            });
-            c.setPadding(ui.dp(12), 0, ui.dp(12), 0);
-            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            p.rightMargin = ui.dp(6);
-            chips.addView(c, p);
-        }
-        android.widget.HorizontalScrollView strip = new android.widget.HorizontalScrollView(ui.c);
-        strip.setHorizontalScrollBarEnabled(false);
-        strip.addView(chips);
-        page.addView(strip, ui.lp(8));
-        page.addView(why, ui.lp(8));
-        page.addView(ui.label("My ideas"), ui.lp(16));
-        ideas = field(entry.ideas, 3);
-        page.addView(ideas, ui.lp(8));
-
-        save = ui.button("Save", true, v -> save());
-        page.addView(save, ui.lp(20));
-        delete = ui.text("Delete from inbox", 14, Ui.MEDIUM, ui.err);
-        delete.setGravity(Gravity.CENTER);
-        delete.setMinHeight(ui.dp(48));
-        delete.setOnClickListener(v -> confirmDelete());
-        Ui.buttonRole(delete);
-        page.addView(delete, ui.lp(4));
-        return root;
-    }
-
-    private EditText field(String value, int lines) {
-        EditText e = new EditText(ui.c);
-        e.setText(value);
-        e.setMinLines(lines);
-        e.setGravity(Gravity.TOP);
-        e.setTextColor(ui.ink);
-        e.setTextSize(15);
-        e.setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12));
-        e.setBackground(ui.round(ui.surface, ui.line, 8));
-        e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        return e;
+        java.util.List<Act> chips = new java.util.ArrayList<>();
+        for (String name : INTENTS) chips.add(new Act(name, () -> {
+            why = why.startsWith(name) ? why.substring(name.length()).replaceFirst("^[.:,]?\\s*", "") : name + (why.isEmpty() ? "" : ". " + why);
+            draw();
+        }));
+        b.add(new Field("Why I saved this", why, 2, chips, t -> why = t));
+        b.add(new Field("My ideas", ideas, 3, new java.util.ArrayList<>(), t -> ideas = t));
+        b.add(new Primary(busy ? "Saving…" : "Save", this::save));
+        b.add(new Danger("Delete from inbox", this::confirmDelete));
+        page.publish(b);
     }
 
     private void open() {
@@ -132,11 +78,11 @@ final class CaptureScreen extends Screen {
         catch (RuntimeException none) { Toast.makeText(ui.c, "No app can open this link", Toast.LENGTH_SHORT).show(); }
     }
 
-    private void busy(boolean on) { busy = on; save.setEnabled(!on); delete.setEnabled(!on); save.setAlpha(on ? 0.5f : 1f); }
+    private void busy(boolean on) { busy = on; draw(); }
 
     private void save() {
         if (busy) return;
-        final String w = why.getText().toString(), i = ideas.getText().toString();
+        final String w = why, i = ideas;
         if (w.equals(entry.why) && i.equals(entry.ideas)) { host.onBackPressed(); return; }
         run((t, e) -> InboxFile.setNotes(t, e, w, i), "Saved", true);
     }

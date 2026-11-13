@@ -12,28 +12,19 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Background work: tag untagged links, then embed whatever has no vector yet. Blocking; runs inside BackgroundJob. */
 final class Tagger {
-    private static final AtomicBoolean RUNNING = new AtomicBoolean();
-    /** When the current run began, and whether a capture arrived while it ran (then it goes round again). A run silent for 20 minutes is taken as hung and replaced. */
-    private static volatile long began;
-    private static volatile boolean again;
-    /** Set when Android stops the job: the loops end after the call in flight instead of working on unseen. */
-    static volatile boolean halt;
+    /** One run at a time, each with its own stop switch. A run silent for 20 minutes is asked to stop; a new one waits for its thread to end. */
+    static final RunGate GATE = new RunGate();
+    /** True when this thread's run was told to stop (Android ended the job): loops end after the call in flight. */
+    static boolean halt() { return Cancel.current().stopped(); }
 
     /** Provider and inbox errors end the run and are kept in prefs for Settings; the next job retries. */
     static void run(Context c) {
         String key = Model.key(c);
         if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
-        if (!RUNNING.compareAndSet(false, true)) {
-            if (System.currentTimeMillis() - began < 20 * 60000L) { again = true; return; } // working: it will look again when done
-            // a hung call held the lock: carry on regardless, so processing never stays stuck
-        }
-        began = System.currentTimeMillis();
-        again = false;
-        halt = false;
+        try { if (GATE.enter(20 * 60000L, 30000L) == null) return; } catch (InterruptedException i) { return; } // busy: that run looks again when done
         String problem = "";
         try {
             // Each stage stands alone: a tagging failure must not stop ingest, and a dead network in one must not hide what another could still do.
@@ -60,15 +51,15 @@ final class Tagger {
             }
         } finally {
             c.getSharedPreferences("capture", 0).edit().putString("aiProblem", problem).apply();
-            RUNNING.set(false);
+            GATE.exit();
         }
-        if (again) run(c); // a capture arrived while this run was busy (even if Android stopped the job meanwhile: the process is still here)
+        if (GATE.again) run(c); // a capture arrived while this run was busy (even if Android stopped the job meanwhile: the process is still here)
     }
 
     private static void tag(Context c, String key) throws Exception {
         String model = c.getSharedPreferences("capture", 0).getString("aiModel", Model.DEFAULT);
         Set<String> skipped = new HashSet<>();
-        for (int calls = 0; calls < 40 && !SetupActivity.editing && !halt; ) {
+        for (int calls = 0; calls < 40 && !halt(); ) {
             String destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             InboxFile.Entry next = null;
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
@@ -136,7 +127,7 @@ final class Tagger {
         android.content.SharedPreferences tried = c.getSharedPreferences("enriched", 0);
         int fetched = 0;
         for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
-            if (fetched >= 10 || halt || SetupActivity.editing) return;
+            if (fetched >= 10 || halt()) return;
             String mark = "page:" + Long.toHexString(Index.key(Capture.identity(e.url)));
             if (e.text || e.url.isEmpty() || e.type.isEmpty() || Content.has(c, e.url) || tried.getBoolean(mark, false)) continue;
             fetched++;
@@ -151,7 +142,7 @@ final class Tagger {
     /** Voice clips: transcribe, file the note, then delete the audio. Errors stay on the job so Settings can show them. */
     private static void transcribe(Context c, String key) throws Exception {
         for (File file : CaptureService.pending(c)) {
-            if (SetupActivity.editing || halt) return;
+            if (halt()) return;
             JSONObject job;
             try { job = CaptureService.readJob(file); } catch (Exception unreadable) { continue; }
             if (!"voice".equals(job.optString("kind")) || job.has("error")) continue;
@@ -187,7 +178,7 @@ final class Tagger {
     private static void describe(Context c, String key) throws Exception {
         if (!c.getSharedPreferences("capture", 0).getBoolean("describe", false) || !Attach.ready(c)) return;
         Set<String> skipped = new HashSet<>();
-        for (int calls = 0; calls < 20 && !SetupActivity.editing && !halt; ) {
+        for (int calls = 0; calls < 20 && !halt(); ) {
             String destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             InboxFile.Entry next = null;
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
@@ -221,7 +212,7 @@ final class Tagger {
         index.retain(entries);
         Content.retain(c, entries);
         List<String> todo = index.missing(entries);
-        for (int i = 0; i < Math.min(todo.size(), 320) && !halt; i += 32) {
+        for (int i = 0; i < Math.min(todo.size(), 320) && !halt(); i += 32) {
             List<String> batch = new ArrayList<>(todo.subList(i, Math.min(i + 32, todo.size())));
             List<float[]> vectors = Model.embed(key, batch);
             for (int j = 0; j < batch.size(); j++) index.put(batch.get(j), vectors.get(j));

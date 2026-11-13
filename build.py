@@ -24,11 +24,18 @@ testjson = root / 'lib/json-20240303.jar' # org.json for the JVM checks only; th
 run(java / 'bin/javac', '-encoding', 'UTF-8', '-classpath', str(jsoup) + os.pathsep + str(testjson), '-d', classes,
     root / 'src/me/venkatesh/saveobsidian/Extract.java', root / 'src/me/venkatesh/saveobsidian/Transcript.java', root / 'src/me/venkatesh/saveobsidian/JsonFix.java', root / 'src/me/venkatesh/saveobsidian/Net.java',
     root / 'src/me/venkatesh/saveobsidian/Capture.java', root / 'src/me/venkatesh/saveobsidian/AppendCheck.java',
-    root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'src/me/venkatesh/saveobsidian/Index.java', root / 'src/me/venkatesh/saveobsidian/Vault.java', root / 'src/me/venkatesh/saveobsidian/Layout.java', root / 'src/me/venkatesh/saveobsidian/Lane.java', root / 'src/me/venkatesh/saveobsidian/Feed.java', root / 'src/me/venkatesh/saveobsidian/NoteEdit.java', root / 'src/me/venkatesh/saveobsidian/Cites.java', root / 'src/me/venkatesh/saveobsidian/Cards.java', root / 'src/me/venkatesh/saveobsidian/Sched.java', root / 'src/me/venkatesh/saveobsidian/Spark.java', root / 'src/me/venkatesh/saveobsidian/CardPrompt.java', root / 'src/me/venkatesh/saveobsidian/IngestText.java', root / 'tests/CaptureTest.java')
+    root / 'src/me/venkatesh/saveobsidian/InboxFile.java', root / 'src/me/venkatesh/saveobsidian/VerifiedEdit.java', root / 'src/me/venkatesh/saveobsidian/VaultLock.java', root / 'src/me/venkatesh/saveobsidian/Cancel.java', root / 'src/me/venkatesh/saveobsidian/RunGate.java', root / 'src/me/venkatesh/saveobsidian/Limits.java', root / 'src/me/venkatesh/saveobsidian/Failures.java', root / 'src/me/venkatesh/saveobsidian/Enrich.java', root / 'src/me/venkatesh/saveobsidian/Index.java', root / 'src/me/venkatesh/saveobsidian/Vault.java', root / 'src/me/venkatesh/saveobsidian/Layout.java', root / 'src/me/venkatesh/saveobsidian/Lane.java', root / 'src/me/venkatesh/saveobsidian/Feed.java', root / 'src/me/venkatesh/saveobsidian/NoteEdit.java', root / 'src/me/venkatesh/saveobsidian/Cites.java', root / 'src/me/venkatesh/saveobsidian/Cards.java', root / 'src/me/venkatesh/saveobsidian/Sched.java', root / 'src/me/venkatesh/saveobsidian/Spark.java', root / 'src/me/venkatesh/saveobsidian/CardPrompt.java', root / 'src/me/venkatesh/saveobsidian/IngestText.java', root / 'tests/CaptureTest.java')
 run(java / 'bin/java', '-cp', str(classes) + os.pathsep + str(jsoup) + os.pathsep + str(testjson), 'CaptureTest')
+if any((root / 'src').rglob('*.kt')):
+    print('Kotlin sources present: the APK is built by Gradle now (./gradlew assembleRelease). build.py ran the JVM checks only.')
+    raise SystemExit(0)
+# the manifest has no package (Gradle takes it from namespace); aapt2 needs one
+manifest = build / 'AndroidManifest.xml'
+manifest.write_text((root / 'AndroidManifest.xml').read_text().replace('<manifest ', '<manifest package="me.venkatesh.saveobsidian" ', 1))
 run(tools / 'aapt2', 'compile', '--dir', root / 'res', '-o', build / 'resources.zip')
 run(tools / 'aapt2', 'link', '-o', build / 'unsigned.apk', '-I', platform / 'android.jar',
-    '--manifest', root / 'AndroidManifest.xml', '--min-sdk-version', '26', '--target-sdk-version', '35',
+    '--manifest', manifest, '--min-sdk-version', '26', '--target-sdk-version', '35',
+    '--version-code', '12', '--version-name', '1.9.0', # kept in step with build.gradle.kts
     '--java', build / 'generated', build / 'resources.zip')
 run(java / 'bin/javac', '-encoding', 'UTF-8', '--release', '8', '-classpath', str(platform / 'android.jar') + os.pathsep + str(jsoup),
     '-d', classes, *sorted((root / 'src').rglob('*.java')), *sorted((build / 'generated').rglob('*.java')))

@@ -47,5 +47,5 @@ public class BackgroundJob extends JobService {
         return true;
     }
 
-    @Override public boolean onStopJob(JobParameters params) { Tagger.halt = true; return true; } // system stopped us early: run again later
+    @Override public boolean onStopJob(JobParameters params) { Tagger.GATE.halt(); return true; } // system stopped us early: run again later
 }

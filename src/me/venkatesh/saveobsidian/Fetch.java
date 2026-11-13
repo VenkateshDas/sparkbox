@@ -27,6 +27,11 @@ final class Fetch {
      * network failed, so the caller can try again later instead of treating it as "empty". transcribe lets a video without captions be transcribed (slow, costs a little).
      */
     static Result page(String url, String key, boolean transcribe) throws IOException {
+        try { Limits.FETCH.acquire(); } catch (InterruptedException stop) { Thread.currentThread().interrupt(); throw new IOException("Stopped"); }
+        try { return pageNow(url, key, transcribe); } finally { Limits.FETCH.release(); }
+    }
+
+    private static Result pageNow(String url, String key, boolean transcribe) throws IOException {
         Result r = new Result();
         String host;
         try { host = new URL(url).getHost().toLowerCase(Locale.ROOT); } catch (java.net.MalformedURLException bad) { r.problem = "Not a web link"; return r; }

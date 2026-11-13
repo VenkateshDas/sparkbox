@@ -239,4 +239,7 @@ public final class IngestText {
         lines.addAll(last + 1, rows);
         return join(lines);
     }
+
+    /** A saved plan stays valid while the Why and Ideas it was asked with are unchanged. Plans saved before hashes existed (empty) are kept. */
+    public static boolean samePlanInputs(String planHash, String nowHash) { return planHash == null || planHash.isEmpty() || planHash.equals(nowHash); }
 }

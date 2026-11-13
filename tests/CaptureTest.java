@@ -21,6 +21,11 @@ import java.util.ArrayList;
 import me.venkatesh.saveobsidian.IngestText;
 import java.util.List;
 import me.venkatesh.saveobsidian.VerifiedEdit;
+import me.venkatesh.saveobsidian.VaultLock;
+import me.venkatesh.saveobsidian.Cancel;
+import me.venkatesh.saveobsidian.RunGate;
+import me.venkatesh.saveobsidian.Limits;
+import me.venkatesh.saveobsidian.Failures;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -28,6 +33,8 @@ import java.util.Arrays;
 public class CaptureTest {
     static int count;
     public static void main(String[] args) throws Exception {
+        concurrency();
+        limits();
         check(Capture.firstUrl("A caption\nhttps://example.com/post?a=1&b=two+three\nRead it").equals("https://example.com/post?a=1&b=two+three"));
         check(Capture.firstUrl("https://youtu.be/Abc?t=42").equals("https://youtu.be/Abc?t=42"));
         check(Capture.pageTitle("<HTML><TITLE class='x'>You don&#x27;t\nneed long context</TITLE></HTML>").equals("You don&#x27;t\nneed long context"));
@@ -594,4 +601,111 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
     }
 
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("check #" + count); }
+
+    static void concurrency() throws Exception {
+        // cancel isolation: stopping Ask's token leaves background work running, and the reverse
+        Cancel ask = new Cancel(), background = new Cancel();
+        ask.stop();
+        check(ask.stopped() && !background.stopped());
+        Cancel ask2 = new Cancel(); background.stop();
+        check(background.stopped() && !ask2.stopped());
+        check(!Cancel.current().stopped()); // a thread with no run is never stopped
+        Cancel.current().halt();
+        check(!Cancel.current().stopped()); // and cannot be stopped by accident
+
+        // halt isolation: halting one run stops that run only; a new run gets a fresh switch, children inherit their run's
+        RunGate gate = new RunGate();
+        final Cancel[] first = new Cancel[1];
+        final boolean[] childSaw = new boolean[1];
+        java.util.concurrent.CountDownLatch in = new java.util.concurrent.CountDownLatch(1);
+        Thread a = new Thread(() -> {
+            try {
+                first[0] = gate.enter(60000, 1000);
+                in.countDown();
+                while (!Cancel.current().stopped()) Thread.sleep(5);
+                Thread child = new Thread(() -> childSaw[0] = Cancel.current().stopped());
+                child.start(); child.join();
+                gate.exit();
+            } catch (InterruptedException e) { }
+        });
+        a.start(); in.await();
+        check(gate.enter(60000, 1000) == null && gate.again); // busy, not hung: no second run
+        gate.halt();
+        a.join(2000);
+        check(first[0].stopped() && childSaw[0] && !a.isAlive());
+        Cancel second = gate.enter(60000, 1000);
+        check(second != null && second != first[0] && !second.stopped());
+        gate.exit();
+
+        // the hung-run escape stops the old run and waits; it never runs two at once
+        RunGate g2 = new RunGate();
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicBoolean overlap = new java.util.concurrent.atomic.AtomicBoolean(), inside = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread stuck = new Thread(() -> {
+            try { g2.enter(0, 0); inside.set(true); held.countDown(); while (!Cancel.current().stopped()) Thread.sleep(5); Thread.sleep(50); inside.set(false); g2.exit(); } catch (InterruptedException e) { }
+        });
+        stuck.start(); held.await();
+        Cancel next = g2.enter(0, 2000);
+        overlap.set(inside.get());
+        check(next != null && !overlap.get() && !stuck.isAlive());
+        g2.exit();
+        Thread deaf = new Thread(() -> { try { g2.enter(0, 0); Thread.sleep(400); g2.exit(); } catch (InterruptedException e) { } }); // ignores the stop
+        deaf.start(); Thread.sleep(50);
+        check(g2.enter(0, 50) == null); // still alive after the wait: skip, do not run beside it
+        deaf.join();
+
+        // lock serialization: two writers doing read, compute, write never lose an update
+        final int[] file = {0};
+        Runnable writer = () -> { for (int i = 0; i < 500; i++) { VaultLock.L.lock(); try { int read = file[0]; Thread.yield(); file[0] = read + 1; } finally { VaultLock.L.unlock(); } } };
+        Thread w1 = new Thread(writer), w2 = new Thread(writer);
+        w1.start(); w2.start(); w1.join(); w2.join();
+        check(file[0] == 1000);
+        // VerifiedEdit holds the same lock: another writer cannot slip in between its compare and its write
+        final byte[][] disk = {"a".getBytes(StandardCharsets.UTF_8)};
+        VaultLock.L.lock();
+        Thread edit = new Thread(() -> { try { VerifiedEdit.apply(disk[0], "b".getBytes(StandardCharsets.UTF_8), () -> disk[0], b -> disk[0] = b, (x, y) -> { }); } catch (Exception e) { } });
+        edit.start(); Thread.sleep(50);
+        check(edit.isAlive() && Arrays.equals(disk[0], "a".getBytes(StandardCharsets.UTF_8)));
+        VaultLock.L.unlock(); edit.join();
+        check(Arrays.equals(disk[0], "b".getBytes(StandardCharsets.UTF_8)));
+
+        // input hash: a result for older Why/Ideas is discarded; legacy plans without a hash are kept
+        check(IngestText.samePlanInputs("abc", "abc"));
+        check(!IngestText.samePlanInputs("abc", "def"));
+        check(IngestText.samePlanInputs("", "def") && IngestText.samePlanInputs(null, "def"));
+    }
+
+    static void limits() throws Exception {
+        // background model calls: never more than two at once, however many ask
+        final java.util.concurrent.atomic.AtomicInteger now = new java.util.concurrent.atomic.AtomicInteger(), most = new java.util.concurrent.atomic.AtomicInteger();
+        List<Thread> ts = new ArrayList<>();
+        for (int i = 0; i < 6; i++) ts.add(new Thread(() -> { try { Limits.with(Limits.AI, () -> { most.accumulateAndGet(now.incrementAndGet(), Math::max); Thread.sleep(40); now.decrementAndGet(); return null; }); } catch (Exception e) { } }));
+        for (Thread t : ts) t.start();
+        for (Thread t : ts) t.join();
+        check(most.get() == 2 && Limits.AI.availablePermits() == 2);
+        // a permit comes back even when the work throws
+        try { Limits.with(Limits.FETCH, () -> { throw new java.io.IOException("x"); }); } catch (java.io.IOException expected) { }
+        check(Limits.FETCH.availablePermits() == 3);
+        // interactive is per thread
+        Limits.interactive(true);
+        final boolean[] other = new boolean[1];
+        Thread t = new Thread(() -> other[0] = Limits.interactive());
+        t.start(); t.join();
+        check(Limits.interactive() && !other[0]);
+        Limits.interactive(false);
+        check(!Limits.interactive());
+
+        // failure kinds and what follows from them
+        check(Failures.kind("Offline: waiting for a connection").equals(Failures.OFFLINE));
+        check(Failures.kind("Smart tags paused: OpenRouter answered 401 (check the key)").equals(Failures.KEY));
+        check(Failures.kind("Smart tags paused: OpenRouter answered 402 (out of credit)").equals(Failures.KEY));
+        check(Failures.kind("Smart tags paused: OpenRouter answered 429: slow down").equals(Failures.RATE));
+        check(Failures.kind("The model found no topic for this capture").equals(Failures.MALFORMED));
+        check(Failures.kind("Knowledge/index.md changed while it was being edited. It will be tried again.").equals(Failures.CONFLICT));
+        check(Failures.kind("Why or Ideas changed while processing: it will be processed again").equals(Failures.CONFLICT));
+        check(Failures.kind("Something odd").equals(Failures.OTHER));
+        check(!Failures.retries(Failures.KEY) && Failures.retries(Failures.RATE) && Failures.retries(Failures.CONFLICT));
+        check(Failures.minWaitMs(Failures.RATE) >= 600000 && Failures.minWaitMs(Failures.OTHER) == 0);
+        check(Failures.recovery(Failures.CONFLICT, "").contains("without a new model call"));
+    }
 }

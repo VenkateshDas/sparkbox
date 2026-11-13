@@ -27,7 +27,7 @@ final class Md {
 
     /** Body of a note (frontmatter hidden) as styled text. Link taps go to open. */
     static SpannableStringBuilder render(Ui ui, String text, Open open) {
-        if (text.startsWith("﻿")) text = text.substring(1);
+        if (text.startsWith("\uFEFF")) text = text.substring(1);
         text = Vault.clipLines(text.replace("\r\n", "\n"));
         int[] at = new int[1];
         Vault.frontmatter(text, at);

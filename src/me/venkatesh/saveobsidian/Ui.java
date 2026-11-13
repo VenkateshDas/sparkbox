@@ -22,7 +22,7 @@ import java.util.Locale;
 /**
  * Sparkbox look: slate surfaces, system sans at two weights, an emerald accent. Dark and light palettes from the approved design. Sizes: 12 / 14 / 16 / 20 / 48. Spacing: multiples of 4.
  */
-final class Ui {
+public final class Ui {
     final Context c;
     final int bg, surface, raised, ink, sub, muted, line, accent, onAccent, container, onContainer, warn, warnBg, err, errBg;
     final boolean dark;
@@ -73,10 +73,13 @@ final class Ui {
         return p;
     }
 
+    /** The type scale, tighter than the sizes written at call sites: body 1.5 steps down (15 to 13.5, never under 11), headings compressed (17 to 15, 20 to 17, 28 to 23). */
+    static float type(float sp) { return sp <= 16 ? Math.max(11, sp - 1.5f) : 15 + (sp - 17) * 0.7f; }
+
     TextView text(String value, float sp, Typeface face, int color) {
         TextView view = new TextView(c);
         view.setText(value);
-        view.setTextSize(sp);
+        view.setTextSize(type(sp));
         view.setTypeface(face);
         view.setTextColor(color);
         view.setIncludeFontPadding(false);
@@ -85,19 +88,7 @@ final class Ui {
         return view;
     }
 
-    /** Status chip, 24 dp tall. kind: 0 neutral, 1 green (done), 2 warning, 3 error. */
-    TextView chip(String label, int kind) {
-        int fill = kind == 1 ? container : kind == 2 ? warnBg : kind == 3 ? errBg : raised;
-        int color = kind == 1 ? onContainer : kind == 2 ? warn : kind == 3 ? err : sub;
-        TextView view = text(label, 12, MEDIUM, color);
-        view.setPadding(dp(8), dp(4), dp(8), dp(4));
-        view.setBackground(round(fill, kind == 0 ? line : 0, 12));
-        view.setSingleLine(true);
-        return view;
-    }
 
-    /** Section label: 14 medium, secondary. */
-    TextView label(String value) { return text(value, 14, MEDIUM, sub); }
 
     GradientDrawable round(int fill, int stroke, float radiusDp) {
         GradientDrawable shape = new GradientDrawable();
@@ -107,22 +98,7 @@ final class Ui {
         return shape;
     }
 
-    Drawable ripple(Drawable content) {
-        return new RippleDrawable(ColorStateList.valueOf((ink & 0xFFFFFF) | 0x1F000000), content, content == null ? new ColorDrawable(Color.BLACK) : null);
-    }
 
-    /** Primary: accent fill with on-accent text. Secondary: raised surface with a hairline. */
-    TextView button(String label, boolean primary, View.OnClickListener click) {
-        TextView view = text(label, 14, MEDIUM, primary ? onAccent : ink);
-        view.setGravity(Gravity.CENTER);
-        view.setMinHeight(dp(48));
-        view.setMinWidth(dp(48));
-        view.setPadding(dp(16), 0, dp(16), 0);
-        view.setBackground(ripple(round(primary ? accent : raised, primary ? 0 : line, 24)));
-        view.setOnClickListener(click);
-        buttonRole(view);
-        return view;
-    }
 
     static void buttonRole(View view) {
         view.setFocusable(true);
@@ -134,6 +110,7 @@ final class Ui {
             }
         });
     }
+
     static void insets(View view) {
         view.setFitsSystemWindows(false);
         view.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -146,30 +123,7 @@ final class Ui {
         view.requestApplyInsets();
     }
 
-    LinearLayout card(String heading) {
-        LinearLayout card = new LinearLayout(c);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(20), dp(20), dp(20), dp(20));
-        card.setBackground(round(surface, line, 12));
-        if (heading != null) {
-            LinearLayout.LayoutParams p = lp(0);
-            p.bottomMargin = dp(16);
-            card.addView(label(heading), p);
-        }
-        return card;
-    }
 
-    /** Small status dot: filled accent when done, hollow hairline when not. */
-    View dot(boolean done) {
-        View v = new View(c);
-        GradientDrawable shape = new GradientDrawable();
-        shape.setShape(GradientDrawable.OVAL);
-        shape.setColor(done ? accent : 0);
-        shape.setStroke(dp(1), done ? accent : muted);
-        v.setBackground(shape);
-        v.setLayoutParams(new LinearLayout.LayoutParams(dp(8), dp(8)));
-        return v;
-    }
 
     static String host(String url) {
         String h = Uri.parse(url).getHost();

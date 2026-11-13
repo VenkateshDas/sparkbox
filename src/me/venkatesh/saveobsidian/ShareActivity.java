@@ -8,7 +8,7 @@ import android.graphics.drawable.Icon;
 import android.os.Bundle;
 import android.widget.Toast;
 
-/** Receives a share, queues it privately, and gets out of the way. All UI lives in SetupActivity. */
+/** Receives a share, queues it privately, and gets out of the way. All UI lives in MainActivity. */
 public class ShareActivity extends Activity {
     /** A sharing shortcut puts Sparkbox in the share sheet's top "direct share" row. */
     static void publishShortcut(android.content.Context ctx) {

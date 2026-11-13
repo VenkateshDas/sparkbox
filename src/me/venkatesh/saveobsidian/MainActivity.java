@@ -16,7 +16,7 @@ import java.util.List;
  * The app shell: four tabs (Feed, Spark, Search, Ask) under a bottom bar, and a back stack of detail screens on top of the current tab.
  * Each screen is a Screen; tab screens stay alive while the activity does, so scroll position and filters survive switching tabs.
  */
-public class MainActivity extends Activity {
+public class MainActivity extends androidx.activity.ComponentActivity {
     static final String TAB = "tab";
     private static final String[] NAMES = {"Feed", "Spark", "Search", "Ask"};
     private static final int[] ICONS = {R.drawable.ic_nav_feed, R.drawable.ic_nav_spark, R.drawable.ic_nav_search, R.drawable.ic_nav_ask};
@@ -37,8 +37,11 @@ public class MainActivity extends Activity {
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
         for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
         draw();
+        // Back goes through the androidx dispatcher (predictive back on Android 13+, and Compose screens can add their own callbacks above this one)
+        getOnBackPressedDispatcher().addCallback(this, shellBack);
         CardGen.resume(this);
         Reminder.schedule(this);
+        BackgroundJob.schedule(this); // a force-stop or crash drops scheduled jobs: opening the app picks up unfinished captures
         if (state == null) handleIntent(getIntent());
     }
 
@@ -125,8 +128,8 @@ public class MainActivity extends Activity {
         List<Screen> keep = new ArrayList<>(stack);
         stack.clear();
         stackViews.clear();
+        showTab(); // the tab first, so back from the re-opened screens has it to return to
         for (Screen s : keep) push(s);
-        showTab();
     }
 
     /** One bottom-bar item: a 24 dp icon over a 12 sp label, centred together in a 64 dp cell. */
@@ -173,6 +176,9 @@ public class MainActivity extends Activity {
         tabs[tab].onShow();
     }
 
+    /** The Theme setting changed: rebuild the shell in place, keeping the open screens (recreate() would drop them). */
+    void retheme() { draw(); }
+
     /** Opens the Ask tab with a question already sent. */
     void ask(String question) {
         select(3);
@@ -215,17 +221,19 @@ public class MainActivity extends Activity {
         content.addView(v, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
-    @Override public void onBackPressed() {
-        if (current().onBack()) return;
-        if (!stack.isEmpty()) {
-            current().onHide();
-            stack.remove(stack.size() - 1);
-            stackViews.remove(stackViews.size() - 1);
-            show(stack.isEmpty() ? built[tab] : stackViews.get(stackViews.size() - 1));
-            current().onShow();
-        } else if (tab != 0) select(0);
-        else super.onBackPressed();
-    }
+    private final androidx.activity.OnBackPressedCallback shellBack = new androidx.activity.OnBackPressedCallback(true) {
+        @Override public void handleOnBackPressed() {
+            if (current().onBack()) return;
+            if (!stack.isEmpty()) {
+                current().onHide();
+                stack.remove(stack.size() - 1);
+                stackViews.remove(stackViews.size() - 1);
+                show(stack.isEmpty() ? built[tab] : stackViews.get(stackViews.size() - 1));
+                current().onShow();
+            } else if (tab != 0) select(0);
+            else { setEnabled(false); getOnBackPressedDispatcher().onBackPressed(); setEnabled(true); } // the system's own back: leave the app
+        }
+    };
 
     /** A tab that is not built yet: its name and a way to the existing screens, so nothing is lost while the real screens arrive. */
     private static final class Placeholder extends Screen {
