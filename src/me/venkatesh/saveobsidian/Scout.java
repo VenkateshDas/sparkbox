@@ -32,12 +32,6 @@ final class Scout {
     static final String[] LEVELS = {"off", "low", "medium", "high"};
     static String thinking(Context c) { return c.getSharedPreferences("capture", 0).getString("scoutThinking", "low"); } // low: a phone pays for hidden thinking in time and money
 
-    /** The OpenRouter stream with the chosen thinking level on every request, turns and summaries alike. */
-    private static Agent.Provider provider(Context c, String key) {
-        final String level = thinking(c);
-        return (request, live, cancel) -> { OpenRouter.thinking(request, level); return Model.stream(key, request, live, cancel); };
-    }
-
     private static java.util.function.Function<String, String> reader(Context c, VaultStore.Snap snap) {
         return path -> { try { Vault.Note n = snap.graph.byPath(path); return n == null ? null : VaultStore.text(c, snap.uri(n)); } catch (Exception unreadable) { return null; } };
     }
@@ -101,18 +95,18 @@ final class Scout {
     static File dir(Context c) { return new File(c.getFilesDir(), "sessions"); }
 
     /** A fresh agent on this session: new snapshot, tools, and a Cancel the caller keeps. */
-    static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel, java.util.function.Consumer<String> warn, boolean research) {
+    static Agent agent(Context c, VaultStore.Snap snap, String key, Session session, VaultTools.Confirm confirm, Cancel cancel, java.util.function.Consumer<String> warn, boolean research, String run, Runnable changed) {
         List<Tool> tools = new ArrayList<>(VaultTools.create(new Files(c, snap), confirm, VaultStore.ROOTS));
         tools.add(inbox(c));
         String problems = Mcp.connectAll(servers(c), confirm, tools, cancel); // servers that fail are reported, the others still work
         if (!problems.isEmpty()) warn.accept("Some tool servers did not start:\n" + problems.trim());
-        Agent a = new Agent(provider(c, key), Ask.model(c), system(c, snap, research), tools, cancel);
+        Agent a = new Agent(ScoutUsage.provider(c, key, session, run, "conversation", changed), Ask.model(c), system(c, snap, research), tools, cancel);
         a.attach(session);
         if (!Ask.model(c).equals(a.model())) a.setModel(Ask.model(c));
         a.maxTurns = research ? 30 : 12; // research reads many sources; the last turn still has no tools and asks for the answer
         if (research) a.maxTokens = 3000;
         a.polish = text -> fix(a, text);
-        a.hooks = new Compact(provider(c, key), Ask.model(c), session, WINDOW);
+        a.hooks = new Compact(ScoutUsage.provider(c, key, session, run, "compaction", changed), Ask.model(c), session, WINDOW);
         return a;
     }
 

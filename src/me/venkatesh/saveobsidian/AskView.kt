@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -101,12 +102,16 @@ interface AskActions {
     fun renameChat(file: String)
     fun deleteChat(file: String)
     fun searchChats(query: String)
+    fun usage(file: String)
 }
 
 /** One line of the chats drawer. status: "", "Working…" or "Needs your OK". */
 class ChatRow(val file: String, val title: String, val status: String, val current: Boolean)
 
 class AskState {
+    var usage by mutableStateOf(""); private set
+    var sessionFile by mutableStateOf(""); private set
+    fun usage(file: String, text: String) { sessionFile = file; usage = text }
     var items by mutableStateOf(emptyList<AskItem>()); private set
     var running by mutableStateOf(false); private set
     var status by mutableStateOf(""); private set
@@ -215,6 +220,13 @@ private fun AskUi(s: AskState, a: AskActions) {
                     itemsIndexed(s.items) { _, it -> Item(it, a) }
                     if (s.running) item { Running(s, a) }
                 }
+                if (s.sessionFile.isNotEmpty()) Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { a.usage(s.sessionFile) }
+                        .padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(s.usage, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text("›", color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+                }
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val send = { val q = s.input.trim(); if (q.isNotEmpty() && !s.offline) a.ask(q) } // while it runs, a message steers Scout
                     OutlinedTextField(value = s.input, onValueChange = { s.input(it); a.draft(it) }, enabled = !s.offline,
@@ -267,6 +279,7 @@ private fun ChatsDrawer(s: AskState, a: AskActions) {
                         Box {
                             TextButton(onClick = { menu = true }) { Text("⋯", style = MaterialTheme.typography.titleLarge, color = cs.onSurfaceVariant) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(text = { Text("Usage") }, onClick = { menu = false; a.usage(c.file) })
                                 DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; a.renameChat(c.file) })
                                 DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; a.deleteChat(c.file) })
                             }

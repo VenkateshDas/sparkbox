@@ -11,6 +11,7 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 **Capture** (always local, never waits for the network or a model)
 - Share a link, text, photo, PDF, document or audio to **Sparkbox** from any app. A **Source added** notification (an island on OnePlus) confirms within a second.
 - The **Quick capture sheet** (widget, Quick Settings tiles, launcher shortcuts, the Feed's **+**) writes a thought or records a voice note.
+- **Sparkbox Capture** is a separate 2×1 home-screen widget with Write and Speak icons. It follows system light/dark appearance and switches to a timer and Stop while recording.
 - Captures are queued in private app storage first, then appended to the vault inbox (`Knowledge/Sources/Inbox.md`) with a verified write.
 
 **Processing** (in the background, needs an OpenRouter key)
@@ -27,6 +28,12 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 - **Source** and **Topic** pages mark each section as *from the source*, *AI* or *yours*. Your own words are edited in place.
 - **Vault browser** (menu → Browse vault): folders, notes, Read / Links / Similar.
 - **Settings**: vault and inbox, processing switches, models, key, Spark, theme (System, Dark, Light), recovery.
+
+### Scout session usage
+
+The line above Scout’s composer shows estimated context tokens, the advertised model capacity and percentage (when available), and reported OpenRouter session cost. Tap it, or choose **Usage** from a chat’s menu, for context history, expandable token/cost totals, and individual requests. Context is the next input; cumulative processed tokens count repeated history on every model call.
+
+Usage includes conversation, continuations, retries, compaction and chat naming. Missing charges remain unknown; older sessions show partial historical coverage. The detail screen can recover up to five missing charges per refresh using saved generation IDs. Metrics stay in the local session JSONL and are never added to model context. Independently billed tools and credit purchase fees are excluded. Model metadata refreshes at most daily when available; it does not change Scout’s existing compaction policy.
 
 ## Privacy
 

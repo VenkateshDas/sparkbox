@@ -220,17 +220,14 @@ public final class Session {
         return out;
     }
 
-    /** Spend so far: prompt and completion tokens, cost, model calls (assistant messages plus usage entries). */
-    public synchronized JSONObject totals() {
-        long prompt = 0, completion = 0, calls = 0;
-        double cost = 0;
-        for (JSONObject e : entries) {
-            JSONObject u = e.optString("type").equals("usage") ? e.optJSONObject("usage")
-                : e.optString("type").equals("message") ? e.optJSONObject("message").optJSONObject("usage") : null;
-            if (u == null) continue;
-            prompt += u.optLong("prompt_tokens"); completion += u.optLong("completion_tokens"); cost += u.optDouble("cost", 0); calls++;
-        }
-        try { return new JSONObject().put("prompt_tokens", prompt).put("completion_tokens", completion).put("cost", cost).put("calls", calls); }
+    /** Stable deep copy for local metrics; never fed into context(). */
+    public synchronized List<JSONObject> log() {
+        List<JSONObject> copy = new ArrayList<>();
+        try { for (JSONObject e : entries) copy.add(new JSONObject(e.toString())); }
         catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        return copy;
     }
+
+    /** Spend across all request attempts, including legacy usage without double-counting messages. */
+    public synchronized JSONObject totals() { return SessionUsage.totals(this); }
 }

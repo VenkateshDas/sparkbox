@@ -54,6 +54,7 @@ final class AskScreen extends Screen {
         @Override public void searchChats(String q) { view.query(q); loadChats(); }
         @Override public void renameChat(String f) { rename(f); }
         @Override public void deleteChat(String f) { delete(f); }
+        @Override public void usage(String f) { view.drawer(false); host.push(new SessionUsageScreen(f)); }
     };
 
     /** Shows this chat (null: a new one). Whatever was running keeps running. */
@@ -157,6 +158,30 @@ final class AskScreen extends Screen {
             if (Chat.interrupted(messages)) items.add(problem(messages));
         }
         view.publish(new ArrayList<>(items));
+        usage();
+    }
+
+    private long usageRevision;
+    private void usage() {
+        final String current = file;
+        final long revision = ++usageRevision;
+        if (current == null) { view.usage("", ""); return; }
+        new Thread(() -> {
+            String text;
+            try {
+                Session session = ScoutRuns.session(ui.c, current);
+                JSONObject point = SessionUsage.context(session);
+                long tokens = point.optLong("estimate");
+                String model = point.optString("model", session.model() == null ? Ask.model(ui.c) : session.model());
+                int capacity = ScoutUsage.window(ui.c, model);
+                if (capacity <= 0) capacity = point.optInt("window");
+                text = point.has("estimate") ? "Context ≈" + SessionUsage.tokens(tokens) : "Context unavailable";
+                if (capacity > 0 && point.has("estimate")) text += " / " + SessionUsage.tokens(capacity) + " · " + Math.round(tokens * 100.0 / capacity) + "%";
+                text += "   ·   " + SessionUsage.money(session.totals());
+            } catch (Exception missing) { text = "Usage unavailable"; }
+            final String label = text;
+            main.post(() -> { if (revision == usageRevision && current.equals(file)) view.usage(current, label); });
+        }, "scout-usage-summary").start();
     }
 
     /** Why the last run has no answer: it failed, was stopped, or the app was closed under it. */

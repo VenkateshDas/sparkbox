@@ -41,6 +41,7 @@ final class ScoutRuns {
 
     static final class Run {
         final String file;
+        final String id = java.util.UUID.randomUUID().toString();
         final long began = System.currentTimeMillis();
         final Cancel cancel = new Cancel();
         volatile Agent agent;
@@ -110,8 +111,9 @@ final class ScoutRuns {
             if (snap == null || key.isEmpty()) throw new Exception("The vault or the OpenRouter key is not set up.");
             if (text != null && text.startsWith("/research ")) { research = true; text = text.substring(10).trim(); }
             Session session = session(c, run.file);
-            if (session.name() == null && text != null) nameChat(c, session, text, key);
-            Agent a = run.agent = Scout.agent(c, snap, key, session, (title, detail) -> ask(c, run, title, detail), run.cancel, w -> { run.status = w; changed(run.file); }, research);
+            if (session.name() == null && text != null) nameChat(c, session, text, key, run.id, () -> changed(run.file));
+            Agent a = run.agent = Scout.agent(c, snap, key, session, (title, detail) -> ask(c, run, title, detail), run.cancel, w -> { run.status = w; changed(run.file); }, research, run.id, () -> changed(run.file));
+            ScoutUsage.model(c, a.model(), () -> changed(run.file));
             a.subscribe((type, data) -> events(c, run, type, data));
             Usage.hit(c, "ask");
             JSONObject last;
@@ -130,13 +132,13 @@ final class ScoutRuns {
     }
 
     /** The chat's name: the start of the first message at once, then a short title from the small model (unless the user renamed it meanwhile). */
-    private static void nameChat(Context c, Session session, String text, String key) throws java.io.IOException {
+    private static void nameChat(Context c, Session session, String text, String key, String run, Runnable changed) throws java.io.IOException {
         final String first = text.length() > 40 ? text.substring(0, 40) : text;
         session.setName(first);
         new Thread(() -> {
             try {
                 String model = c.getSharedPreferences("capture", 0).getString("aiModel", Model.DEFAULT);
-                String t = Model.completeLean(key, model, "Write a title of 2 to 5 words for a chat that starts with the user's message. Reply with the title only: no quotes, no final punctuation.", text.length() > 500 ? text.substring(0, 500) : text, 30);
+                String t = Model.completeLean(key, model, "Write a title of 2 to 5 words for a chat that starts with the user's message. Reply with the title only: no quotes, no final punctuation.", text.length() > 500 ? text.substring(0, 500) : text, 30, ScoutUsage.naming(key, session, run, changed));
                 t = t == null ? "" : t.trim().split("\n")[0].replaceAll("^[\"'#*\\s]+|[\"'*\\s.]+$", "");
                 if (t.length() > 48) t = t.substring(0, 48);
                 if (!t.isEmpty() && first.equals(session.name())) { session.setName(t); for (Watcher w : watchers) w.changed(""); }
@@ -164,7 +166,19 @@ final class ScoutRuns {
         return k.equals(Failures.OTHER) || k.equals(Failures.CONFLICT) ? msg : Failures.recovery(k, msg).replace("It is tried again by itself when you are back online; Retry tries now.", "Try again when you are online.");
     }
 
+    static boolean sessionRunning(Session session) {
+        return run(new File(session.exportPath()).getName()) != null;
+    }
+
+    private static void snapshot(Context c, Run run, String reason) {
+        Agent a = run.agent;
+        if (a == null) return;
+        try { SessionUsage.snapshot(session(c, run.file), a.contextRequest(), ScoutUsage.window(c, a.model()), reason); }
+        catch (Exception ignored) { }
+    }
+
     private static void events(Context c, Run run, String type, JSONObject data) {
+        if (type.equals("message_end") || type.equals("compaction_end") || type.equals("turn_end") || type.equals("agent_settled")) snapshot(c, run, type);
         if (type.equals("message_update")) { run.live = data.optString("text"); for (Watcher w : watchers) w.live(run.file, run.live); return; }
         if (type.equals("message_end") && data.optJSONObject("message") != null && data.optJSONObject("message").optString("role").equals("user")) run.sent = null;
         if (type.equals("message_end")) { run.live = ""; for (Watcher w : watchers) w.live(run.file, ""); }

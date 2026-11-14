@@ -121,6 +121,10 @@ final class Model {
 
     /** schema (with its name) asks for structured output: the provider is held to that JSON Schema, and only providers that support it are used (require_parameters). */
     static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json, String schemaName, JSONObject schema) throws Exception {
+        return complete(key, model, system, user, maxTokens, noReasoning, json, schemaName, schema, null);
+    }
+
+    private static String complete(String key, String model, String system, String user, int maxTokens, boolean noReasoning, boolean json, String schemaName, JSONObject schema, Agent.Provider transport) throws Exception {
         JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", new JSONArray()
             .put(new JSONObject().put("role", "system").put("content", system)).put(new JSONObject().put("role", "user").put("content", user)));
         if (noReasoning) request.put("reasoning", "low".equals(REASONING.get(model)) ? new JSONObject().put("effort", "low") : new JSONObject().put("enabled", false));
@@ -131,8 +135,8 @@ final class Model {
             if (json) request.put("response_format", new JSONObject().put("type", "json_object"));
         }
         long began = System.currentTimeMillis();
-        String body = post("chat/completions", key, request, schema != null || json ? 90000 : 120000);
-        JSONObject whole = new JSONObject(body);
+        JSONObject whole = transport == null ? new JSONObject(post("chat/completions", key, request, schema != null || json ? 90000 : 120000))
+            : transport.stream(request, text -> { }, new Cancel());
         JSONObject usage = whole.optJSONObject("usage");
         JSONObject details = usage == null ? null : usage.optJSONObject("completion_tokens_details");
         android.util.Log.i("Sparkbox", "model " + model + " " + (System.currentTimeMillis() - began) + " ms, prompt " + (usage == null ? "?" : usage.optInt("prompt_tokens")) + " tokens, answer "
@@ -164,11 +168,16 @@ final class Model {
 
     /** Asks for no hidden thinking so a reasoning model keeps its token budget for the answer; a model that refuses that field is asked again without it, and remembered. */
     static String completeLean(String key, String model, String system, String user, int maxTokens) throws Exception {
-        if (NO_REASONING_FIELD.contains(model)) return complete(key, model, system, user, maxTokens, false);
-        try { return complete(key, model, system, user, maxTokens, true); }
+        return completeLean(key, model, system, user, maxTokens, null);
+    }
+
+    /** Optional transport records only Scout naming; all other callers retain their existing path. */
+    static String completeLean(String key, String model, String system, String user, int maxTokens, Agent.Provider transport) throws Exception {
+        if (NO_REASONING_FIELD.contains(model)) return complete(key, model, system, user, maxTokens, false, false, null, null, transport);
+        try { return complete(key, model, system, user, maxTokens, true, false, null, null, transport); }
         catch (Rejected refused) {
-            if (mandatoryThinking(refused) && !"low".equals(REASONING.get(model))) { REASONING.put(model, "low"); return complete(key, model, system, user, maxTokens, true); }
-            NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false);
+            if (mandatoryThinking(refused) && !"low".equals(REASONING.get(model))) { REASONING.put(model, "low"); return complete(key, model, system, user, maxTokens, true, false, null, null, transport); }
+            NO_REASONING_FIELD.add(model); return complete(key, model, system, user, maxTokens, false, false, null, null, transport);
         }
     }
 
@@ -226,47 +235,61 @@ final class Model {
     private static String post(String path, String key, JSONObject request) throws Exception { return post(path, key, request, 120000); }
 
     /** A dropped connection, a timeout, a 429 or a 5xx waits a moment and goes again (three tries); a failed lookup or missing connection gets six, spread over about 40 seconds, because it is usually a short blip. A refusal (400s) or a bad key is not retried. */
-    private static String post(String path, String key, JSONObject request, int readTimeout) throws Exception {
-        if (Limits.interactive()) return send(path, key, request, readTimeout); // the owner is waiting: never queue behind background work
-        return Limits.with(Limits.AI, () -> send(path, key, request, readTimeout));
+    static String post(String path, String key, JSONObject request, int readTimeout) throws Exception {
+        return post(path, key, request, readTimeout, null);
     }
 
-    private static String send(String path, String key, JSONObject request, int readTimeout) throws Exception {
-        byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
+    interface Attempt { String run(int attempt, java.util.concurrent.Callable<String> exchange) throws Exception; }
+
+    static String post(String path, String key, JSONObject request, int readTimeout, Attempt meter) throws Exception {
+        if (Limits.interactive()) return send(path, key, request, readTimeout, meter); // the owner is waiting: never queue behind background work
+        return Limits.with(Limits.AI, () -> send(path, key, request, readTimeout, meter));
+    }
+
+    private static String send(String path, String key, JSONObject request, int readTimeout, Attempt meter) throws Exception {
         IOException last = null;
         for (int attempt = 0; attempt < 6; attempt++) {
             if (attempt > 0) Thread.sleep(new long[]{0, 2000, 5000, 8000, 12000, 15000}[attempt]);
-            HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
-            connection.setRequestMethod("POST");
-            connection.setConnectTimeout(10000);
-            connection.setReadTimeout(readTimeout);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Authorization", "Bearer " + key);
-            connection.setRequestProperty("Content-Type", "application/json");
             Cancel cancel = Cancel.current();
-            if (cancel.stopped() && attempt > 0) throw last; // told to stop: no further tries
-            cancel.attach(connection);
+            if (cancel.stopped() && attempt > 0) throw last;
             try {
-                try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
-                int code = connection.getResponseCode();
-                if (code == 200) {
-                    String body;
-                    try (InputStream in = connection.getInputStream()) { body = new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
-                    if (body.startsWith("{\"error\"") || body.startsWith("{ \"error\"")) throw new Transient("The provider reported an error: " + detail(body));
-                    return body;
-                }
-                String why = detail(errorBody(connection));
-                if (code == 400 || code == 404 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this request (" + code + (why.isEmpty() ? "" : ": " + why) + ")");
-                if (code == 408 || code == 425 || code == 429 || code >= 500) throw new Transient("OpenRouter answered " + code + (why.isEmpty() ? "" : ": " + why));
-                throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : why.isEmpty() ? "" : ": " + why));
+                return meter == null ? exchange(path, key, request, readTimeout)
+                    : meter.run(attempt, () -> exchange(path, key, request, readTimeout));
             } catch (Transient | java.net.SocketException | java.net.SocketTimeoutException | java.io.EOFException | javax.net.ssl.SSLException | java.net.UnknownHostException again) {
                 last = again;
                 android.util.Log.i("Sparkbox", "model call attempt " + (attempt + 1) + " failed: " + again);
                 if (!Net.offline(again) && (attempt >= 2 || (again instanceof java.net.SocketTimeoutException && attempt >= 1))) break; // other trouble gets three tries, a slow answer only one more
-            } finally { cancel.detach(connection); connection.disconnect(); }
+            }
         }
         if (last != null && Net.offline(last)) throw new Net.Offline("Smart tags paused: no connection to OpenRouter (" + last.getMessage() + ")");
         throw new IOException("Smart tags paused: " + (last == null ? "connection failed" : last.getMessage()));
+    }
+
+    private static String exchange(String path, String key, JSONObject request, int readTimeout) throws Exception {
+        byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
+        HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(10000);
+        connection.setReadTimeout(readTimeout);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Authorization", "Bearer " + key);
+        connection.setRequestProperty("Content-Type", "application/json");
+        Cancel cancel = Cancel.current();
+        cancel.attach(connection);
+        try {
+            try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
+            int code = connection.getResponseCode();
+            if (code == 200) {
+                String body;
+                try (InputStream in = connection.getInputStream()) { body = new String(CaptureService.readAll(in), StandardCharsets.UTF_8); }
+                if (body.startsWith("{\"error\"") || body.startsWith("{ \"error\"")) throw new Transient("The provider reported an error: " + detail(body));
+                return body;
+            }
+            String why = detail(errorBody(connection));
+            if (code == 400 || code == 404 || code == 413 || code == 415 || code == 422) throw new Rejected("OpenRouter refused this request (" + code + (why.isEmpty() ? "" : ": " + why) + ")");
+            if (code == 408 || code == 425 || code == 429 || code >= 500) throw new Transient("OpenRouter answered " + code + (why.isEmpty() ? "" : ": " + why));
+            throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : why.isEmpty() ? "" : ": " + why));
+        } finally { cancel.detach(connection); connection.disconnect(); }
     }
 
     private static String errorBody(HttpURLConnection c) {
