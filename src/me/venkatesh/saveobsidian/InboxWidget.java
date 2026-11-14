@@ -39,7 +39,11 @@ public class InboxWidget extends AppWidgetProvider {
     static void refresh(Context context) {
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
         int[] ids = manager.getAppWidgetIds(new ComponentName(context, InboxWidget.class));
-        if (ids.length > 0) new Thread(() -> manager.updateAppWidget(ids, build(context))).start();
+        int[] captures = manager.getAppWidgetIds(new ComponentName(context, CaptureWidget.class));
+        if (ids.length > 0 || captures.length > 0) new Thread(() -> {
+            if (ids.length > 0) manager.updateAppWidget(ids, build(context));
+            if (captures.length > 0) manager.updateAppWidget(captures, capture(context));
+        }).start();
     }
 
     private static final String DAY = "me.venkatesh.saveobsidian.WIDGET_DAY";
@@ -187,6 +191,9 @@ public class InboxWidget extends AppWidgetProvider {
         views.setOnClickPendingIntent(R.id.w_root, recording ? sheet(c, 2, QuickActivity.VOICE) : app(c));
         return views;
     }
+
+    /** The dedicated two-button capture widget, including its live recording state. */
+    static RemoteViews capture(Context c) { return slim(c, false); }
 
     /** One row or two columns wide: capture only, no numbers. Two tiles, Write and Speak. */
     private static RemoteViews slim(Context c, boolean wide) {

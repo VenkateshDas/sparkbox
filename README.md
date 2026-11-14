@@ -11,6 +11,7 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 **Capture** (always local, never waits for the network or a model)
 - Share a link, text, photo, PDF, document or audio to **Sparkbox** from any app. A **Source added** notification (an island on OnePlus) confirms within a second.
 - The **Quick capture sheet** (widget, Quick Settings tiles, launcher shortcuts, the Feed's **+**) writes a thought or records a voice note.
+- **Sparkbox Capture** is a separate 2×1 home-screen widget with Write and Speak icons. It follows system light/dark appearance and switches to a timer and Stop while recording.
 - Captures are queued in private app storage first, then appended to the vault inbox (`Knowledge/Sources/Inbox.md`) with a verified write.
 
 **Processing** (in the background, needs an OpenRouter key)
