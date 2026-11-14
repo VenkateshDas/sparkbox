@@ -36,6 +36,7 @@ public class CaptureTest {
         concurrency();
         limits();
         AgentTest.run();
+        SessionUsageTest.run();
         VaultToolsTest.run();
         McpTest.run();
         check(Capture.firstUrl("A caption\nhttps://example.com/post?a=1&b=two+three\nRead it").equals("https://example.com/post?a=1&b=two+three"));

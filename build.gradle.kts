@@ -62,9 +62,9 @@ val jvmCheck by configurations.creating
 dependencies { jvmCheck(libs.jsoup); jvmCheck(libs.json) }
 val pure = listOf("Extract", "Transcript", "JsonFix", "Net", "Capture", "AppendCheck", "InboxFile", "VerifiedEdit", "VaultLock", "Cancel", "RunGate", "Limits", "Failures",
     "Enrich", "Index", "Vault", "Layout", "Lane", "Feed", "NoteEdit", "Cites", "Cards", "Sched", "Spark", "CardPrompt", "IngestText",
-    "Truncate", "Validate", "Tool", "Agent", "Session", "Compact", "OpenRouter", "VaultTools", "Skills", "Mcp", "Chat")
+    "Truncate", "Validate", "Tool", "Agent", "Session", "SessionUsage", "Compact", "OpenRouter", "VaultTools", "Skills", "Mcp", "Chat")
 val compileCaptureTest by tasks.registering(JavaCompile::class) {
-    source = files(pure.map { "src/me/venkatesh/saveobsidian/$it.java" } + "tests/CaptureTest.java" + "tests/AgentTest.java" + "tests/VaultToolsTest.java" + "tests/McpTest.java").asFileTree
+    source = files(pure.map { "src/me/venkatesh/saveobsidian/$it.java" } + "tests/CaptureTest.java" + "tests/AgentTest.java" + "tests/SessionUsageTest.java" + "tests/VaultToolsTest.java" + "tests/McpTest.java").asFileTree
     classpath = jvmCheck
     destinationDirectory = layout.buildDirectory.dir("captureTest")
     options.encoding = "UTF-8"

@@ -26,6 +26,12 @@ public final class OpenRouter {
     /** Streamed chat completion: calls live with the text so far, returns the assembled message {content, tool_calls?}. */
     /** cancel is this answer's own switch: stopping it ends the stream (what arrived so far is the reply) and never touches background work. */
     public static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel) throws Exception {
+        return stream(key, request, live, cancel, metadata -> { });
+    }
+
+    /** Metadata is delivered independently of text, including before an interrupted stream. */
+    public static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel,
+                                    java.util.function.Consumer<JSONObject> metadata) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
         cancel.attach(connection);
         connection.setRequestMethod("POST");
@@ -49,6 +55,7 @@ public final class OpenRouter {
                     String data = line.substring(5).trim();
                     if (data.equals("[DONE]")) break;
                     JSONObject chunk = new JSONObject(data);
+                    metadata.accept(chunk);
                     if (chunk.has("error")) throw new IOException("Smart tags paused: " + chunk.getJSONObject("error").optString("message", "provider error"));
                     if (chunk.optJSONObject("usage") != null) usage = chunk.getJSONObject("usage"); // OpenRouter sends usage in the last chunk by itself
                     JSONArray choices = chunk.optJSONArray("choices");
@@ -72,11 +79,12 @@ public final class OpenRouter {
             }
             JSONObject message = new JSONObject().put("content", text.toString());
             if (calls.length() > 0) message.put("tool_calls", calls);
-            if (!finish.isEmpty()) message.put("finish_reason", finish);
+            if (cancel.stopped()) message.put("finish_reason", "cancelled");
+            else if (!finish.isEmpty()) message.put("finish_reason", finish);
             if (usage != null) message.put("usage", usage);
             return message;
         } catch (IOException dropped) {
-            if (cancel.stopped()) return new JSONObject().put("content", ""); // our own disconnect
+            if (cancel.stopped()) return new JSONObject().put("content", "").put("finish_reason", "cancelled"); // our own disconnect
             throw dropped;
         } finally { cancel.detach(connection); connection.disconnect(); }
     }

@@ -19,7 +19,12 @@ import org.json.JSONObject;
  */
 public final class Agent {
     /** One streamed chat completion. Returns {content, tool_calls?, finish_reason?, usage?}. Model.provider(key) is the OpenRouter one. */
-    public interface Provider { JSONObject stream(JSONObject request, Consumer<String> live, Cancel cancel) throws Exception; }
+    public interface Provider {
+        JSONObject stream(JSONObject request, Consumer<String> live, Cancel cancel) throws Exception;
+        default JSONObject streamAttempt(JSONObject request, Consumer<String> live, Cancel cancel, int attempt, boolean continuation) throws Exception {
+            return stream(request, live, cancel);
+        }
+    }
 
     /**
      * Events: agent_start, turn_start, message_start, message_update{text}, message_end{message}, tool_execution_start, tool_execution_end, retry,
@@ -310,6 +315,15 @@ public final class Agent {
         return out;
     }
 
+    /** Read-only preview of the next ordinary request for local context metrics. */
+    public JSONObject contextRequest() {
+        try {
+            JSONObject request = new JSONObject().put("model", model).put("max_tokens", maxTokens).put("messages", convertToLlm());
+            if (!tools.isEmpty()) { JSONArray specs = new JSONArray(); for (Tool t : tools) specs.put(t.spec()); request.put("tools", specs); }
+            return request;
+        } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+    }
+
     // ---- model call (never throws) ----
 
     /** finalTurn: the step budget is used up, so this request has no tools and asks for the answer (what Ask did before: an empty reply helps nobody). */
@@ -327,7 +341,7 @@ public final class Agent {
         boolean compacted = false;
         for (int attempt = 0; ; attempt++) {
             try {
-                JSONObject reply = provider.stream(request, text -> emit("message_update", text(text)), cancel);
+                JSONObject reply = provider.streamAttempt(request, text -> emit("message_update", text(text)), cancel, attempt, !carry.isEmpty());
                 return assistant(reply, request.optInt("max_tokens"));
             } catch (Exception e) {
                 if (cancel.stopped()) return failed("aborted", "Stopped");
@@ -359,6 +373,7 @@ public final class Agent {
             if (calls != null && calls.length() > 0 && used != null && max > 0 && used.optInt("completion_tokens") >= max) finish = "length"; // some providers say tool_calls for a call the limit cut short
             m.put("stopReason", cancel.stopped() ? "aborted" : finish.equals("length") ? "length" : calls != null && calls.length() > 0 ? "toolUse" : "stop");
             if (reply.has("usage")) m.put("usage", reply.get("usage"));
+            if (reply.has("_requestId")) m.put("_requestId", reply.get("_requestId"));
             return m;
         } catch (Exception e) { return failed("error", String.valueOf(e.getMessage())); }
     }
