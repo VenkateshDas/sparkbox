@@ -129,7 +129,11 @@ private fun ContextCard(c: JSONObject) {
         else {
             Text("≈${number(used)}" + if (window > 0) " / ${number(window)} tokens" else " tokens", style = MaterialTheme.typography.headlineSmall)
             if (window > 0) {
-                LinearProgressIndicator(progress = { (used.toFloat() / window).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(
+                    progress = { (used.toFloat() / window).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    gapSize = 0.dp, drawStopIndicator = { },
+                )
                 Metric("Window used", "${kotlin.math.round(used * 100.0 / window).toInt()}%")
                 Metric("Output allowance", number(reserve))
                 Metric("Remaining input room", "≈${number((window - used - reserve).coerceAtLeast(0))}")
