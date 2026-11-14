@@ -13,13 +13,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The app shell: four tabs (Feed, Spark, Search, Ask) under a bottom bar, and a back stack of detail screens on top of the current tab.
+ * The app shell: three tabs (Feed, Spark, Ask; search lives at the top of the Feed) under a bottom bar, and a back stack of detail screens on top of the current tab.
  * Each screen is a Screen; tab screens stay alive while the activity does, so scroll position and filters survive switching tabs.
  */
 public class MainActivity extends androidx.activity.ComponentActivity {
     static final String TAB = "tab";
     private static final String[] NAMES = {"Feed", "Spark", "Search", "Scout"};
-    private static final int[] ICONS = {R.drawable.ic_nav_feed, R.drawable.ic_nav_spark, R.drawable.ic_nav_search, R.drawable.ic_nav_ask};
+    /** Search has no tab of its own any more: slot 2 stays so the other tab numbers (widgets and notifications use them) do not move. */
+    private static final int[] SHOWN = {0, 1, 3};
+    private static final int[] ICONS = {R.drawable.ic_nav_feed, R.drawable.ic_nav_spark, 0, R.drawable.ic_nav_ask};
 
     private Ui ui;
     private FrameLayout content;
@@ -46,7 +48,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
-    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 2 ? new SearchScreen() : index == 3 ? new AskScreen() : index == 1 ? new SparkScreen() : new Placeholder(NAMES[index]); }
+    private Screen screen(int index) { return index == 0 ? new FeedScreen() : index == 3 ? new AskScreen() : index == 1 ? new SparkScreen() : new Placeholder(NAMES[index]); }
 
     static final int PICK_FILES = 5, PICK_ATTACH = 4;
 
@@ -83,9 +85,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         new Thread(() -> VaultWrite.healInbox(getApplicationContext())).start(); // sets the inbox from the vault folder, or repairs it after a move
         if (Ui.dark(this) != dark) { draw(); return; } // the Theme setting changed while another screen was open
         current().onShow();
+        zapper.removeCallbacks(zap);
+        zapper.postDelayed(zap, 3000);
     }
 
-    @Override protected void onPause() { super.onPause(); current().onHide(); }
+    @Override protected void onPause() { super.onPause(); current().onHide(); zapper.removeCallbacks(zap); }
 
     private Screen current() { return stack.isEmpty() ? tabs[tab] : stack.get(stack.size() - 1); }
 
@@ -105,7 +109,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         final View navLine = line;
         nav = new LinearLayout(this);
         nav.setBackgroundColor(ui.bg);
-        for (int i = 0; i < NAMES.length; i++) nav.addView(navItem(i), new LinearLayout.LayoutParams(0, ui.dp(64), 1));
+        fillNav();
         root.addView(nav);
         setContentView(root);
         // System bars pad the shell. While the keyboard is open the tab bar steps aside, so typing never floats it above the keys.
@@ -132,6 +136,33 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         for (Screen s : keep) push(s);
     }
 
+    // ---- the Spark icon zaps now and then when cards are due, so it asks for attention without a card in the Feed ----
+
+    private static final long ZAP_EVERY = 9000;
+    private android.widget.ImageView sparkIcon;
+    private final android.os.Handler zapper = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable zap = new Runnable() {
+        @Override public void run() {
+            zapper.postDelayed(this, ZAP_EVERY);
+            if (sparkIcon == null || tab == 1 || !stack.isEmpty() || SparkScreen.plan(ui).queue.isEmpty()) return;
+            final android.widget.ImageView v = sparkIcon;
+            v.setImageTintList(ColorStateList.valueOf(ui.accent));
+            v.animate().scaleX(1.35f).scaleY(1.35f).setDuration(140).withEndAction(() -> {
+                android.animation.ObjectAnimator wiggle = android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, -16f, 14f, -10f, 7f, 0f);
+                wiggle.setDuration(520);
+                wiggle.addListener(new android.animation.AnimatorListenerAdapter() {
+                    @Override public void onAnimationEnd(android.animation.Animator a) { v.animate().scaleX(1f).scaleY(1f).setDuration(160).withEndAction(() -> v.setImageTintList(ColorStateList.valueOf(tab == 1 ? ui.accent : ui.sub))).start(); }
+                });
+                wiggle.start();
+            }).start();
+        }
+    };
+
+    private void fillNav() {
+        nav.removeAllViews();
+        for (int i : SHOWN) nav.addView(navItem(i), new LinearLayout.LayoutParams(0, ui.dp(64), 1));
+    }
+
     /** One bottom-bar item: a 24 dp icon over a 12 sp label, centred together in a 64 dp cell. */
     private View navItem(int i) {
         boolean on = i == tab;
@@ -141,6 +172,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         item.setGravity(Gravity.CENTER);
         android.widget.ImageView icon = new android.widget.ImageView(this);
         icon.setImageResource(ICONS[i]);
+        if (i == 1) sparkIcon = icon;
         icon.setImageTintList(ColorStateList.valueOf(color));
         icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         item.addView(icon, new LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)));
@@ -158,15 +190,13 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
     /** Switches tab, closing any detail screens opened on the one being left. */
     void select(int i) {
-        if (i == tab && stack.isEmpty()) return;
+        if (i == tab && stack.isEmpty()) { if (i == 1) ((SparkScreen) tabs[1]).reset(); return; } // tapping Spark again goes back to the topic picker
+        if (i == 1) ((SparkScreen) tabs[1]).reset();
         current().onHide();
         stack.clear();
         stackViews.clear();
         tab = i;
-        for (int k = 0; k < nav.getChildCount(); k++) {
-            nav.removeViewAt(k);
-            nav.addView(navItem(k), k, new LinearLayout.LayoutParams(0, ui.dp(64), 1));
-        }
+        fillNav();
         showTab();
     }
 
@@ -178,6 +208,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
     /** The Theme setting changed: rebuild the shell in place, keeping the open screens (recreate() would drop them). */
     void retheme() { draw(); }
+
+    /** Study cards in Spark: opens the Spark tab on one scope (a note or a topic). */
+    void study(Study.Scope scope) {
+        select(1);
+        ((SparkScreen) tabs[1]).openScope(scope);
+    }
 
     /** Opens the Ask tab with a question already sent. */
     void ask(String question) {
@@ -213,7 +249,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         String q = intent.getStringExtra(AskActivity.QUESTION);
         if (q != null && !q.trim().isEmpty()) { intent.removeExtra(AskActivity.QUESTION); ask(q.trim()); }
         else if (intent.hasExtra(ScoutRuns.SESSION)) { String f = intent.getStringExtra(ScoutRuns.SESSION); intent.removeExtra(ScoutRuns.SESSION); openSession(f); }
-        else if (intent.hasExtra(TAB)) select(Math.max(0, Math.min(3, intent.getIntExtra(TAB, 0))));
+        else if (intent.hasExtra(TAB)) select(intent.getIntExtra(TAB, 0) == 3 ? 3 : intent.getIntExtra(TAB, 0) == 1 ? 1 : 0);
     }
 
     /** Opens a note in the right screen: a Source in its Unit, a Topic on its page, anything else in the note reader. */

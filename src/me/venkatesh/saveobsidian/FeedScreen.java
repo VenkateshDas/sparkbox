@@ -31,7 +31,9 @@ final class FeedScreen extends Screen {
     private final FeedState view = new FeedState();
     private final java.util.Map<String, Attention> attentionByKey = new java.util.HashMap<>();
     private List<Feed.Item> items = new ArrayList<>();
-    private String chip = "All";
+    private String chip = "All", query = "";
+    private List<Vault.Note> meaning;
+    private Runnable pendingQuery, pendingMeaning;
     private boolean scanning;
     private long checkedAt;
 
@@ -59,7 +61,16 @@ final class FeedScreen extends Screen {
             host.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shared), null));
         }
         @Override public void note(String path) { host.openNote(path); }
-        @Override public void spark() { host.select(1); }
+        @Override public void query(String q) {
+            if (q.equals(query)) return;
+            query = q; meaning = null;
+            if (pendingQuery != null) main.removeCallbacks(pendingQuery);
+            if (pendingMeaning != null) main.removeCallbacks(pendingMeaning);
+            pendingQuery = () -> { drawRows(); view.toTop(); };
+            main.postDelayed(pendingQuery, 250);
+            if (q.length() >= 3) { pendingMeaning = () -> semantic(q); main.postDelayed(pendingMeaning, 700); } // meaning-based matches join the word matches when they arrive
+        }
+        @Override public void askScout(String q) { host.draft(q); }
         @Override public void chip(String name) {
             chip = name;
             ui.c.getSharedPreferences("capture", 0).edit().putString("feedFilter", name).apply();
@@ -103,6 +114,59 @@ final class FeedScreen extends Screen {
         }
         @Override public View thumb(Feed.Item it) { return Thumb.view(ui.c, ui, it.title, it.url, 0, 160); }
     };
+
+    // ---- search: words first, meaning merged in when it arrives ----
+
+    private void semantic(final String q) {
+        final VaultStore.Snap snap = VaultStore.cached(ui.c);
+        if (snap == null) return;
+        new Thread(() -> {
+            List<Vault.Note> hits;
+            Limits.interactive(true);
+            try { hits = VaultStore.semantic(ui.c, snap, q, 30); } catch (Exception offline) { hits = null; } // no key or no network: the word results stay, silently
+            final List<Vault.Note> done = hits;
+            main.post(() -> { if (q.equals(query) && done != null && !done.isEmpty()) { meaning = done; drawRows(); } });
+        }).start();
+    }
+
+    private static String kind(Vault.Note n) {
+        if (Layout.inSources(n.path)) return "Source";
+        if (n.path.startsWith("Knowledge/Topics/")) return "Topic";
+        if (n.path.startsWith("Knowledge/People/")) return "Person";
+        return "Note";
+    }
+
+    /** The filter chips narrow search results too: Craft and Life by lane, the rest by kind. */
+    private boolean matches(Vault.Note n) {
+        String k = kind(n);
+        switch (chip) {
+            case "Craft": case "Life": return Lane.of(n.path, n.meta).equals(chip);
+            case "Sources": return k.equals("Source");
+            case "Topics": return k.equals("Topic");
+            case "People": return k.equals("Person");
+            default: return true;
+        }
+    }
+
+    private List<FeedRow> searchRows() {
+        List<FeedRow> out = new ArrayList<>();
+        VaultStore.Snap snap = VaultStore.cached(ui.c);
+        if (snap == null) return out;
+        List<Vault.Note> words = VaultStore.keyword(snap, query, 200);
+        List<Vault.Note> all = meaning == null ? words : Vault.blend(meaning, words, query, 200);
+        int n = 0;
+        for (Vault.Note note : all) {
+            if (note.path.endsWith("/My cards.md") || !matches(note)) continue;
+            if (n++ >= 60) break;
+            String kind = kind(note), age = "";
+            if (kind.equals("Source")) { boolean[] t = new boolean[1]; age = Feed.age(Feed.when(note.meta("captured"), t), t[0], LocalDateTime.now()); }
+            String meta = kind.equals("Source") ? (Feed.host(note.meta("source")).isEmpty() ? note.meta("via") : Feed.host(note.meta("source"))) : "";
+            if (meta.isEmpty() && kind.equals("Topic")) { int c = 0; for (Vault.Note f : snap.graph.in(note)) if (Layout.inSources(f.path)) c++; meta = c + (c == 1 ? " source" : " sources"); }
+            out.add(new HitRow(new Hit(note.path, kind, Lane.of(note.path, note.meta), age, note.title, meta, Feed.snippet(note.digest, query, 90))));
+        }
+        if (out.isEmpty()) out.add(new NoHitsRow(query));
+        return out;
+    }
 
     // ---- capture ----
 
@@ -214,11 +278,16 @@ final class FeedScreen extends Screen {
     /** Builds the rows as plain data and hands them to Compose. Cheap: no views are made here. */
     private void drawRows() {
         if (ui == null) return;
+        if (!query.isEmpty()) { // searching: the results replace the stream, under the same filters
+            List<FeedRow> found = searchRows();
+            int count = found.size() == 1 && found.get(0) instanceof NoHitsRow ? 0 : found.size();
+            view.publish(found, chip, count + (count == 1 ? " result" : " results"), false);
+            return;
+        }
         List<FeedRow> out = new ArrayList<>();
         attentionByKey.clear();
         List<Attention> need = attention();
         boolean all = chip.equals("All");
-        if (all) { Spark.Plan plan = SparkScreen.plan(ui); if (!plan.queue.isEmpty()) out.add(new SparkRow(plan.queue.size(), plan.minutes())); }
         if (!need.isEmpty() && all) {
             out.add(new HeadingRow("h:attention", "Needs attention (" + need.size() + ")"));
             for (Attention a : need) { String k = "a:" + a.file.getName(); attentionByKey.put(k, a); out.add(new AttentionRow(k, a.label, a.error, ago(a.when))); }

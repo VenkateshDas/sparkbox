@@ -11,6 +11,7 @@ import me.venkatesh.saveobsidian.NoteEdit;
 import me.venkatesh.saveobsidian.Cites;
 import me.venkatesh.saveobsidian.Cards;
 import me.venkatesh.saveobsidian.Sched;
+import me.venkatesh.saveobsidian.Study;
 import me.venkatesh.saveobsidian.Spark;
 import me.venkatesh.saveobsidian.CardPrompt;
 import me.venkatesh.saveobsidian.Extract;
@@ -266,22 +267,20 @@ public class CaptureTest {
         check(NoteEdit.setKey(fm, "quality", "full").equals("---\ntype: source\nquality: full\n---\n# T\n") && NoteEdit.setKey(fm, "kept", "true").equals("---\ntype: source\nquality: partial\nkept: true\n---\n# T\n"));
         check(NoteEdit.setKey(fm, "quality", null).equals("---\ntype: source\n---\n# T\n") && NoteEdit.setKey("# no frontmatter\n", "kept", "true").equals("# no frontmatter\n") && NoteEdit.setKey(NoteEdit.setKey(fm, "kept", "true"), "kept", "true").equals(NoteEdit.setKey(fm, "kept", "true")));
 
-        // ---- Sched ----
+        // ---- Sched (FSRS-4.5) ----
         long n = t0;
-        Cards.State g1 = Sched.next(null, "good", n);
-        check(g1.interval == 1 && g1.reps == 1 && g1.due == n + DAYMS && g1.ease == 2.5);
-        Cards.State g2 = Sched.next(g1, "good", n), g3 = Sched.next(g2, "good", n);
-        check(g2.interval == 3 && g3.interval == 8 && g3.reps == 3); // 3 * 2.5 = 7.5, rounded
-        check(Sched.next(Sched.next(null, "easy", n), "good", n).interval >= 4); // Easy then Good never shrinks the interval
-        check(Sched.next(null, "easy", n).interval == 4 && Sched.next(null, "hard", n).interval == 1 && Sched.next(g3, "easy", n).interval == 26 && Sched.next(g3, "easy", n).ease == 2.65);
-        Cards.State hard = Sched.next(g3, "hard", n);
-        check(hard.interval == 10 && Math.abs(hard.ease - 2.35) < 1e-9);
-        Cards.State lapse = Sched.next(g3, "again", n);
-        check(lapse.reps == 0 && lapse.lapses == 1 && lapse.due == n + 10 * MIN && Math.abs(lapse.ease - 2.3) < 1e-9 && Sched.next(lapse, "good", n).interval == 1);
-        check(Sched.next(null, "again", n).lapses == 0 && Sched.next(null, "again", n).ease == 2.5);
-        Cards.State low = new Cards.State(n, 5, 1.35, 4, 0);
-        check(Sched.next(low, "again", n).ease == 1.3 && Sched.next(new Cards.State(n, 5, 1.3, 4, 0), "hard", n).ease == 1.3);
-        check(Sched.label(null, "again", n).equals("later today") && Sched.label(g3, "good", n).equals("2w") && Sched.label(g1, "good", n).equals("3d") && Sched.label(g3, "easy", n).equals("3w") && Sched.label(new Cards.State(n, 100, 2.5, 5, 0), "good", n).equals("8mo"));
+        Cards.State g1 = Sched.next(null, "good", n), e1 = Sched.next(null, "easy", n), h1 = Sched.next(null, "hard", n), a1 = Sched.next(null, "again", n);
+        check(g1.interval == 4 && g1.reps == 1 && g1.due == n + 4 * DAYMS && g1.stab > 3.7 && g1.stab < 3.8 && e1.interval == 14 && h1.interval == 1 && a1.due == n + 10 * MIN && a1.lapses == 0);
+        Cards.State g2 = Sched.next(g1, "good", n + 4 * DAYMS), g3 = Sched.next(g2, "good", g2.due);
+        check(g2.stab > g1.stab && g2.interval > g1.interval && g3.stab > g2.stab); // reviewing on time grows the interval
+        check(Sched.next(g2, "easy", g2.due).stab > Sched.next(g2, "good", g2.due).stab && Sched.next(g2, "good", g2.due).stab > Sched.next(g2, "hard", g2.due).stab); // easy > good > hard
+        Cards.State lapse = Sched.next(g2, "again", g2.due);
+        check(lapse.reps == 0 && lapse.lapses == 1 && lapse.due == g2.due + 10 * MIN && lapse.stab < g2.stab && Sched.next(lapse, "good", lapse.due).interval >= 1);
+        Cards.State old = new Cards.State(n, 5, 2.5, 4, 0); // scheduled before FSRS: starts from its interval, no crash
+        check(Sched.next(old, "good", n + 5 * DAYMS).interval > 5 && Sched.next(old, "good", n + 5 * DAYMS).stab > 5);
+        Cards.State rt = Cards.parseState(Cards.stateText(g2));
+        check(rt != null && Math.abs(rt.stab - g2.stab) < 0.01 && Math.abs(rt.diff - g2.diff) < 0.01 && Cards.stateText(old).indexOf("stab") < 0);
+        check(Sched.label(null, "again", n).equals("later today") && Sched.label(null, "good", n).equals("4d") && Sched.label(null, "easy", n).equals("2w"));
 
         // ---- Spark ----
         java.time.ZoneId utc = java.time.ZoneId.of("UTC");
@@ -304,6 +303,64 @@ public class CaptureTest {
         java.util.List<Cards.Card> one = new java.util.ArrayList<>(); Cards.Card done = new Cards.Card(); done.id = "d"; done.path = "a.md"; done.state = new Cards.State(n + DAYMS, 1, 2.5, 1, 0); done.log = Cards.logWith("", n - MIN, "good", 4); one.add(done);
         check(Spark.plan(one, kept, n, utc, 7, newest).state.equals("caught_up") && Spark.plan(one, kept, n, utc, 1, newest).state.equals("caught_up") && Spark.clampCap(1) == 3 && Spark.clampCap(99) == 20);
 
+        // ---- card types: parse, validate ----
+        java.util.List<String[]> typed = new java.util.ArrayList<>();
+        typed.add(new String[]{"The {{hippocampus}} helps form new memories.", "ignored", "b", "high", "cloze", ""});
+        typed.add(new String[]{"No blank in this one at all?", "x", "b", "high", "cloze", ""});
+        typed.add(new String[]{"Which is right?", "Right", "b", "high", "quiz", "Wrong 1 | Wrong 2 | Wrong 3"});
+        typed.add(new String[]{"Too few?", "Right", "b", "high", "quiz", "Only one"});
+        typed.add(new String[]{"Sleep helps memory.", "true", "b", "medium", "tf", "It does."});
+        typed.add(new String[]{"Bad tf?", "maybe", "b", "high", "tf", ""});
+        typed.add(new String[]{"Order the steps?", "x", "b", "high", "sort", "One | Two | Three"});
+        typed.add(new String[]{"Why does it work?", "Because.", "b", "high", "why", ""});
+        typed.add(new String[]{"Unknown type?", "A.", "b", "high", "riddle", ""});
+        java.util.List<Cards.Card> tv = CardPrompt.validate("n.md", typed);
+        check(tv.size() == 5 && tv.get(0).a.equals("hippocampus") && tv.get(1).data.equals("Wrong 1 | Wrong 2 | Wrong 3") && tv.get(2).a.equals("True") && tv.get(3).a.equals("One > Two > Three") && tv.get(4).type.equals("why"));
+        String typedNote = Cards.add("# T\n", tv);
+        java.util.List<Cards.Card> tback = Cards.parse("n.md", typedNote);
+        check(tback.size() == tv.size() && tback.get(1).type.equals("quiz") && tback.get(1).data.equals(tv.get(1).data) && tback.get(0).type.equals("cloze") && Cards.parse("n.md", "## Cards\n\n### c_1\nQ: a\nA: b\n").get(0).type.equals("classic"));
+        check(!typedNote.contains("Type: classic") && Cards.logWith("", t0, "good", 5, "sure").equals("2026-11-12T07:41Z good 5s sure") && Cards.logTimes(Cards.logWith("", t0, "good", 5, "sure")).size() == 1);
+
+        // ---- Spark: match, interleave, gating, recap ----
+        check(Spark.match("it helps form new memories", "helps form new memories") == 1.0 && Spark.match("banana", "helps form new memories") == 0.0 && Spark.match("", "x") == 0.0);
+        java.util.List<Cards.Card> iv = new java.util.ArrayList<>();
+        for (String id : new String[]{"a1", "a2", "a3", "b1", "b2"}) { Cards.Card c = new Cards.Card(); c.id = id; c.path = id.startsWith("a") ? "a.md" : "b.md"; iv.add(c); }
+        java.util.List<Cards.Card> mix = Spark.interleave(iv);
+        check(mix.get(0).id.equals("a1") && mix.get(1).id.equals("b1") && mix.get(2).id.equals("a2") && mix.size() == 5);
+        java.util.List<Cards.Card> gate = new java.util.ArrayList<>();
+        Cards.Card base = new Cards.Card(); base.id = "base"; base.path = "g.md"; gate.add(base);
+        Cards.Card why = new Cards.Card(); why.id = "why"; why.path = "g.md"; why.type = "why"; gate.add(why);
+        Cards.Card lone = new Cards.Card(); lone.id = "lone"; lone.path = "h.md"; lone.type = "teach"; gate.add(lone);
+        java.util.List<Cards.Card> gq = Spark.plan(gate, new java.util.HashSet<String>(), n, utc, 7, newest).queue;
+        check(gq.size() == 2 && !gq.contains(why) && gq.contains(lone) && Spark.plan(gate, new java.util.HashSet<String>(), n, utc, 7, newest, false).queue.contains(why)); // why waits for the note's basic card; a note with only elaboration cards is not blocked
+        base.state = new Cards.State(n + DAYMS, 1, 2.5, 1, 0);
+        check(Spark.plan(gate, new java.util.HashSet<String>(), n, utc, 7, newest).queue.contains(why));
+        java.util.List<Cards.Card> rv = new java.util.ArrayList<>();
+        Cards.Card m1 = new Cards.Card(); m1.id = "m1"; m1.path = "a.md"; m1.log = Cards.logWith("", n - MIN, "again", 3, "sure"); rv.add(m1);
+        Cards.Card m2 = new Cards.Card(); m2.id = "m2"; m2.path = "a.md"; m2.log = Cards.logWith(Cards.logWith("", n - 5 * MIN, "again", 3), n - MIN, "good", 3); rv.add(m2);
+        int[] gt = Spark.gradesToday(rv, n, utc);
+        check(gt[0] == 1 && gt[2] == 1 && Spark.misses(rv, n, utc).size() == 1 && Spark.misses(rv, n, utc).get(0).id.equals("m1") && Spark.streak(rv, n, utc) == 1);
+        check(Spark.noteQueue(deck, "b.md", n).size() == 6);
+
+        // ---- Study: scopes and topics ----
+        Vault.Note ta = Vault.parse("Knowledge/Topics/Agents.md", 1, "---\ntype: topic\n---\n# Agents\ntext");
+        Vault.Note sa = Vault.parse("Knowledge/Sources/AI Systems/2026/2026-01-01 - One.md", 1, "---\ntype: source\ntopics: [\"[[Knowledge/Topics/Agents|Agents]]\"]\n---\n# One\ntext");
+        Vault.Note sb = Vault.parse("Knowledge/Sources/Health & Biology/2026/2026-01-02 - Two.md", 1, "---\ntype: source\n---\n# Two\ntext");
+        Vault.Graph sg = Vault.build(java.util.Arrays.asList(ta, sa, sb));
+        java.util.List<Cards.Card> sc = new java.util.ArrayList<>();
+        for (String[] r : new String[][]{{"s1", sa.path}, {"s2", sa.path}, {"s3", sb.path}}) { Cards.Card c = new Cards.Card(); c.id = r[0]; c.path = r[1]; c.q = "q"; c.a = "a"; sc.add(c); }
+        sc.get(0).state = new Cards.State(n - DAYMS, 30, 2.5, 3, 0); // due and learned
+        sc.get(1).state = new Cards.State(n + 5 * DAYMS, 2, 2.5, 1, 1); // lapsed, not due
+        java.util.List<Study.Topic> stp = Study.topics(sg, sc, n);
+        check(stp.size() == 2 && stp.get(0).title.equals("Agents") && stp.get(0).cards == 2 && stp.get(0).due == 1 && stp.get(0).mastered == 1 && stp.get(0).lane.equals("Craft") && stp.get(1).path.equals("_none") && stp.get(1).fresh == 1 && stp.get(1).lane.equals("Life"));
+        Study.Scope ts = Study.topicOf(sg, ta.path, "Agents");
+        check(ts != null && Study.filter(sc, ts, n).size() == 2 && Study.topicOf(sg, "Knowledge/Topics/Nope.md", "x") == null);
+        check(Study.filter(sc, new Study.Scope("due", "", "", new java.util.HashSet<String>()), n).size() == 1 && Study.filter(sc, new Study.Scope("new", "", "", new java.util.HashSet<String>()), n).size() == 1);
+        check(Study.filter(sc, new Study.Scope("weak", "", "", new java.util.HashSet<String>()), n).size() == 1 && Study.filter(sc, Study.Scope.note(sb.path, "Two"), n).size() == 1 && Study.filter(sc, Study.Scope.all(), n).size() == 3);
+        sc.get(2).flag = true;
+        sc.get(0).parked = n + MIN; check(Study.filter(sc, Study.Scope.all(), n).size() == 1); sc.get(0).parked = 0; // parked cards are not offered
+        check(Study.filter(sc, Study.Scope.all(), n).size() == 2 && Study.topics(sg, sc, n).size() == 1); // flagged cards never count
+
         // ---- CardPrompt: note input and quality ----
         String src = "---\ntype: source\n---\n\n# Title\n\n## Why I captured this\nTo try.\n\n## Raw Content\n" + "word ".repeat(400) + "\n\n## Claude's Extraction\n\n### Key claims\n- One (high)\n- Two (low)\n";
         check(CardPrompt.quality(src).equals("full") && CardPrompt.input(src).startsWith("Title: Title\nKey claims") && CardPrompt.input(src).contains("Why the owner saved it: To try.") && CardPrompt.input(src).contains("Page text:\nword word"));
@@ -323,11 +380,11 @@ public class CaptureTest {
         raw.add(new String[]{"Url?", "Go to https://x.org", "b", "high"});
         for (int i = 0; i < 6; i++) raw.add(new String[]{"Extra " + i + "?", "Answer " + i, "b", "medium"});
         java.util.List<Cards.Card> ok = CardPrompt.validate("n.md", raw);
-        check(ok.size() == 4 && ok.get(0).basis.equals("Y is true (high)") && ok.get(1).q.equals("Extra 0?")); // low, link, same, duplicate, url dropped; capped at 4
+        check(ok.size() == 7 && ok.get(0).basis.equals("Y is true (high)") && ok.get(1).q.equals("Extra 0?")); // low, link, same, duplicate, url dropped
         check(CardPrompt.curiosity("What changes?").equals("What changes?") && CardPrompt.curiosity("A statement.").isEmpty() && CardPrompt.curiosity("See [[X]]?").isEmpty());
         check(CardPrompt.quality(100).equals("title_only") && CardPrompt.quality(300).equals("partial") && CardPrompt.quality(1500).equals("full"));
         String made = CardPrompt.apply("---\ntype: source\n---\n# T\n", "What changes?", "full", ok);
-        check(made.contains("curiosity: \"What changes?\"") && made.contains("quality: full") && made.contains("## Cards") && Cards.parse("n.md", made).size() == 4 && CardPrompt.apply(made, "What changes?", "full", ok).equals(made));
+        check(made.contains("curiosity: \"What changes?\"") && made.contains("quality: full") && made.contains("cardv: 2") && made.contains("## Cards") && Cards.parse("n.md", made).size() == 7 && CardPrompt.apply(made, "What changes?", "full", ok).equals(made));
         String thin = CardPrompt.apply("---\ntype: source\n---\n# T\n", "What?", "title_only", ok);
         check(thin.contains("quality: title_only") && !thin.contains("curiosity") && !thin.contains("## Cards"));
     }

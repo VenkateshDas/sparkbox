@@ -379,7 +379,7 @@ final class Ingest {
                 String raw = Content.load(c, e.url, 400000);
                 List<String[]> proposed = new ArrayList<>();
                 JSONArray rc = plan.optJSONArray("recall_cards");
-                for (int i = 0; rc != null && i < rc.length(); i++) { JSONObject o = rc.optJSONObject(i); if (o != null) proposed.add(new String[]{o.optString("q"), o.optString("a"), o.optString("basis"), o.optString("confidence")}); }
+                for (int i = 0; rc != null && i < rc.length(); i++) { JSONObject o = rc.optJSONObject(i); if (o != null) proposed.add(new String[]{o.optString("q"), o.optString("a"), o.optString("basis"), o.optString("confidence"), o.optString("type"), o.optString("data")}); }
                 String after = CardPrompt.apply(before, plan.optString("curiosity_question"), CardPrompt.quality(raw.length()), CardPrompt.validate(sourcePath, proposed));
                 after = made(after, "topics", topics, done);
                 after = madePeople(after, people, done);

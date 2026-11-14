@@ -12,7 +12,7 @@ Current as of the 2026-11 modernization (version 1.9.0). For measurements see [b
 ## Layers
 
 ```
-Compose UI (*.kt)            FeedView, SparkView, SearchView, AskView, SettingsView, QuickView, PageView, SparkTheme
+Compose UI (*.kt)            FeedView, SparkView, AskView, SettingsView, QuickView, PageView, SparkTheme
    ▲ state (mutableStateOf)   ▼ actions (Java interfaces)
 Screens (Java)               FeedScreen, SparkScreen, AskScreen, …, VaultActivity, QuickActivity
    │
@@ -21,7 +21,7 @@ Core (Java)                  Capture/Inbox, Ingest/Tagger, Model, VaultStore/Vau
 Platform                     Storage Access Framework (vault), JobScheduler, foreground services, notifications
 ```
 
-- **Shell.** `MainActivity` is a `ComponentActivity` with four tabs (Feed, Spark, Search, Ask) and a back stack of detail screens. Back goes through the androidx `OnBackPressedDispatcher`. Changing the theme calls `retheme()`, which rebuilds the shell in place and keeps the open screens.
+- **Shell.** `MainActivity` is a `ComponentActivity` with three tabs (Feed, Spark, Ask; search is at the top of the Feed) and a back stack of detail screens. Back goes through the androidx `OnBackPressedDispatcher`. Changing the theme calls `retheme()`, which rebuilds the shell in place and keeps the open screens.
 - **Screens.** Each `Screen` builds a `ComposeView` on top of a state object (`FeedState`, `PageState`, `AskState`, …). A tab's composition is let go when the tab is left and rebuilt from the state object when it returns, so nothing is lost and nothing piles up.
 - **Detail pages.** Source, Topic, Profile, Cards, the capture map, Make cards, Capture detail and the vault browser are lists of blocks (`PageView.kt`: Title, Panel, Heading, Bullet, Group, Editor, Field, Tabs, Rich, …). A Java screen builds the list and publishes it.
 - **Provenance.** Panels and headings carry an origin (`Origin.SOURCE`, `AI`, `YOU`) and show it as a small tag.

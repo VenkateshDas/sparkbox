@@ -10,7 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Makes a curiosity question and recall cards for every Source note that has none. Resumable: a note counts as done once it has a `quality` key, so a
+ * Makes a curiosity question and recall cards for every Source note that has none. Resumable: a note counts as done once it has a `cardv` key, so a
  * stopped run picks up where it left off and never repeats a note. Runs in small batches, newest notes first, and stops on a provider error.
  */
 final class CardGen {
@@ -42,7 +42,7 @@ final class CardGen {
     /** Notes still to do, newest first. */
     static List<Vault.Note> todo(VaultStore.Snap snap) {
         List<Vault.Note> out = new ArrayList<>();
-        for (Vault.Note n : snap.graph.notes) if (eligible(n) && n.meta("quality").isEmpty()) out.add(n);
+        for (Vault.Note n : snap.graph.notes) if (eligible(n) && n.meta("cardv").isEmpty()) out.add(n);
         Collections.sort(out, (a, b) -> {
             boolean[] t = new boolean[1];
             java.time.LocalDateTime x = Feed.when(a.meta("captured"), t), y = Feed.when(b.meta("captured"), t);
@@ -55,7 +55,7 @@ final class CardGen {
     /** {done, total} Source notes. */
     static int[] progress(VaultStore.Snap snap) {
         int done = 0, total = 0;
-        for (Vault.Note n : snap.graph.notes) if (eligible(n)) { total++; if (!n.meta("quality").isEmpty()) done++; }
+        for (Vault.Note n : snap.graph.notes) if (eligible(n)) { total++; if (!n.meta("cardv").isEmpty()) done++; }
         return new int[]{done, total};
     }
 
@@ -144,7 +144,7 @@ final class CardGen {
     private static void markFailed(Context c, Vault.Note n) throws Exception {
         String before = VaultWrite.read(c, n.path);
         if (before == null) return;
-        VaultWrite.write(c, n.path, before, NoteEdit.setKey(before, "quality", CardPrompt.FAILED));
+        VaultWrite.write(c, n.path, before, NoteEdit.setKey(NoteEdit.setKey(before, "quality", CardPrompt.FAILED), "cardv", "2"));
     }
 
     private static void process(Context c, String key, Vault.Note n) throws Exception {
@@ -170,7 +170,7 @@ final class CardGen {
             curiosity = o.optString("curiosity_question");
             List<String[]> proposed = new ArrayList<>();
             JSONArray rc = o.optJSONArray("recall_cards");
-            for (int i = 0; rc != null && i < rc.length(); i++) { JSONObject x = rc.optJSONObject(i); if (x != null) proposed.add(new String[]{x.optString("q"), x.optString("a"), x.optString("basis"), x.optString("confidence")}); }
+            for (int i = 0; rc != null && i < rc.length(); i++) { JSONObject x = rc.optJSONObject(i); if (x != null) proposed.add(new String[]{x.optString("q"), x.optString("a"), x.optString("basis"), x.optString("confidence"), x.optString("type"), x.optString("data")}); }
             cards = CardPrompt.validate(n.path, proposed);
         }
         String after = CardPrompt.apply(before, curiosity, quality, cards);

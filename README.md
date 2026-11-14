@@ -23,7 +23,7 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 **Use**
 - **Feed**: captures and notes as cards, with each capture's processing steps shown live on its card. Filter by Craft, Life, Sources, Topics or People. Long-press a note for **Move to Craft/Life** or **Move to trash**. Pull down to rescan the vault.
 - **Spark**: a daily spaced-repetition review of the cards (a small SM-2 scheduler, a daily cap, park and flag).
-- **Search**: word match first, meaning-based matches merged in.
+- **Search** (top of the Feed, with the same filters): word match first, meaning-based matches merged in.
 - **Ask**: a chat over your notes. Answers cite the notes they come from, and say "Not in your knowledge base" instead of guessing.
 - **Source** and **Topic** pages mark each section as *from the source*, *AI* or *yours*. Your own words are edited in place.
 - **Vault browser** (menu → Browse vault): folders, notes, Read / Links / Similar.
@@ -92,8 +92,8 @@ The inbox and vault on the phone are real. Copy the vault off the phone before a
 | Area | Files |
 |---|---|
 | App shell and navigation | `MainActivity.java` (tabs, back stack, theme), `Screen.java` |
-| UI (Kotlin, Jetpack Compose, Material 3) | `SparkTheme.kt`, `FeedView.kt`, `SparkView.kt`, `SearchView.kt`, `AskView.kt`, `SettingsView.kt`, `QuickView.kt`, `PageView.kt` (shared detail-page blocks) |
-| Screens (Java: data and actions) | `FeedScreen`, `SparkScreen`, `SearchScreen`, `AskScreen`, `SettingsScreen`, `ProfileScreen`, `UnitScreen` (Source), `TopicScreen`, `NotesListScreen`, `CardsScreen`, `CardGenScreen`, `CaptureScreen`, `CaptureMapScreen`, `VaultActivity`, `QuickActivity` |
+| UI (Kotlin, Jetpack Compose, Material 3) | `SparkTheme.kt`, `FeedView.kt`, `SparkView.kt`, `AskView.kt`, `SettingsView.kt`, `QuickView.kt`, `PageView.kt` (shared detail-page blocks) |
+| Screens (Java: data and actions) | `FeedScreen`, `SparkScreen`, `AskScreen`, `SettingsScreen`, `ProfileScreen`, `UnitScreen` (Source), `TopicScreen`, `NotesListScreen`, `CardsScreen`, `CardGenScreen`, `CaptureScreen`, `CaptureMapScreen`, `VaultActivity`, `QuickActivity` |
 | Capture | `ShareActivity`, `CaptureService`, `RecordService`, `QuickTile`, `InboxWidget`, `Capture`, `InboxFile`, `AppendCheck` |
 | Processing | `BackgroundJob`, `Tagger` (the background run), `Ingest`, `IngestText`, `Classify`, `Enrich`, `CardGen`, `Transcript`, `Fetch`, `Web`, `Content`, `Model` (OpenRouter) |
 | Vault | `VaultStore` (scan, cache, embeddings), `Vault` (parsing, links, search), `VaultWrite`, `VerifiedEdit`, `NoteEdit`, `Edits`, `Layout`, `Lane` |

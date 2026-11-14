@@ -20,16 +20,20 @@ public final class Cards {
     public static final String SECTION = "Cards";
     private static final DateTimeFormatter MINUTE = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm'Z'");
     static final int LOG_KEEP = 50;
-    private static final String[] ORDER = {"Q", "A", "Basis", "Take", "Origin", "State", "Log", "Parked", "Flag"};
+    private static final String[] ORDER = {"Q", "A", "Type", "Data", "Basis", "Take", "Origin", "State", "Log", "Parked", "Flag"};
 
     /** Scheduling state: due time (epoch ms, UTC), interval in days, ease, review count, lapses. */
     public static final class State {
         public final long due; public final int interval, reps, lapses; public final double ease;
-        public State(long due, int interval, double ease, int reps, int lapses) { this.due = due; this.interval = interval; this.ease = ease; this.reps = reps; this.lapses = lapses; }
+        /** FSRS memory stability (days) and difficulty (1 to 10); 0 for a card scheduled before FSRS. */
+        public final double stab, diff;
+        public State(long due, int interval, double ease, int reps, int lapses) { this(due, interval, ease, reps, lapses, 0, 0); }
+        public State(long due, int interval, double ease, int reps, int lapses, double stab, double diff) { this.due = due; this.interval = interval; this.ease = ease; this.reps = reps; this.lapses = lapses; this.stab = stab; this.diff = diff; }
     }
 
     public static final class Card {
-        public String id = "", path = "", q = "", a = "", basis = "", take = "", origin = "", log = "";
+        /** type: classic, cloze, quiz, tf, why, teach, apply, sort. data: type extras (quiz distractors, sort order, tf explanation), "|" separated. */
+        public String id = "", path = "", q = "", a = "", type = "classic", data = "", basis = "", take = "", origin = "", log = "";
         public State state;     // null for a card never reviewed
         public long parked;     // epoch ms, 0 when not parked
         public boolean flag;
@@ -57,7 +61,8 @@ public final class Cards {
     }
 
     public static String stateText(State s) {
-        return "due " + time(s.due) + " interval " + s.interval + " ease " + String.format(Locale.US, "%.2f", s.ease) + " reps " + s.reps + " lapses " + s.lapses;
+        return "due " + time(s.due) + " interval " + s.interval + " ease " + String.format(Locale.US, "%.2f", s.ease) + " reps " + s.reps + " lapses " + s.lapses
+            + (s.stab > 0 ? " stab " + String.format(Locale.US, "%.2f", s.stab) + " diff " + String.format(Locale.US, "%.2f", s.diff) : "");
     }
 
     public static State parseState(String v) {
@@ -67,14 +72,18 @@ public final class Cards {
             for (int i = 0; i + 1 < t.length; i += 2) m.put(t[i], t[i + 1]);
             long due = parseTime(m.get("due"));
             if (due == 0) return null;
-            return new State(due, Integer.parseInt(m.get("interval")), Double.parseDouble(m.get("ease")), Integer.parseInt(m.get("reps")), Integer.parseInt(m.get("lapses")));
+            return new State(due, Integer.parseInt(m.get("interval")), Double.parseDouble(m.get("ease")), Integer.parseInt(m.get("reps")), Integer.parseInt(m.get("lapses")),
+                m.containsKey("stab") ? Double.parseDouble(m.get("stab")) : 0, m.containsKey("diff") ? Double.parseDouble(m.get("diff")) : 0);
         } catch (RuntimeException bad) { return null; }
     }
 
     /** The log with one more entry on the front, newest first, kept to the last LOG_KEEP. */
-    public static String logWith(String log, long ms, String grade, int seconds) {
+    public static String logWith(String log, long ms, String grade, int seconds) { return logWith(log, ms, grade, seconds, ""); }
+
+    /** conf: how sure the owner was before the answer ("sure", "unsure", "guess") or "". */
+    public static String logWith(String log, long ms, String grade, int seconds, String conf) {
         List<String> parts = new ArrayList<>();
-        parts.add(time(ms) + " " + grade + " " + seconds + "s");
+        parts.add(time(ms) + " " + grade + " " + seconds + "s" + (conf.isEmpty() ? "" : " " + conf));
         if (!log.trim().isEmpty()) for (String p : log.split(";")) if (!p.trim().isEmpty()) parts.add(p.trim());
         return String.join("; ", parts.subList(0, Math.min(LOG_KEEP, parts.size())));
     }
@@ -126,6 +135,8 @@ public final class Cards {
         if (c.id.isEmpty() || !kv.containsKey("Q") || !kv.containsKey("A") || kv.get("Q").toString().trim().isEmpty() || kv.get("A").toString().trim().isEmpty()) return null;
         c.q = kv.get("Q").toString().trim();
         c.a = kv.get("A").toString().trim();
+        if (kv.containsKey("Type") && !kv.get("Type").toString().trim().isEmpty()) c.type = kv.get("Type").toString().trim().toLowerCase(Locale.ROOT);
+        if (kv.containsKey("Data")) c.data = kv.get("Data").toString().trim();
         if (kv.containsKey("Basis")) c.basis = kv.get("Basis").toString().trim();
         if (kv.containsKey("Take")) c.take = kv.get("Take").toString().trim();
         if (kv.containsKey("Origin")) c.origin = kv.get("Origin").toString().trim();
@@ -146,7 +157,7 @@ public final class Cards {
     /** One card as a block, without a trailing blank line. */
     public static String format(Card c) {
         StringBuilder b = new StringBuilder("### " + c.id + "\n");
-        put(b, "Q", c.q); put(b, "A", c.a); put(b, "Basis", c.basis); put(b, "Take", c.take); put(b, "Origin", c.origin);
+        put(b, "Q", c.q); put(b, "A", c.a); if (!c.type.equals("classic")) put(b, "Type", c.type); put(b, "Data", c.data); put(b, "Basis", c.basis); put(b, "Take", c.take); put(b, "Origin", c.origin);
         if (c.state != null) put(b, "State", stateText(c.state));
         put(b, "Log", c.log);
         if (c.parked > 0) put(b, "Parked", time(c.parked));

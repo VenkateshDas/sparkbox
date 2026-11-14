@@ -72,12 +72,12 @@ final class CardStore {
     // ---- changes ----
 
     /** Applies the grade: new state and one more log entry. */
-    static void grade(Context c, Cards.Card card, String grade, int seconds) {
+    static void grade(Context c, Cards.Card card, String grade, int seconds, String conf) {
         long now = System.currentTimeMillis();
         Cards.State state = Sched.next(card.state, grade, now);
         Map<String, String> kv = new LinkedHashMap<>();
         kv.put("State", Cards.stateText(state));
-        kv.put("Log", Cards.logWith(card.log, now, grade, seconds));
+        kv.put("Log", Cards.logWith(card.log, now, grade, seconds, conf));
         change(c, op("keys", card.path, "id", card.id, "kv", json(kv)));
     }
 

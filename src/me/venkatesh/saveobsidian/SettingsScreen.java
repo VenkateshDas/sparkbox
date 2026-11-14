@@ -118,6 +118,12 @@ final class SettingsScreen extends Screen {
             draw();
         }));
 
+        boolean askConf = SparkScreen.askConfidence(ui.c);
+        spark.add(row("Ask how sure you are", askConf ? "On" : "Off", () -> {
+            ui.c.getSharedPreferences("capture", 0).edit().putBoolean("cardConfidence", !askConf).apply();
+            draw();
+        }));
+
         java.util.List<SettingRow> look = group("Theme");
         String theme = ui.c.getSharedPreferences("capture", 0).getString("theme", "system");
         look.add(row("Theme", theme.substring(0, 1).toUpperCase() + theme.substring(1), () -> {

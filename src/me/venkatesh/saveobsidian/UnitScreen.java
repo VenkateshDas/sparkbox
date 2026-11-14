@@ -101,6 +101,7 @@ final class UnitScreen extends Screen {
         more.add(new Nav(n.words > 0 ? "Full text" : "Open note", n.words > 0 ? "From the source" : "", n.words > 0 ? n.words + " words" : "", false,
             () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))));
         b.add(new Group(more));
+        if (cardCount > 0) b.add(new Primary("Study " + cardCount + (cardCount == 1 ? " card" : " cards") + " in Spark", () -> host.study(Study.Scope.note(n.path, n.title))));
         b.add(new Primary("Ask about this", () -> host.askAbout(n.path, n.title)));
         b.add(new Danger("Move to trash", () -> Edits.confirmDelete(host, n.path, n.title, () -> host.onBackPressed())));
         page.publish(b);

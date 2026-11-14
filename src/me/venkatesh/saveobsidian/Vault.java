@@ -121,7 +121,7 @@ public final class Vault {
 
     private static void add(List<String> list, String s) { if (!s.isEmpty() && !list.contains(s)) list.add(s); }
 
-    private static final String[] META = {"source", "author", "captured", "via", "processed", "curiosity", "quality", "kept", "lane", "people", "related-topics",
+    private static final String[] META = {"source", "author", "captured", "via", "processed", "curiosity", "quality", "cardv", "kept", "lane", "people", "related-topics",
         "made-topics-new", "made-topics-updated", "made-people-new", "made-people-updated", "made-entities-new", "made-entities-updated"};
 
     /** The text under a "## Heading" line (case-insensitive) up to the next heading of the same or higher level, or "". */
