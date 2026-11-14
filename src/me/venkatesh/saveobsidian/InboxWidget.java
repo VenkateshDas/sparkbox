@@ -104,7 +104,8 @@ public class InboxWidget extends AppWidgetProvider {
 
     /** Fourteen bars on a hairline, today in the accent with its count above it. Drawn at the size it is shown, so nothing is stretched. */
     private static Bitmap chart(Context c, Stats s) {
-        Ui ui = new Ui(c);
+        // Match the system-selected widget resources, independently of the in-app Theme setting.
+        int line = c.getColor(R.color.w_line), ink = c.getColor(R.color.w_ink), accent = c.getColor(R.color.w_accent);
         float density = c.getResources().getDisplayMetrics().density;
         int w = (int) (130 * density), h = (int) (46 * density);
         Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
@@ -113,15 +114,15 @@ public class InboxWidget extends AppWidgetProvider {
         int max = 1;
         for (int n : s.perDay) max = Math.max(max, n);
         float label = 13 * density, base = h - 1.5f * density, room = base - label - 2 * density, slot = w / (float) DAYS, bar = slot * 0.62f, radius = bar / 2.4f, floor = 3 * density;
-        paint.setColor(ui.line);
+        paint.setColor(line);
         canvas.drawRect(0, base, w, base + density, paint);
         for (int i = 0; i < DAYS; i++) {
             float top = base - (s.perDay[i] == 0 ? floor : floor + (room - floor) * s.perDay[i] / max), left = slot * i + (slot - bar) / 2;
             boolean today = i == s.selected; // the chosen day
-            paint.setColor(today ? ui.accent : s.perDay[i] == 0 ? ui.line : (ui.ink & 0xFFFFFF) | 0x40000000);
+            paint.setColor(today ? accent : s.perDay[i] == 0 ? line : (ink & 0xFFFFFF) | 0x40000000);
             canvas.drawRoundRect(new RectF(left, top, left + bar, base - density), radius, radius, paint);
             if (today && s.perDay[i] > 0) {
-                paint.setColor(ui.accent);
+                paint.setColor(accent);
                 paint.setTextSize(10 * density);
                 paint.setTextAlign(Paint.Align.CENTER);
                 paint.setTypeface(Ui.MEDIUM);
