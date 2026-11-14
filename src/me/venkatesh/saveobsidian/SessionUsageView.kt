@@ -214,50 +214,71 @@ private fun RequestCard(index: Int, r: JSONObject, selected: Boolean, activeRun:
 
 @Composable
 private fun ContextHistory(history: List<JSONObject>, requests: List<JSONObject>, select: (String) -> Unit) {
-    val points = history.filter { it.optString("type") == "context_snapshot" }
+    val snapshots = history.filter { it.optString("type") == "context_snapshot" }
+    // Show request inputs and meaningful changes, rather than every intermediate redraw.
+    val hasReported = snapshots.any { it.optBoolean("reported") }
+    val points = snapshots.filterIndexed { index, p ->
+        !hasReported || p.optBoolean("reported") || p.optString("reason") == "compaction_end" || index == snapshots.lastIndex ||
+            index > 0 && p.optString("model") != snapshots[index - 1].optString("model")
+    }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     var selected by rememberSaveable { mutableIntStateOf(-1) }
     val cs = MaterialTheme.colorScheme
     UsageCard("Context history") {
-        if (points.isEmpty()) Text("History will appear as Scout works. Earlier context sizes cannot be reconstructed reliably.")
+        if (points.isEmpty()) Text("History appears as Scout works.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
         else {
-            Text("Snapshots in session order · tokens", style = MaterialTheme.typography.bodySmall)
-            val max = points.maxOf { maxOf(it.optLong("estimate"), it.optLong("window")) }.coerceAtLeast(1).toFloat()
-            Canvas(Modifier.fillMaxWidth().height(160.dp).semantics { contentDescription = "Context token history. Use Previous and Next below to inspect each point." }
-                .pointerInput(points.size) { detectTapGestures { offset -> selected = ((offset.x / size.width) * (points.size - 1)).toInt().coerceIn(points.indices) } }) {
-                fun x(i: Int) = if (points.size == 1) size.width / 2 else size.width * i / (points.size - 1)
-                fun y(v: Long) = size.height - size.height * v / max
-                val path = Path()
-                points.forEachIndexed { i, p ->
-                    val xx = x(i); val yy = y(p.optLong("estimate"))
-                    if (i == 0) path.moveTo(xx, yy) else path.lineTo(xx, yy)
-                    if (p.optLong("window") > 0) {
-                        val end = if (i < points.lastIndex) x(i + 1) else xx
-                        drawLine(cs.outline, Offset(xx, y(p.optLong("window"))), Offset(end, y(p.optLong("window"))), 1.dp.toPx())
-                        drawLine(cs.tertiary, Offset(xx, y((p.optLong("window") - p.optLong("reserve")).coerceAtLeast(0))), Offset(end, y((p.optLong("window") - p.optLong("reserve")).coerceAtLeast(0))), 1.dp.toPx())
+            val current = snapshots.last().optLong("estimate")
+            val peak = snapshots.maxOf { it.optLong("estimate") }
+            Text("Current ≈${SessionUsage.tokens(current)} · Peak ${SessionUsage.tokens(peak)} tokens", style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(0.dp)) {
+                Text(if (expanded) "Hide history ⌃" else "Show history ⌄")
+            }
+            if (expanded) {
+                // Capacity already has its own card. Scaling to observed usage makes small changes visible.
+                val ceiling = (kotlin.math.ceil(peak.coerceAtLeast(1) * 1.15 / 1000.0) * 1000).toLong().coerceAtLeast(1000)
+                val at = selected.takeIf { it in points.indices } ?: points.lastIndex
+                Text("Input tokens · scale 0–${SessionUsage.tokens(ceiling)}", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                Canvas(Modifier.fillMaxWidth().height(88.dp).padding(6.dp)
+                    .semantics { contentDescription = "Context history, scaled from zero to $ceiling tokens. Use Previous and Next to inspect requests." }
+                    .pointerInput(points.size) { detectTapGestures { offset ->
+                        selected = kotlin.math.round((offset.x / size.width.coerceAtLeast(1)) * (points.size - 1)).toInt().coerceIn(points.indices)
+                    } }) {
+                    fun x(i: Int) = if (points.size == 1) size.width / 2 else size.width * i / (points.size - 1)
+                    fun y(v: Long) = size.height - size.height * v / ceiling.toFloat()
+                    drawLine(cs.outlineVariant, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx())
+                    val path = Path()
+                    points.forEachIndexed { i, p ->
+                        val xx = x(i); val yy = y(p.optLong("estimate"))
+                        if (i == 0) path.moveTo(xx, yy) else path.lineTo(xx, yy)
                     }
-                    drawCircle(if (p.optString("reason") == "compaction_end" || i > 0 && p.optString("model") != points[i - 1].optString("model")) cs.tertiary else cs.primary, if (i == selected || p.optString("reason") == "compaction_end" || i > 0 && p.optString("model") != points[i - 1].optString("model")) 5.dp.toPx() else 3.dp.toPx(), Offset(xx, yy), style = if (p.optBoolean("reported")) Fill else Stroke(1.5.dp.toPx()))
+                    drawPath(path, cs.primary, style = Stroke(2.dp.toPx()))
+                    points.forEachIndexed { i, p ->
+                        val event = p.optString("reason") == "compaction_end" || i > 0 && p.optString("model") != points[i - 1].optString("model")
+                        drawCircle(if (event) cs.tertiary else cs.primary, if (i == at || event) 4.dp.toPx() else 3.dp.toPx(),
+                            Offset(x(i), y(p.optLong("estimate"))), style = if (p.optBoolean("reported")) Fill else Stroke(1.5.dp.toPx()))
+                    }
                 }
-                drawPath(path, cs.primary, style = Stroke(2.dp.toPx()))
+                Text("Filled: reported · Outlined: estimated", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                val p = points[at]
+                val requestIndex = requests.indexOfFirst { it.optString("requestId") == p.optString("requestId") }
+                val label = when {
+                    p.optString("reason") == "compaction_end" -> "After compaction"
+                    p.optBoolean("reported") && requestIndex >= 0 -> "Request ${requestIndex + 1}"
+                    at == points.lastIndex -> "Current estimate"
+                    else -> "Earlier estimate"
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { selected = at - 1 }, enabled = at > 0) { Text("Previous") }
+                    Text("$label\n${if (p.optBoolean("reported")) "" else "≈"}${number(p.optLong("estimate"))} tokens",
+                        style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    TextButton(onClick = { selected = at + 1 }, enabled = at < points.lastIndex) { Text("Next") }
+                }
+                if (requestIndex >= 0) TextButton(onClick = { select(requests[requestIndex].optString("requestId")) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Request ${requestIndex + 1} details")
+                }
+                val compactions = history.count { it.optString("type") == "compaction" }
+                if (compactions > 0) Text("$compactions compactions · accent markers show compaction or model changes", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
             }
-            Text("${number(max.toLong())} top · 0 bottom\nPrimary line: input tokens · Gray: capacity · Accent line: input boundary with output reserved. Filled points are reported; outlined points are estimated. Larger accent markers show compaction or model changes.", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { selected = (if (selected < 0) points.lastIndex else selected - 1).coerceAtLeast(0) }) { Text("Previous") }
-                TextButton(onClick = { selected = (selected + 1).coerceAtMost(points.lastIndex) }) { Text("Next") }
-            }
-            val at = selected.takeIf { it in points.indices } ?: points.lastIndex
-            val p = points[at]
-            Text("Point ${at + 1}: ${if (p.optBoolean("reported")) "" else "≈"}${number(p.optLong("estimate"))} tokens · ${p.optString("reason").replace('_', ' ')}", style = MaterialTheme.typography.bodyMedium)
-            Text(p.optString("model") + " · " + p.optString("timestamp"), style = MaterialTheme.typography.bodySmall)
-            // Request-boundary snapshots immediately follow the corresponding request start in the log.
-            val request = requests.firstOrNull { it.optString("requestId") == p.optString("requestId") }
-            if (request != null) {
-                Metric("Request input · reported", field(request.optJSONObject("usage"), "prompt_tokens"))
-                TextButton(onClick = { select(request.optString("requestId")) }) { Text("Expand request details below") }
-            }
-            val compactions = history.count { it.optString("type") == "compaction" }
-            val changes = history.filter { it.optString("type") == "model_change" }
-            Text("$compactions compactions · ${changes.size} model selections", style = MaterialTheme.typography.bodySmall)
-            changes.forEach { Text("Model: ${it.optString("model")}", style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
