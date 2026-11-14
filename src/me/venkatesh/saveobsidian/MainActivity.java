@@ -185,6 +185,18 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ((AskScreen) tabs[3]).prefill(question);
     }
 
+    /** Ask about this: opens the Ask tab with the note in context and the message left for you to write. */
+    void askAbout(String path, String title) {
+        select(3);
+        ((AskScreen) tabs[3]).attach(path, title);
+    }
+
+    /** Opens the Ask tab with this text in the message box, not sent. */
+    void draft(String text) {
+        select(3);
+        ((AskScreen) tabs[3]).draft(text);
+    }
+
     /** Opens one Scout chat (from the Chats list or a notification). */
     void openSession(String file) {
         select(3);

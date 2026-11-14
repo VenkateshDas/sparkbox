@@ -90,6 +90,7 @@ class Approval(val title: String, val detail: String) : AskItem
 
 interface AskActions {
     fun ask(q: String)
+    fun clearContext()
     fun cancel()
     fun retry()
     fun newChat()
@@ -120,6 +121,8 @@ class AskState {
     var subtitle by mutableStateOf(""); private set
     var offline by mutableStateOf(false); private set
     var title by mutableStateOf(""); private set
+    var context by mutableStateOf(""); private set
+    fun context(t: String) { context = t }
     var began by mutableStateOf(0L); private set
     fun began(ms: Long) { began = ms }
     var drawer by mutableStateOf(false); private set
@@ -226,6 +229,10 @@ private fun AskUi(s: AskState, a: AskActions) {
                 ) {
                     Text(s.usage, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
                     Text("›", color = cs.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+                }
+                if (s.context.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp).clip(RoundedCornerShape(12.dp)).background(cs.surfaceContainerHigh).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Note in context: " + s.context, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { a.clearContext() }) { Text("Remove") }
                 }
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     val send = { val q = s.input.trim(); if (q.isNotEmpty() && !s.offline) a.ask(q) } // while it runs, a message steers Scout

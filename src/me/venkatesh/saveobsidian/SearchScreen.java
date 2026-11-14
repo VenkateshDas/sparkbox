@@ -55,7 +55,7 @@ final class SearchScreen extends Screen {
         }
         @Override public void chip(String name) { chip = name; show(); }
         @Override public void open(String path) { host.openNote(path); }
-        @Override public void ask() { host.ask(query); }
+        @Override public void ask() { host.draft(query); }
     };
 
     private void semantic(String q) {

@@ -83,6 +83,16 @@ final class Md {
         return out;
     }
 
+    /** A note body as a selectable TextView with tappable links. */
+    static android.widget.TextView view(Ui ui, String text, Open open) {
+        android.widget.TextView t = ui.text("", 15, android.graphics.Typeface.DEFAULT, ui.ink);
+        t.setLineSpacing(0, 1.35f);
+        t.setText(render(ui, text, open));
+        t.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+        t.setTextIsSelectable(false);
+        return t;
+    }
+
     /** Answer text from Ask: the same inline rules, so [[path|Title]] citations are tappable. */
     static SpannableStringBuilder inlineOnly(Ui ui, String text, Open open) {
         SpannableStringBuilder out = new SpannableStringBuilder();

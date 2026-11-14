@@ -51,7 +51,7 @@ final class FeedScreen extends Screen {
     private final FeedActions actions = new FeedActions() {
         @Override public void open(Feed.Item it) { FeedScreen.this.open(it); }
         @Override public void link(String url) { openLink(url); }
-        @Override public void ask(Feed.Item it) { host.ask("Tell me about " + it.title); }
+        @Override public void ask(Feed.Item it) { host.askAbout(it.path, it.title); }
         @Override public void retry(Feed.Item it) { if (it.entry != null) FeedScreen.this.retry(it.entry); }
         @Override public void keep(Feed.Item it) { it.kept = !it.kept; CardStore.keep(ui.c, it.path, it.kept); drawRows(); }
         @Override public void share(Feed.Item it) {

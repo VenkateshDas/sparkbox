@@ -81,6 +81,14 @@ final class UnitScreen extends Screen {
             }
         } else if (!n.description.isEmpty()) b.add(new Panel("Description", n.description, Origin.SOURCE));
 
+        if (!text.isEmpty()) {
+            b.add(new Heading("Full note"));
+            b.add(new Rich(() -> Md.view(ui, text, new Md.Open() {
+                @Override public void open(String raw) { Vault.Note to = VaultStore.cached(ui.c).graph.resolve(Vault.target(raw)); if (to != null) host.openNote(to.path); }
+                @Override public boolean exists(String raw) { return VaultStore.cached(ui.c).graph.resolve(Vault.target(raw)) != null; }
+            })));
+        }
+
         List<String[]> made = CaptureMapScreen.rows(n); // {group, name, isNew}
         if (!made.isEmpty()) {
             b.add(new Heading("Added from this note", Origin.NONE, () -> host.push(new CaptureMapScreen(n.path))));
@@ -93,7 +101,7 @@ final class UnitScreen extends Screen {
         more.add(new Nav(n.words > 0 ? "Full text" : "Open note", n.words > 0 ? "From the source" : "", n.words > 0 ? n.words + " words" : "", false,
             () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))));
         b.add(new Group(more));
-        b.add(new Primary("Ask about this", () -> host.ask("Tell me about " + n.title)));
+        b.add(new Primary("Ask about this", () -> host.askAbout(n.path, n.title)));
         b.add(new Danger("Move to trash", () -> Edits.confirmDelete(host, n.path, n.title, () -> host.onBackPressed())));
         page.publish(b);
     }

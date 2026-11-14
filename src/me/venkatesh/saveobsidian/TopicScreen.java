@@ -97,6 +97,14 @@ final class TopicScreen extends Screen {
             });
         }));
 
+        if (!text.isEmpty()) {
+            b.add(new Heading("Full note"));
+            b.add(new Rich(() -> Md.view(ui, text, new Md.Open() {
+                @Override public void open(String raw) { Vault.Note to = snap().graph.resolve(Vault.target(raw)); if (to != null) host.openNote(to.path); }
+                @Override public boolean exists(String raw) { return snap().graph.resolve(Vault.target(raw)) != null; }
+            })));
+        }
+
         List<String[]> appears = new ArrayList<>(), related = new ArrayList<>(), people = new ArrayList<>(), questions = new ArrayList<>();
         for (Vault.Note s : sources) appears.add(new String[]{s.title, (Feed.host(s.meta("source")).isEmpty() ? s.meta("via") : Feed.host(s.meta("source"))), s.path});
         for (String name : n.topics) { Vault.Note to = g.resolve(name); if (to != null && to.path.startsWith("Knowledge/Topics/")) related.add(new String[]{to.title, "Topic", to.path}); }
@@ -111,7 +119,7 @@ final class TopicScreen extends Screen {
         rows.add(count("People mentioned", people, "person", "people"));
         rows.add(count("Open questions", questions, "open", "open"));
         b.add(new Group(rows));
-        b.add(new Primary("Ask about this", () -> host.ask("Tell me about " + n.title)));
+        b.add(new Primary("Ask about this", () -> host.askAbout(n.path, n.title)));
         page.publish(b);
     }
 

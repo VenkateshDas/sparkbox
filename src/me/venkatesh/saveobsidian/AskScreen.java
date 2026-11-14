@@ -22,7 +22,7 @@ final class AskScreen extends Screen {
     private final List<AskItem> items = new ArrayList<>();
     private Ui ui;
     private String file; // the chat on screen (a file in files/sessions), or null for a new one not started yet
-    private String pendingQuestion, draft = "";
+    private String pendingQuestion, draft = "", ctxPath = "", ctxTitle = "";
 
     private final ScoutRuns.Watcher watcher = new ScoutRuns.Watcher() {
         @Override public void changed(String f) { main.post(() -> { if (f.isEmpty() || f.equals(file)) refresh(); if (view.getDrawer()) loadChats(); }); }
@@ -31,6 +31,7 @@ final class AskScreen extends Screen {
 
     @Override View build(Ui ui) {
         this.ui = ui;
+        view.context(ctxTitle);
         view.input(draft); // a half-typed question survives tab switches and theme changes
         if (file == null) {
             String saved = ui.c.getSharedPreferences("capture", 0).getString("scoutSession", "");
@@ -42,6 +43,7 @@ final class AskScreen extends Screen {
 
     private final AskActions actions = new AskActions() {
         @Override public void ask(String q) { AskScreen.this.ask(q); }
+        @Override public void clearContext() { attach("", ""); }
         @Override public void cancel() { if (file != null) ScoutRuns.cancel(file); }
         @Override public void retry() { if (file != null && ScoutRuns.start(ui.c, file, null, true, false)) refresh(); }
         @Override public void newChat() { view.drawer(false); open(null); }
@@ -126,6 +128,18 @@ final class AskScreen extends Screen {
     void prefill(String question) {
         if (ui == null) { pendingQuestion = question; return; }
         main.post(() -> ask(question));
+    }
+
+    /** Ask about this: puts the note in context and leaves the message for you to write. Nothing is sent. */
+    void attach(String path, String title) {
+        ctxPath = path; ctxTitle = title;
+        if (ui != null) view.context(title);
+    }
+
+    /** Text for the message box, not sent. */
+    void draft(String text) {
+        draft = text;
+        if (ui != null) view.input(text);
     }
 
     private boolean online() {
@@ -213,6 +227,7 @@ final class AskScreen extends Screen {
     private void ask(String question) {
         question = question.trim();
         if (question.isEmpty()) return;
+        if (!ctxPath.isEmpty()) { question = "About this note: \"" + ctxTitle + "\" (" + ctxPath + "). Read it first.\n\n" + question; attach("", ""); }
         if (ScoutRuns.run(file) != null) { ScoutRuns.steer(file, question); draft = ""; view.input(""); return; } // delivered after the current tools finish, before the next model call
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         if (snap == null || Model.key(ui.c).isEmpty()) { refresh(); return; }
