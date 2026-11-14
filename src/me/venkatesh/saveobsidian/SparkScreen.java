@@ -234,7 +234,9 @@ final class SparkScreen extends Screen {
             }
             case "all": {
                 Spark.Plan p = Spark.plan(all, CardStore.kept(), now, zone, plan.reviewedToday + 100000, CardStore.newestFirst(), false);
-                queue = p.queue; done = sessionDone; break;
+                queue = new ArrayList<>(p.queue);
+                for (Cards.Card c : all) if (c.state != null && c.state.due > now && !queue.contains(c)) queue.add(c); // "All" means all: cards scheduled for later too, so the count matches the Study button
+                done = sessionDone; break;
             }
             case "deep": {
                 if (deepPath == null) deepPath = !plan.queue.isEmpty() ? plan.queue.get(0).path : all.isEmpty() ? "" : all.get(0).path;
