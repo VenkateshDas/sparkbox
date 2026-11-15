@@ -15,6 +15,7 @@ import me.venkatesh.saveobsidian.Study;
 import me.venkatesh.saveobsidian.Spark;
 import me.venkatesh.saveobsidian.CardPrompt;
 import me.venkatesh.saveobsidian.Extract;
+import me.venkatesh.saveobsidian.Instagram;
 import me.venkatesh.saveobsidian.Transcript;
 import me.venkatesh.saveobsidian.JsonFix;
 import me.venkatesh.saveobsidian.Net;
@@ -34,6 +35,7 @@ import java.util.Arrays;
 public class CaptureTest {
     static int count;
     public static void main(String[] args) throws Exception {
+        instagram();
         concurrency();
         limits();
         AgentTest.run();
@@ -744,6 +746,44 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(IngestText.samePlanInputs("", "def") && IngestText.samePlanInputs(null, "def"));
     }
 
+    static void instagram() throws Exception {
+        check(Instagram.shortcode("https://www.instagram.com/reel/Ab_12-/?igsh=tracking").equals("Ab_12-"));
+        check(Instagram.shortcode("https://www.instagram.com/owner/reel/Ab_12-/").equals("Ab_12-"));
+        check(Instagram.shortcode("https://instagram.com/p/Ab_12-/").equals("Ab_12-"));
+        check(Instagram.shortcode("https://instagram.com.evil.example/reel/Ab_12-/").isEmpty());
+        check(Instagram.shortcode("https://user@instagram.com/reel/Ab_12-/").isEmpty());
+        check(Instagram.shortcode("https://instagram.com/accounts/login/").isEmpty());
+        org.json.JSONObject media = new org.json.JSONObject().put("shortcode", "Ab_12-").put("is_video", true)
+            .put("video_url", "https://cdn.example/video.mp4?one=1&two=2")
+            .put("owner", new org.json.JSONObject().put("username", "owner"))
+            .put("edge_media_to_caption", new org.json.JSONObject().put("edges", new org.json.JSONArray()
+                .put(new org.json.JSONObject().put("node", new org.json.JSONObject().put("text", "First line\nதமிழ் & café")))));
+        org.json.JSONObject data = new org.json.JSONObject().put("gql_data", new org.json.JSONObject().put("shortcode_media", media));
+        String embed = "<script>requireLazy([],function(){var s={};s.handle(" + new org.json.JSONObject()
+            .put("require", new org.json.JSONArray().put(new org.json.JSONArray().put("PolarisEmbedSimple").put(data.toString()))) + ");});</script>";
+        Instagram.Media parsed = Instagram.parse(embed, "Ab_12-");
+        check(parsed.isVideo && parsed.video.equals("https://cdn.example/video.mp4?one=1&two=2"));
+        check(parsed.author.equals("owner") && parsed.caption.equals("First line\nதமிழ் & café"));
+        check(Instagram.parse(embed, "AnotherPost").video.isEmpty());
+        check(Instagram.parse("<title>Instagram</title><p>Log in to continue</p>", "Ab_12-").caption.isEmpty());
+        check(Instagram.parse("<script type='application/json'>" + data + "</script>", "Ab_12-").isVideo);
+        org.json.JSONObject product = new org.json.JSONObject().put("code", "Ab_12-").put("media_type", 2)
+            .put("video_versions", new org.json.JSONArray().put(new org.json.JSONObject().put("url", "https://cdn.example/current.mp4")))
+            .put("caption", new org.json.JSONObject().put("text", "Account-access caption"))
+            .put("user", new org.json.JSONObject().put("username", "author"));
+        String api = new org.json.JSONObject().put("data", new org.json.JSONObject()
+            .put("xdt_api__v1__media__shortcode__web_info", new org.json.JSONObject().put("items", new org.json.JSONArray().put(product)))).toString();
+        Instagram.Media current = Instagram.data(api, "Ab_12-");
+        check(current.isVideo && current.video.equals("https://cdn.example/current.mp4"));
+        check(current.caption.equals("Account-access caption") && current.author.equals("author"));
+        product.remove("media_type");
+        check(Instagram.data(product.toString(), "Ab_12-").isVideo);
+        check(Instagram.data(api, "DifferentPost").video.isEmpty());
+        check(Instagram.data("{\"data\":{\"xig_polaris_media\":null}}", "Ab_12-").video.isEmpty());
+        check(Failures.kind("Instagram requires account access for this reel").equals(Failures.ACCESS));
+        check(!Failures.retries(Failures.ACCESS));
+    }
+
     static void limits() throws Exception {
         // background model calls: never more than two at once, however many ask
         final java.util.concurrent.atomic.AtomicInteger now = new java.util.concurrent.atomic.AtomicInteger(), most = new java.util.concurrent.atomic.AtomicInteger();
@@ -773,8 +813,11 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(Failures.kind("Knowledge/index.md changed while it was being edited. It will be tried again.").equals(Failures.CONFLICT));
         check(Failures.kind("Why or Ideas changed while processing: it will be processed again").equals(Failures.CONFLICT));
         check(Failures.kind("Something odd").equals(Failures.OTHER));
+        check(Failures.kind("Instagram could not provide this post (HTTP 403). Retry later or share the video file.").equals(Failures.OTHER));
+        check(Failures.kind("Instagram could not provide this post (HTTP 429). Retry later or share the video file.").equals(Failures.OTHER));
         check(!Failures.retries(Failures.KEY) && Failures.retries(Failures.RATE) && Failures.retries(Failures.CONFLICT));
         check(Failures.minWaitMs(Failures.RATE) >= 600000 && Failures.minWaitMs(Failures.OTHER) == 0);
         check(Failures.recovery(Failures.CONFLICT, "").contains("without a new model call"));
+        check(Failures.recovery(Failures.KEY, "OpenRouter answered 402: This request requires at least $1.00 in balance for video").contains("$1.00"));
     }
 }

@@ -45,6 +45,8 @@ final class Fetch {
             if (r.thin) r.problem = "No transcript";
             return r;
         }
+        String shortcode = Instagram.shortcode(url);
+        if (!shortcode.isEmpty()) return instagram(shortcode, key, transcribe);
         if (host.equals("github.com") || host.equals("www.github.com")) { Result g = github(url); if (g != null) return g; }
         if (host.endsWith(".wikipedia.org")) { Result w = wikipedia(url, host); if (w != null) return w; }
         if (host.equals("x.com") || host.equals("twitter.com") || host.endsWith(".twitter.com") || host.equals("www.x.com")) { Result t = tweet(url); if (t != null) return t; }
@@ -66,6 +68,33 @@ final class Fetch {
 
     /** What to keep as the link's content: the text, or "" when none. */
     static String content(String url, String key, boolean transcribe) throws IOException { return page(url, key, transcribe).text; }
+
+    private static Result instagram(String shortcode, String key, boolean watch) throws IOException {
+        // Full browser identities receive Instagram's login app instead of the public embed data.
+        Web.Reply reply = Web.get("https://www.instagram.com/p/" + shortcode + "/embed/", Web.MAX_BYTES, "Mozilla/5.0");
+        Instagram.Media media = reply.code == 200 ? Instagram.parse(reply.string(), shortcode) : new Instagram.Media();
+        if (media.caption.isEmpty() && media.video.isEmpty() || media.isVideo && media.video.isEmpty()) media = InstagramApi.fetch(shortcode);
+        Result r = new Result();
+        r.byline = media.author;
+        r.title = media.author.isEmpty() ? "Instagram post" : "Instagram post by @" + media.author;
+        r.image = media.image;
+        r.description = media.caption;
+        r.text = media.caption.isEmpty() ? "" : "### Caption\n" + media.caption;
+        r.thin = media.isVideo;
+        if (media.isVideo && watch && !key.isEmpty()) {
+            if (media.video.isEmpty()) throw new IOException("Instagram did not provide the video. It may be private, removed or blocked. Share the video file instead.");
+            Web.Reply video = Web.get(media.video, 24 * 1024 * 1024);
+            if (video.code != 200 || !video.type.toLowerCase(Locale.ROOT).startsWith("video/"))
+                throw new IOException("Instagram video could not be downloaded. Retry or share the video file.");
+            try { r.text += "\n\n### Video content\n" + Model.watch(key, video.body, "video/mp4"); }
+            catch (IOException failed) { throw failed; }
+            catch (Exception failed) { throw new IOException("Video processing failed: " + failed.getMessage(), failed); }
+            r.thin = false;
+        }
+        if (r.text.isEmpty()) throw new IOException("Instagram did not provide readable content. The post may be private, removed or blocked. Share the video file instead.");
+        if (r.thin) r.problem = "Caption only; video has not been watched";
+        return r;
+    }
 
     private static final Pattern REPO = Pattern.compile("^/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/?$");
 

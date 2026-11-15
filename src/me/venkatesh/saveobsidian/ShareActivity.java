@@ -50,7 +50,7 @@ public class ShareActivity extends Activity {
                 String mime = Attach.mime(original), time = Capture.timestamp();
                 java.io.File copy = Attach.stash(this, uri);
                 try {
-                String format = Enrich.AUDIO.get(ext);
+                String format = mime.startsWith("video/") ? null : Enrich.AUDIO.get(ext);
                 if (format != null) {
                     CaptureService.enqueue(this, new org.json.JSONObject().put("kind", "voice").put("audio", copy.getPath()).put("format", format)
                         .put("label", "Voice note: " + original).put("time", time));

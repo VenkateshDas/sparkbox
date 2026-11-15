@@ -49,10 +49,19 @@ final class Web {
 
     /** The page at this address, or an IOException saying why not (network, blocked, too slow). A non-200 answer is returned, not thrown, so the caller can tell "gone" from "offline". */
     static Reply get(String address) throws IOException {
+        return get(address, MAX_BYTES);
+    }
+
+    /** Media must be complete; truncated video cannot be sent to a model. */
+    static Reply get(String address, int maxBytes) throws IOException {
+        return get(address, maxBytes, MOBILE);
+    }
+
+    static Reply get(String address, int maxBytes, String agent) throws IOException {
         IOException last = null;
         for (int attempt = 0; attempt < 3; attempt++) { // first as a phone, then as a desktop browser
             try {
-                Reply r = once(address, attempt == 0 ? MOBILE : DESKTOP);
+                Reply r = once(address, attempt == 0 ? agent : DESKTOP, maxBytes);
                 if (r.code == 403 || r.code == 401 || r.code == 429 || r.code >= 500) { last = new IOException("The site answered " + r.code); if (attempt < 2) { pause(700L * (attempt + 1)); continue; } return r; }
                 return r;
             } catch (java.net.MalformedURLException final_) { throw final_; }
@@ -64,15 +73,17 @@ final class Web {
 
     private static void pause(long ms) { try { Thread.sleep(ms); } catch (InterruptedException stop) { Thread.currentThread().interrupt(); } }
 
-    private static Reply once(String address, String agent) throws IOException {
+    private static Reply once(String address, String agent, int maxBytes) throws IOException {
         URL current = new URL(address);
-        long deadline = System.currentTimeMillis() + 30000;
+        long deadline = System.currentTimeMillis() + (maxBytes > MAX_BYTES ? 90000 : 30000);
         for (int hop = 0; hop <= 6; hop++) {
             boolean secure = "https".equalsIgnoreCase(current.getProtocol());
             if ((!secure && !"http".equalsIgnoreCase(current.getProtocol())) || current.getUserInfo() != null) throw new IOException("Not a public web address");
             if (!secure && hop == 0) current = new URL("https", current.getHost(), current.getPort() == 80 ? -1 : current.getPort(), current.getFile()); // try the safe address first; a site that has none redirects or fails below
             if (!PageTitle.publicHost(current.getHost())) throw new IOException("Not a public web address");
             HttpURLConnection c = (HttpURLConnection) current.openConnection();
+            Cancel cancel = Cancel.current();
+            cancel.attach(c);
             c.setInstanceFollowRedirects(false);
             c.setConnectTimeout(8000);
             c.setReadTimeout(15000);
@@ -91,6 +102,7 @@ final class Web {
                 r.code = code;
                 r.url = current.toString();
                 r.type = c.getContentType() == null ? "" : c.getContentType();
+                if (maxBytes > MAX_BYTES && c.getContentLengthLong() > maxBytes) throw new IOException("Video exceeds 24 MB. Share a shorter clip.");
                 Matcher m = Pattern.compile("charset\\s*=\\s*[\"']?([^\\s;\"']+)", Pattern.CASE_INSENSITIVE).matcher(r.type);
                 if (m.find()) r.charset = m.group(1);
                 InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
@@ -98,10 +110,15 @@ final class Web {
                 try (InputStream body = in; ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
                     byte[] buffer = new byte[16384];
                     int n;
-                    while (bytes.size() < MAX_BYTES && (n = body.read(buffer, 0, Math.min(buffer.length, MAX_BYTES - bytes.size()))) != -1) {
+                    while (bytes.size() < maxBytes && (n = body.read(buffer, 0, Math.min(buffer.length, maxBytes - bytes.size()))) != -1) {
                         bytes.write(buffer, 0, n);
-                        if (System.currentTimeMillis() > deadline) break; // keep what arrived
+                        if (System.currentTimeMillis() > deadline) {
+                            if (maxBytes > MAX_BYTES) throw new IOException("Video download took too long");
+                            break;
+                        }
                     }
+                    if (maxBytes > MAX_BYTES && bytes.size() == maxBytes && body.read() != -1)
+                        throw new IOException("Video exceeds 24 MB. Share a shorter clip.");
                     r.body = bytes.toByteArray();
                 }
                 if (r.charset.isEmpty() && r.html()) { // the page names its own encoding in a <meta> near the top
@@ -109,7 +126,7 @@ final class Web {
                     if (meta.find()) r.charset = meta.group(1);
                 }
                 return r;
-            } finally { c.disconnect(); }
+            } finally { cancel.detach(c); c.disconnect(); }
         }
         throw new IOException("Too many redirects");
     }

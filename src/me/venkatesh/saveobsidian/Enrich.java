@@ -9,6 +9,7 @@ import java.util.Locale;
 public final class Enrich {
     static final List<String> TYPES = Arrays.asList("article", "video", "repo", "paper", "tool", "idea", "question", "todo", "note", "image", "document", "other");
     static final List<String> IMAGES = Arrays.asList("jpg", "jpeg", "png", "webp");
+    static final List<String> VIDEOS = Arrays.asList("mp4", "m4v", "mov", "webm", "mpeg", "mpg");
     /** File extension to the audio format name OpenRouter accepts. Anything else is stored as a plain file. */
     public static final java.util.Map<String, String> AUDIO = new java.util.HashMap<>();
     static { for (String f : new String[]{"m4a", "mp3", "wav", "flac", "ogg", "webm", "aac"}) AUDIO.put(f, f); AUDIO.put("oga", "ogg"); AUDIO.put("opus", "ogg"); }

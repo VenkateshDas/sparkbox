@@ -183,18 +183,19 @@ final class Tagger {
             InboxFile.Entry next = null;
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
                 String ext = Attach.extension(e.file);
-                if (!e.file.isEmpty() && e.type.isEmpty() && !skipped.contains(e.raw) && (ext.equals("pdf") || Enrich.IMAGES.contains(ext))) next = e;
+                if (!e.file.isEmpty() && e.type.isEmpty() && !skipped.contains(e.raw) && (ext.equals("pdf") || Enrich.IMAGES.contains(ext) || Enrich.VIDEOS.contains(ext))) next = e;
             }
             if (next == null) return;
             skipped.add(next.raw);
             Uri uri = Attach.find(c, next.file);
             if (uri == null) continue;
             boolean pdf = Attach.extension(next.file).equals("pdf");
+            boolean video = Enrich.VIDEOS.contains(Attach.extension(next.file));
             String[] result;
             try {
-                byte[] data = pdf ? Attach.read(c, uri, 10 * 1024 * 1024) : Attach.jpeg(c, uri, 1024);
+                byte[] data = video ? Attach.read(c, uri, 24 * 1024 * 1024) : pdf ? Attach.read(c, uri, 10 * 1024 * 1024) : Attach.jpeg(c, uri, 1024);
                 if (data == null) continue;
-                result = Model.describe(key, next.file, pdf, data);
+                result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, pdf, data);
                 calls++;
             } catch (Model.Rejected | java.io.FileNotFoundException | SecurityException refused) { continue; } // this file only; the rest still run
             if (result == null) continue;

@@ -45,6 +45,8 @@ final class CaptureScreen extends Screen {
         b.add(new Body("Saved on this phone. When ingest runs it becomes a note, then it is processed into topics and cards.", true, false));
         String problem = Ingest.problem(ui.c, entry);
         if (!problem.isEmpty()) b.add(new Banner(problem, false));
+        if (!Instagram.shortcode(entry.url).isEmpty() && Failures.kind(problem).equals(Failures.ACCESS))
+            b.add(new Primary("Instagram access", () -> InstagramActivity.open(ui.c, entry.url)));
         if (!entry.url.isEmpty() && entry.file.isEmpty() && !Model.key(ui.c).isEmpty())
             b.add(new Primary(problem.isEmpty() ? "Process now" : "Retry now", () -> {
                 Ingest.retry(ui.c, entry);

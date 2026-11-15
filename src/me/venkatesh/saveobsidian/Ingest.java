@@ -142,7 +142,7 @@ final class Ingest {
         String ek = entryKey(e), err = prog.getString("err:" + ek, "").replaceFirst("^Smart tags paused: ", "");
         if (err.isEmpty()) return "";
         String kind = err.equals(OFFLINE) ? Failures.OFFLINE : Failures.kind(err), say = Failures.recovery(kind, err);
-        if (kind.equals(Failures.OFFLINE) || kind.equals(Failures.KEY)) return say;
+        if (kind.equals(Failures.OFFLINE) || kind.equals(Failures.KEY) || kind.equals(Failures.ACCESS)) return say;
         if (prog.getInt("tries:" + ek, 0) >= MAX_TRIES) return "Processing stopped after " + MAX_TRIES + " tries. " + say;
         long wait = prog.getLong("next:" + ek, 0) - System.currentTimeMillis();
         return say + (wait > MINUTE ? " Next try in " + (wait / MINUTE) + " min." : " Next try soon.");
@@ -171,7 +171,7 @@ final class Ingest {
         String ek = entryKey(e);
         c.getSharedPreferences("ingest", 0).edit().remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek).remove("plan:" + ek).remove("planHash:" + ek).apply();
         c.getSharedPreferences("enriched", 0).edit().remove("tagfail:" + Tagger.notesKey(e)).apply();
-        if (!Transcript.videoId(e.url).isEmpty()) Content.remove(c, e.url); // a video is read again, including its transcript
+        if (!Transcript.videoId(e.url).isEmpty()) Content.remove(c, e.url); // a YouTube video is read again, including its transcript
     }
 
     /** Milliseconds until the next capture that failed is due, or -1 when none waits. Lets the background job come back on time. */
@@ -484,11 +484,13 @@ final class Ingest {
     private static String pageText(Context c, String key, InboxFile.Entry e, int tries) throws IOException {
         String page = Content.load(c, e.url, PAGE_FOR_MODEL);
         boolean video = !Transcript.videoId(e.url).isEmpty();
-        if (page.isEmpty() || (video && !page.contains("### Transcript"))) {
+        boolean instagram = !Instagram.shortcode(e.url).isEmpty();
+        if (page.isEmpty() || (video && !page.contains("### Transcript")) || (instagram && !page.contains("### Video content"))) {
             try {
-                Fetch.Result r = Fetch.page(e.url, key, tries < 4); // after repeated failures a video is taken without its transcript rather than not at all
+                Fetch.Result r = Fetch.page(e.url, key, instagram || tries < 4);
+                if (instagram && r.thin) throw new IOException(r.problem);
                 if (!r.text.isEmpty()) { Content.save(c, e.url, r.text); page = r.text.length() > PAGE_FOR_MODEL ? r.text.substring(0, PAGE_FOR_MODEL) : r.text; }
-            } catch (IOException offline) { if (page.isEmpty()) throw offline; }
+            } catch (IOException offline) { if (page.isEmpty() || instagram) throw offline; }
         }
         return page;
     }

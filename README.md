@@ -9,7 +9,7 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 ## What it does
 
 **Capture** (always local, never waits for the network or a model)
-- Share a link, text, photo, PDF, document or audio to **Sparkbox** from any app. A **Source added** notification (an island on OnePlus) confirms within a second.
+- Share a link, text, photo, PDF, document, audio or video to **Sparkbox** from any app. A **Source added** notification (an island on OnePlus) confirms within a second.
 - The **Quick capture sheet** (widget, Quick Settings tiles, launcher shortcuts, the Feed's **+**) writes a thought or records a voice note.
 - **Sparkbox Capture** is a separate 2×1 home-screen widget with Write and Speak icons. It follows system light/dark appearance and switches to a timer and Stop while recording.
 - Captures are queued in private app storage first, then appended to the vault inbox (`Knowledge/Sources/Inbox.md`) with a verified write.
@@ -19,6 +19,9 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 - A second, cheaper model files each Source under **Craft** (work) or **Life**.
 - **Why** and **My ideas** written on a capture are instructions to the model.
 - **Make cards** writes recall cards into existing notes; voice notes are transcribed; photos and PDFs can be described.
+- **Instagram reels** are read from their public embed data, downloaded and watched by GLM 5.3 Flash through OpenRouter. Whisper supplies the speech transcript separately. The caption, video description and transcript are cached for ingest and included in the Source note. Private, unavailable or blocked posts stay queued with a readable error. Video downloads are capped at 24 MB.
+- When a reel cannot be read publicly, Sparkbox falls back to Instagram's current metadata format. Use **Settings → Instagram access** to sign in for reels your account can access. That session is separate from the Instagram app's login. Access failures pause automatic retries and offer an Instagram access action on the capture. Session cookies stay on the phone and are sent only to Instagram, never OpenRouter.
+- Shared video files can be summarized and tagged through **Settings → Describe photos, PDFs and videos**, using the same video and transcription path. The original file stays in the attachments folder.
 
 **Use**
 - **Feed**: captures and notes as cards, with each capture's processing steps shown live on its card. Filter by Craft, Life, Sources, Topics or People. Long-press a note for **Move to Craft/Life** or **Move to trash**. Pull down to rescan the vault.
@@ -39,7 +42,7 @@ Usage includes conversation, continuations, retries, compaction and chat naming.
 
 - No server, accounts, ads or analytics. Feature counters stay on the phone.
 - Only `Knowledge/` and `Sources/` in the vault are read; nothing else is read or sent anywhere.
-- What goes to OpenRouter: the page text and your Why/Ideas when a capture is processed, questions and the notes Ask reads, card prompts, voice clips for transcription, and text to embed for search. The key is stored encrypted on the phone.
+- What goes to OpenRouter: the page text and your Why/Ideas when a capture is processed, reel videos and shared videos when described, questions and the notes Ask reads, card prompts, voice clips for transcription, and text to embed for search. The key is stored encrypted on the phone.
 - Write access is granted through Android's folder picker. The app writes only under `Knowledge` and `Sources`, adds to pages rather than rewriting them, reads every write back, and keeps the previous text privately for two weeks.
 
 ## Build

@@ -64,6 +64,7 @@ final class SettingsScreen extends Screen {
         ingest.add(row("Vault write access", canWrite ? "Granted" : "Not granted", canWrite ? null : () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
         ingest.add(row("Ingest model", Ingest.model(ui.c), () -> modelDialog("Model for ingest", "An OpenRouter model id. A stronger model gives better topics.", "ingestModel", Ingest.model(ui.c), Ingest.DEFAULT_MODEL)));
         ingest.add(row("Lane and folder model", Classify.model(ui.c), () -> modelDialog("Model for Craft or Life", "An OpenRouter model id. It decides the lane and the subject folder of each new note.", "classifyModel", Classify.model(ui.c), Classify.DEFAULT_MODEL)));
+        ingest.add(row("Instagram access", InstagramApi.signedIn() ? "Signed in on this phone" : "Sign in for reels unavailable publicly", () -> InstagramActivity.open(ui.c, "")));
         ingest.add(row("Retry failed captures", "", () -> {
             int n = Ingest.retryAll(ui.c);
             android.widget.Toast.makeText(ui.c, n == 0 ? "Nothing has failed" : "Trying " + n + (n == 1 ? " capture" : " captures") + " again", android.widget.Toast.LENGTH_SHORT).show();
@@ -84,7 +85,7 @@ final class SettingsScreen extends Screen {
         ai.add(row("Card model", CardGen.model(ui.c), () -> modelDialog("Model for cards", "An OpenRouter model id.", "cardModel", CardGen.model(ui.c), CardGen.DEFAULT_MODEL)));
         if (keySaved) {
             boolean describe = prefs().getBoolean("describe", false);
-            ai.add(toggle("Describe photos and PDFs", describe, () -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
+            ai.add(toggle("Describe photos, PDFs and videos", describe, () -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
             ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
         }
 

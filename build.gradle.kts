@@ -17,6 +17,7 @@ android {
         targetSdk = 35
         versionCode = 12
         versionName = "1.9.0"
+        testInstrumentationRunner = "me.venkatesh.saveobsidian.ReelTest"
     }
     sourceSets["main"].apply {
         manifest.srcFile("AndroidManifest.xml")
@@ -24,6 +25,7 @@ android {
         kotlin.directories.add("src")
         res.directories.add("res")
     }
+    sourceSets["androidTest"].java.directories.add("device-tests")
     signingConfigs {
         create("release") { // the same key as build.py, so either APK installs over the other
             storeFile = signingDir.resolve("release.jks")
@@ -60,7 +62,7 @@ dependencies {
 // The JVM checks (tests/CaptureTest.java): plain classes only, no Android, same list as build.py.
 val jvmCheck by configurations.creating
 dependencies { jvmCheck(libs.jsoup); jvmCheck(libs.json) }
-val pure = listOf("Extract", "Transcript", "JsonFix", "Net", "Capture", "AppendCheck", "InboxFile", "VerifiedEdit", "VaultLock", "Cancel", "RunGate", "Limits", "Failures",
+val pure = listOf("Extract", "Instagram", "Transcript", "JsonFix", "Net", "Capture", "AppendCheck", "InboxFile", "VerifiedEdit", "VaultLock", "Cancel", "RunGate", "Limits", "Failures",
     "Enrich", "Index", "Vault", "Layout", "Lane", "Feed", "NoteEdit", "Cites", "Cards", "Sched", "Spark", "Study", "CardPrompt", "IngestText",
     "Truncate", "Validate", "Tool", "Agent", "Session", "SessionUsage", "Compact", "OpenRouter", "VaultTools", "Skills", "Mcp", "Chat")
 val compileCaptureTest by tasks.registering(JavaCompile::class) {
