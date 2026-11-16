@@ -33,6 +33,7 @@ final class ScoutUsage {
                     int limit = m.optInt("context_length");
                     if (limit <= 0) break;
                     c.getSharedPreferences("scout_usage", 0).edit().putString(model, new JSONObject().put("context_length", limit)
+                        .put("pricing", m.optJSONObject("pricing")).put("supported_parameters", m.optJSONArray("supported_parameters"))
                         .put("fetched", System.currentTimeMillis()).toString()).apply();
                     changed.run(); break;
                 }
@@ -42,12 +43,18 @@ final class ScoutUsage {
     }
 
     static Agent.Provider provider(Context c, String key, Session session, String run, String purpose, Runnable changed) {
-        final String level = Scout.thinking(c);
+        JSONObject config = ScoutState.latest(session, "run_config");
+        final String level = config == null ? Scout.thinking(c) : config.optString("thinking", Scout.thinking(c));
         return new Agent.Provider() {
             @Override public JSONObject stream(JSONObject request, java.util.function.Consumer<String> live, Cancel cancel) throws Exception {
                 return streamAttempt(request, live, cancel, 0, false);
             }
             @Override public JSONObject streamAttempt(JSONObject request, java.util.function.Consumer<String> live, Cancel cancel, int attempt, boolean continuation) throws Exception {
+                if (purpose.equals("conversation")) {
+                    JSONObject config = ScoutState.latest(session, "run_config");
+                    boolean research = config != null && config.optBoolean("research");
+                    ScoutState.spend(session, "turns", research ? 30 : 12, ScoutState.budget(session).optLong("activeMs"));
+                }
                 OpenRouter.thinking(request, level);
                 return SessionUsage.measure(session, run, purpose, request, window(c, request.optString("model")), update -> {
                     if (purpose.equals("conversation")) {

@@ -32,9 +32,19 @@ public final class Compact implements Agent.Hooks {
     private final Session session;
     private final int window;
 
-    public Compact(Agent.Provider provider, String model, Session session, int window) { this.provider = provider; this.model = model; this.session = session; this.window = window; }
+    public Compact(Agent.Provider provider, String model, Session session, int window) {
+        this.provider = provider; this.model = model; this.session = session; this.window = window;
+        reserve = Math.min(reserve, Math.max(512, window / 4));
+        keepRecent = Math.min(keepRecent, Math.max(256, window / 4));
+        summaryTokens = Math.min(summaryTokens, Math.max(256, window / 8));
+    }
 
-    @Override public void prepareNextTurn(Agent agent) { if (estimate(agent.messages()) > window - reserve) run(agent, "threshold", null); }
+    @Override public void prepareNextTurn(Agent agent) {
+        try {
+            long input = SessionUsage.estimate(SessionUsage.describe(agent.contextRequest(), window), SessionUsage.requests(session));
+            if (input > window - Math.max(reserve, agent.maxTokens)) run(agent, "threshold", null);
+        } catch (Exception unavailable) { if (estimate(agent.messages()) > window - reserve) run(agent, "threshold", null); }
+    }
 
     /** Provider refused the request as too long: compact once, then the agent retries. */
     @Override public boolean onOverflow(Agent agent) { return run(agent, "overflow", null); }

@@ -168,15 +168,23 @@ final class CardGen {
             if (from < 0 || to <= from) throw new java.io.IOException("The model did not return JSON: " + (reply.length() > 160 ? reply.substring(0, 160) : reply));
             JSONObject o = new JSONObject(reply.substring(from, to + 1));
             curiosity = o.optString("curiosity_question");
-            List<String[]> proposed = new ArrayList<>();
-            JSONArray rc = o.optJSONArray("recall_cards");
-            for (int i = 0; rc != null && i < rc.length(); i++) { JSONObject x = rc.optJSONObject(i); if (x != null) proposed.add(new String[]{x.optString("q"), x.optString("a"), x.optString("basis"), x.optString("confidence"), x.optString("type"), x.optString("data")}); }
-            cards = CardPrompt.validate(n.path, proposed);
+            cards = draft(n.path, o);
         }
         String after = CardPrompt.apply(before, curiosity, quality, cards);
         if (after.equals(before)) after = NoteEdit.setKey(before, "quality", quality);
         VaultWrite.write(c, n.path, before, after);
         // throws Stale when the note changed meanwhile: it stays undone and is tried again
+    }
+
+    /** Parses and validates generated cards without changing note contents or review state. */
+    static List<Cards.Card> draft(String path, JSONObject reply) {
+        List<String[]> proposed = new ArrayList<>();
+        JSONArray cards = reply.optJSONArray("recall_cards");
+        for (int i = 0; cards != null && i < cards.length(); i++) {
+            JSONObject card = cards.optJSONObject(i);
+            if (card != null) proposed.add(new String[]{card.optString("q"), card.optString("a"), card.optString("basis"), card.optString("confidence"), card.optString("type"), card.optString("data")});
+        }
+        return CardPrompt.validate(path, proposed);
     }
 
     /** Batches until nothing is left, the owner pauses, or the provider stops it. For a foreground run. */

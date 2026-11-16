@@ -104,10 +104,11 @@ final class McpTest {
             check(asked.isEmpty());
             trusted.get(1).execute(new JSONObject(), cancel);
             check(asked.size() == 1);
-            // a lost session is re-initialised once
+            // An external call is never silently redispatched after session loss.
             dropSession = true;
             int before = initialized;
-            check(echo.execute(new JSONObject().put("text", "again"), cancel).text.contains("echo:again") && initialized == before + 1);
+            try { echo.execute(new JSONObject().put("text", "again"), cancel); check(false); } catch (java.io.IOException expected) { check(initialized == before); }
+            mcp.connect(cancel);
             // JSON-RPC errors and connection problems become errors, not crashes
             try { mcp.callTool("nope", new JSONObject(), cancel); check(false); } catch (java.io.IOException e) { check(e.getMessage().contains("no such tool")); }
             List<Tool> into = new ArrayList<>();

@@ -103,3 +103,13 @@ One run at a time, guarded by `RunGate`. Its stages run one after another, so ba
 - `compileSdk` is 37 (androidx needs 36 or newer). `targetSdk` stays at 35, so the app's runtime behaviour doesn't change. `minSdk` is 26.
 - Release builds use R8 with resource shrinking (`proguard-rules.pro` only silences jsoup and org.json warnings).
 - `captureTest`, the JVM checks, runs before every build and as part of `check`. Lint findings that predate Gradle are in `lint-baseline.xml`.
+
+## Scout execution and review
+
+`Session.context()` is exclusively the provider projection; `retained()` supplies visible history. `ScoutState` reduces accepted directions, consumption and cumulative budgets from the same synced JSONL. Private per-chat AtomicFile drafts are not conversation history.
+
+`ScoutChanges` stores proposals, decisions, intents, receipts and remote dispatch outcomes. `Agent` suspends without fabricating a tool result; completed siblings are saved and remaining siblings are deferred. `VaultWrite.writePinned` performs actual SAF access through the approved tree. `Cancel` owns the write-admission monitor as well as transport cancellation and interruptible backoff.
+
+`ScoutEvidence` supplies host source identities and bounded retained excerpts. `ScoutMarkdown`/`ScoutAnswerView` serve Scout only; the note viewer keeps its prior rendering path. `ScoutDiscovery` stores explicit interests and a bounded seen ledger. `ScoutJob`/`ScoutScheduleReceiver` are separate from Tagger, Reminder and the manual foreground owner. Their release gate remains disabled.
+
+See [Scout qualification](scout-qualification.md) for implemented behavior, known gaps and the unexecuted device matrix. Compilation and JVM checks do not qualify scheduling or answer quality.

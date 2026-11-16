@@ -43,31 +43,64 @@ public final class Session {
             return s;
         }
         String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
-        String[] lines = text.split("\n");
+        String[] lines = text.split("\n", -1);
         Session s = null;
-        for (String line : lines) {
-            if (line.trim().isEmpty()) continue;
+        int validBytes = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.trim().isEmpty()) { validBytes += line.getBytes(StandardCharsets.UTF_8).length + 1; continue; }
             JSONObject o;
-            try { o = new JSONObject(line); } catch (org.json.JSONException torn) { continue; } // a line cut by a process kill
+            try { o = new JSONObject(line); }
+            catch (org.json.JSONException bad) {
+                if (s == null) throw new IOException("Not a session file", bad);
+                if (i == lines.length - 1 && !text.endsWith("\n")) {
+                    if (s.storageError == null) try (java.io.RandomAccessFile out = new java.io.RandomAccessFile(file, "rw")) {
+                        out.setLength(validBytes); out.getFD().sync();
+                    }
+                    break;
+                }
+                s.storageError = "Session contains an invalid interior record; repair required.";
+                continue;
+            }
             if (s == null) {
                 if (!"session".equals(o.optString("type"))) throw new IOException("Not a session file");
                 if (o.optInt("version", 0) > VERSION) throw new IOException("Session was written by a newer app version");
                 s = new Session(file, o.optString("id"));
-            } else { s.entries.add(o); s.byId.put(o.optString("id"), o); s.leaf = o.optString("id"); }
+            } else {
+                String eid = o.optString("id");
+                String parent = o.isNull("parentId") ? null : o.optString("parentId");
+                if (eid.isEmpty() || s.byId.containsKey(eid) || (parent != null && !s.byId.containsKey(parent))) {
+                    s.storageError = "Session contains an invalid record link; repair required.";
+                    continue;
+                }
+                s.entries.add(o); s.byId.put(eid, o); s.leaf = eid;
+            }
+            validBytes += line.getBytes(StandardCharsets.UTF_8).length + 1;
         }
         if (s == null) throw new IOException("Not a session file");
-        if (!text.endsWith("\n")) s.write(null); // finish a torn last line so the next entry starts on its own line
+        if (!text.endsWith("\n") && s.storageError == null && file.length() == text.getBytes(StandardCharsets.UTF_8).length) s.write(null);
         return s;
     }
 
     private volatile boolean closed;
+    private volatile String storageError;
+
+    public String storageError() { return storageError; }
+    public boolean writable() { return !closed && storageError == null; }
 
     /** After this, nothing more is written (the chat was deleted while a run was still finishing). */
-    public void close() { closed = true; }
+    public synchronized void close() { closed = true; }
 
     private void write(JSONObject line) throws IOException {
-        if (closed) return;
-        try (FileOutputStream out = new FileOutputStream(file, true)) { out.write(((line == null ? "" : line.toString()) + "\n").getBytes(StandardCharsets.UTF_8)); }
+        if (closed) throw new IOException("Session is closed");
+        if (storageError != null) throw new IOException(storageError);
+        try (FileOutputStream out = new FileOutputStream(file, true)) {
+            out.write(((line == null ? "" : line.toString()) + "\n").getBytes(StandardCharsets.UTF_8));
+            out.getFD().sync();
+        } catch (IOException failed) {
+            storageError = "Session could not be saved: " + failed.getMessage();
+            throw failed;
+        }
     }
 
     /** Adds an entry under the current leaf; returns its id. */
@@ -75,11 +108,36 @@ public final class Session {
         try {
             String eid;
             do { eid = UUID.randomUUID().toString().substring(0, 8); } while (byId.containsKey(eid));
-            entry.put("id", eid).put("parentId", leaf == null ? JSONObject.NULL : leaf).put("timestamp", java.time.Instant.now().toString());
+            entry.put("id", eid).put("sequence", entries.size() + 1).put("parentId", leaf == null ? JSONObject.NULL : leaf).put("timestamp", java.time.Instant.now().toString());
+            checkCapacity(entry);
             write(entry);
             entries.add(entry); byId.put(eid, entry); leaf = eid;
             return eid;
         } catch (org.json.JSONException impossible) { throw new IOException(impossible); }
+    }
+
+    /** One logical run, including resumes, leaves room for errors and effect receipts. */
+    private void checkCapacity(JSONObject next) throws IOException {
+        String group = null;
+        long bytes = 0; int records = 0;
+        for (JSONObject entry : entries) {
+            JSONObject data = entry.optJSONObject("data");
+            if (entry.optString("kind").equals("run_config") && data != null) {
+                String candidate = data.optString("budgetGroup", data.optString("runId"));
+                if (!candidate.equals(group)) { group = candidate; bytes = 0; records = 0; }
+            }
+            if (group != null) { bytes += entry.toString().getBytes(StandardCharsets.UTF_8).length + 1; records++; }
+        }
+        if (group == null || next.optString("kind").equals("run_config")) return;
+        String kind = next.optString("kind");
+        JSONObject message = next.optJSONObject("message");
+        boolean terminal = kind.equals("write_intent") || kind.equals("write_receipt") || kind.equals("proposal_decision")
+            || kind.equals("proposal_resolved") || kind.equals("proposal_error") || kind.equals("dispatch_intent") || kind.equals("dispatch_result") || kind.equals("run_end")
+            || message != null && (message.optString("role").equals("tool") || message.optString("role").equals("assistant") && !message.has("tool_calls"));
+        long maximum = 8L * 1024 * 1024 - (terminal ? 0 : 64 * 1024);
+        int count = 4096 - (terminal ? 0 : 32);
+        if (records >= count || bytes + next.toString().getBytes(StandardCharsets.UTF_8).length + 1 > maximum)
+            throw new IOException("Scout journal limit reached; no new effects admitted");
     }
 
     /** Stores a conversation message and tags the message object with its entryId (agent bookkeeping, stripped before a request). */
@@ -214,6 +272,21 @@ public final class Session {
                 JSONObject edit = edits.get(e.optString("id"));
                 if (edit != null && edit.optString("action").equals("omit")) continue;
                 if (edit != null) m.put("content", edit.optString("content"));
+                out.add(m);
+            }
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        return out;
+    }
+
+    /** Retained history on the active branch. Context edits and compaction never erase visible history. */
+    public synchronized List<JSONObject> retained() {
+        List<JSONObject> path = new ArrayList<>();
+        for (String at = leaf; at != null && byId.containsKey(at); at = byId.get(at).isNull("parentId") ? null : byId.get(at).optString("parentId")) path.add(0, byId.get(at));
+        List<JSONObject> out = new ArrayList<>();
+        try {
+            for (JSONObject e : path) if (e.optString("type").equals("message")) {
+                JSONObject m = new JSONObject(e.getJSONObject("message").toString()).put("entryId", e.optString("id"));
+                try { m.put("ts", java.time.Instant.parse(e.optString("timestamp")).toEpochMilli()); } catch (RuntimeException noTime) { }
                 out.add(m);
             }
         } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }

@@ -107,6 +107,25 @@ final class Md {
         return out;
     }
 
+    /** Scout inline formatting without the note viewer's line clipping or font-size changes. */
+    static SpannableStringBuilder scoutInline(Ui ui, String text, java.util.function.IntConsumer citation) {
+        SpannableStringBuilder out = new SpannableStringBuilder();
+        for (String line : text.split("\n", -1)) {
+            inline(out, line.replaceFirst("^[-*] ", "•  "), ui, new Open() { @Override public void open(String raw) { } });
+            out.append('\n');
+        }
+        if (out.length() > 0) out.delete(out.length() - 1, out.length());
+        Matcher markers = Pattern.compile("\\[(\\d+)]").matcher(out.toString());
+        while (markers.find()) {
+            int number = Integer.parseInt(markers.group(1));
+            out.setSpan(new ClickableSpan() {
+                @Override public void onClick(View view) { citation.accept(number); }
+                @Override public void updateDrawState(TextPaint paint) { paint.setColor(ui.accent); paint.setUnderlineText(false); }
+            }, markers.start(), markers.end(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return out;
+    }
+
     /** Bare web addresses become links, without the full stop or comma that ends the sentence. */
     private static void autolink(SpannableStringBuilder out, Ui ui) {
         Matcher m = URL.matcher(out.toString());

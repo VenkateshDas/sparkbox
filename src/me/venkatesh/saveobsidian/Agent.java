@@ -62,10 +62,11 @@ public final class Agent {
     private final List<JSONObject> messages = new ArrayList<>();
     private volatile Cancel cancel;
     private boolean abortedLast;
+    private boolean suspended;
     private Session session;
     private final Object lock = new Object(); // guards running and the two queues
     private boolean running;
-    private final List<String> steering = new ArrayList<>(), followUps = new ArrayList<>();
+    private final List<JSONObject> steering = new ArrayList<>(), followUps = new ArrayList<>();
     private final java.util.concurrent.CopyOnWriteArrayList<Listener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     public Hooks hooks = new Hooks() { };
     public int maxTokens = 3000, maxTurns = 8;
@@ -107,22 +108,63 @@ public final class Agent {
     }
 
     private void add(JSONObject m) {
+        if (session != null) try { session.appendMessage(m); } catch (java.io.IOException e) {
+            cancel.stop();
+            emit("session_error", wrap("error", String.valueOf(e.getMessage())));
+            throw new IllegalStateException("Session could not be saved; execution stopped", e);
+        }
         messages.add(m);
-        if (session != null) try { session.appendMessage(m); } catch (java.io.IOException e) { emit("session_error", wrap("error", String.valueOf(e.getMessage()))); } // the run goes on; only resume is lost
     }
 
     // ---- queues and abort (agent.ts) ----
 
     /** Delivered after the current turn's tool calls finish, before the next model request. Callable from any thread, also while idle (then it goes in with the next prompt). */
-    public void steer(String text) { synchronized (lock) { steering.add(text); } queueUpdate(); }
+    public void steer(String text) { enqueue(text, false); }
 
     /** Delivered only when the agent would otherwise stop. */
-    public void followUp(String text) { synchronized (lock) { followUps.add(text); } queueUpdate(); }
+    public void followUp(String text) { enqueue(text, true); }
+
+    private void enqueue(String text, boolean followUp) {
+        try { accepted(session == null ? "" : ScoutState.accept(session, text, followUp), text, followUp); }
+        catch (java.io.IOException e) { cancel.stop(); throw new IllegalStateException("Direction could not be saved", e); }
+    }
+
+    /** Handoff from the runner: acceptance was synced before the UI acknowledged it. */
+    public void accepted(String id, String text, boolean followUp) {
+        synchronized (lock) {
+            List<JSONObject> queue = followUp ? followUps : steering;
+            for (JSONObject item : queue) if (!id.isEmpty() && id.equals(item.optString("queueId"))) return;
+            try { queue.add(new JSONObject().put("role", "user").put("content", text).put("queueId", id)); }
+            catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        }
+        queueUpdate();
+    }
+
+    public boolean editQueued(String id, String text, boolean remove) {
+        synchronized (lock) {
+            for (List<JSONObject> queue : java.util.Arrays.asList(steering, followUps)) for (int i = 0; i < queue.size(); i++) {
+                JSONObject item = queue.get(i);
+                if (!id.equals(item.optString("queueId"))) continue;
+                try {
+                    if (session != null) session.appendCustom(remove ? "queue_remove" : "queue_edit", new JSONObject().put("queueId", id).put("text", text).put("followUp", queue == followUps));
+                    if (remove) queue.remove(i); else item.put("content", text);
+                } catch (Exception failed) { cancel.stop(); return false; }
+                queueUpdate(); return true;
+            }
+            return false; // already handed to the turn; never edit a consumed message
+        }
+    }
 
     /** Removes everything queued and returns it (steering first), so the UI can put the text back in the input box. */
     public List<String> clearQueue() {
         List<String> out;
-        synchronized (lock) { out = new ArrayList<>(steering); out.addAll(followUps); steering.clear(); followUps.clear(); }
+        synchronized (lock) { out = new ArrayList<>();
+            for (List<JSONObject> queue : java.util.Arrays.asList(steering, followUps)) for (JSONObject item : queue) {
+                out.add(item.optString("content"));
+                if (session != null) try { session.appendCustom("queue_remove", new JSONObject().put("queueId", item.optString("queueId"))); }
+                catch (Exception e) { throw new IllegalStateException("Queue could not be saved", e); }
+            }
+            steering.clear(); followUps.clear(); }
         queueUpdate();
         return out;
     }
@@ -145,8 +187,8 @@ public final class Agent {
         }
     }
 
-    private List<String> drain(List<String> queue, boolean all) {
-        List<String> out = new ArrayList<>();
+    private List<JSONObject> drain(List<JSONObject> queue, boolean all) {
+        List<JSONObject> out = new ArrayList<>();
         synchronized (lock) {
             if (queue.isEmpty()) return out;
             if (all) { out.addAll(queue); queue.clear(); } else out.add(queue.remove(0));
@@ -164,11 +206,13 @@ public final class Agent {
     // ---- running ----
 
     /** Adds the user's message and runs until the model stops asking for tools and nothing is queued. Returns the last assistant message. Blocks; run it off the UI thread. */
-    public JSONObject prompt(String text) {
+    public JSONObject prompt(String text) { return promptAccepted("", text); }
+
+    public JSONObject promptAccepted(String queueId, String text) {
         begin();
         JSONObject last = null;
         try {
-            try { add(new JSONObject().put("role", "user").put("content", text)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+            try { add(new JSONObject().put("role", "user").put("content", text).put("queueId", queueId)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
             last = loop();
             return last;
         } finally { finish(last); }
@@ -182,15 +226,19 @@ public final class Agent {
         begin();
         JSONObject last = null;
         try {
-            if (messages.isEmpty()) throw new IllegalStateException("Nothing to continue");
+            if (messages.isEmpty()) {
+                List<JSONObject> queued = drain(steering, true);
+                if (queued.isEmpty()) throw new IllegalStateException("Nothing to continue");
+                for (JSONObject item : queued) add(item);
+            }
             answerInterruptedCalls();
             JSONObject end = messages.get(messages.size() - 1);
             String stop = end.optString("stopReason");
             if (end.optString("role").equals("assistant") && !(stop.equals("error") || stop.equals("aborted") || stop.equals("max-steps") || stop.equals("length"))) {
-                List<String> next = drain(steering, steerAll);
+                List<JSONObject> next = drain(steering, steerAll);
                 if (next.isEmpty()) next = drain(followUps, followUpAll);
                 if (next.isEmpty()) throw new IllegalStateException("Cannot continue after a finished answer; queue a message first");
-                for (String t : next) try { add(new JSONObject().put("role", "user").put("content", t)); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+                for (JSONObject item : next) add(item);
             }
             last = loop();
             return last;
@@ -204,6 +252,7 @@ public final class Agent {
         synchronized (lock) {
             if (running) throw new IllegalStateException("Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.");
             running = true;
+            suspended = false;
             if (abortedLast) { cancel = new Cancel(); abortedLast = false; } // an abort ends one run, not the agent
         }
     }
@@ -218,7 +267,7 @@ public final class Agent {
         emit("agent_start", new JSONObject());
         JSONObject last = null;
         int turns = 0;
-        List<String> pending = drain(steering, steerAll); // typed while idle or before the run started
+        List<JSONObject> pending = drain(steering, steerAll); // typed while idle or before the run started
         final int budget = maxTokens;
         boolean grown = false;
         int carries = 0;
@@ -232,9 +281,7 @@ public final class Agent {
                 hooks.prepareNextTurn(this);
                 if (pending.isEmpty()) pending = drain(steering, steerAll); // picked up while compaction ran
                 emit("turn_start", new JSONObject());
-                for (String t : pending) {
-                    JSONObject u = new JSONObject();
-                    try { u.put("role", "user").put("content", t); } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+                for (JSONObject u : pending) {
                     add(u);
                     emit("message_end", wrap("message", u));
                 }
@@ -261,8 +308,9 @@ public final class Agent {
                     results = execute(calls, stop.equals("length"));
                     if (stop.equals("length") && !grown) { grown = true; maxTokens = budget * 2; } // a long note needs room: the next try gets double
                     boolean allTerminate = true;
-                    for (JSONObject r : results) { add(r); allTerminate &= r.optBoolean("terminate"); }
+                    for (JSONObject r : results) allTerminate &= r.optBoolean("terminate");
                     more = !allTerminate;
+                    if (suspended) break outer;
                 }
                 emit("turn_end", new JSONObject());
                 if (!hooks.finishTurn(results)) break outer;
@@ -288,6 +336,8 @@ public final class Agent {
             for (int i = 0; i < calls.length(); i++) {
                 JSONObject c = calls.getJSONObject(i);
                 if (answered.contains(c.optString("id"))) continue;
+                if (session != null) for (JSONObject p : ScoutChanges.pending(session)) if (c.optString("id").equals(p.optString("callId")))
+                    throw new IllegalStateException("Review pending proposal before continuing");
                 add(new JSONObject().put("role", "tool").put("tool_call_id", c.optString("id")).put("name", c.optJSONObject("function") == null ? "" : c.getJSONObject("function").optString("name"))
                     .put("content", INTERRUPTED).put("isError", true).put("terminate", false).put("details", JSONObject.NULL));
             }
@@ -351,11 +401,11 @@ public final class Agent {
                     try { request.put("messages", convertToLlm()); } catch (Exception bad) { return failed("error", message); }
                     continue;
                 }
-                boolean retry = attempt < retries && (kind.equals(Failures.OFFLINE) || kind.equals(Failures.RATE) || kind.equals(Failures.OTHER) && !message.matches("(?s).* 4\\d\\d.*")); // a 4xx other than rate limit will not fix itself
+                boolean retry = !(e instanceof Sse.Protocol) && attempt < retries && (kind.equals(Failures.OFFLINE) || kind.equals(Failures.RATE) || kind.equals(Failures.OTHER) && !message.matches("(?s).* 4\\d\\d.*")); // a 4xx other than rate limit will not fix itself
                 if (!retry) return failed("error", message.contains(" 400") && !tools.isEmpty() ? message + " (this model may not support tool calls)" : message);
                 long wait = Math.min(retryMaxMs, retryBaseMs << attempt);
                 try { emit("retry", new JSONObject().put("attempt", attempt + 1).put("waitMs", wait).put("error", message)); } catch (Exception ignore) { }
-                try { Thread.sleep(wait); } catch (InterruptedException stopped) { Thread.currentThread().interrupt(); return failed("aborted", "Stopped"); }
+                try { if (!cancel.pause(wait)) return failed("aborted", "Stopped"); } catch (InterruptedException stopped) { Thread.currentThread().interrupt(); return failed("aborted", "Stopped"); }
             }
         }
     }
@@ -402,22 +452,29 @@ public final class Agent {
             sequential |= c.tool != null && c.tool.sequential;
             batch.add(c);
         }
-        if (sequential || batch.size() == 1) for (Call c : batch) run(c);
-        else {
+        List<JSONObject> out = new ArrayList<>();
+        if (sequential || batch.size() == 1) {
+            for (Call c : batch) {
+                if (suspended) c.result = Tool.Result.error("Deferred: not executed while another call awaits approval. Propose again in a new turn if needed.");
+                else run(c);
+                if (c.result != null) { JSONObject result = result(c); add(result); out.add(result); }
+            }
+            return out;
+        } else {
             ExecutorService pool = Executors.newFixedThreadPool(Math.min(batch.size(), PARALLEL));
             List<Future<?>> running = new ArrayList<>();
             for (Call c : batch) running.add(pool.submit(() -> run(c)));
             pool.shutdown();
             for (Future<?> f : running) { try { f.get(); } catch (Exception ignore) { } } // run() never throws; results are read from the calls, in call order
         }
-        List<JSONObject> out = new ArrayList<>();
-        try {
-            for (Call c : batch) {
-                out.add(new JSONObject().put("role", "tool").put("tool_call_id", c.id).put("name", c.name).put("content", c.result.text)
-                    .put("isError", c.result.error).put("terminate", c.result.terminate).put("details", c.result.details == null ? JSONObject.NULL : c.result.details));
-            }
-        } catch (Exception impossible) { throw new IllegalStateException(impossible); }
+        for (Call c : batch) { JSONObject result = result(c); add(result); out.add(result); }
         return out;
+    }
+
+    private static JSONObject result(Call c) {
+        try { return new JSONObject().put("role", "tool").put("tool_call_id", c.id).put("name", c.name).put("content", c.result.text)
+            .put("isError", c.result.error).put("terminate", c.result.terminate).put("details", c.result.details == null ? JSONObject.NULL : c.result.details); }
+        catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
 
     private String names() { StringBuilder s = new StringBuilder(); for (Tool t : tools) s.append(s.length() > 0 ? ", " : "").append(t.name); return s.toString(); }
@@ -442,8 +499,15 @@ public final class Agent {
             if (c.error != null) c.result = Tool.Result.error(c.error);
             else if (cancel.stopped()) c.result = Tool.Result.error("Operation aborted");
             else {
-                try { c.result = c.tool.execute(c.args, cancel); }
-                catch (Exception e) { c.result = Tool.Result.error(String.valueOf(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())); }
+                try {
+                    ScoutChanges.CALL.set(new JSONObject().put("id", c.id).put("name", c.name));
+                    c.result = c.tool.execute(c.args, cancel);
+                } catch (ScoutChanges.Suspended waiting) {
+                    suspended = true;
+                    emit("tool_suspended", waiting.proposal);
+                    return;
+                } catch (Exception e) { c.result = Tool.Result.error(String.valueOf(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())); }
+                finally { ScoutChanges.CALL.remove(); }
                 if (c.result == null) c.result = Tool.Result.error("The tool returned nothing.");
                 else c.result = hooks.afterToolCall(c.name, c.args, c.result);
             }

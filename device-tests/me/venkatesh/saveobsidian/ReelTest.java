@@ -11,7 +11,9 @@ public class ReelTest extends Instrumentation {
         Bundle result = new Bundle();
         try {
             android.content.Context context = getTargetContext();
-            if ("true".equals(arguments.getString("recover"))) {
+            if ("scout".equals(arguments.getString("suite"))) {
+                ScoutDeviceTest.run(this, arguments, result);
+            } else if ("true".equals(arguments.getString("recover"))) {
                 int count = Ingest.retryAll(context);
                 long deadline = System.currentTimeMillis() + 15 * 60000L;
                 int remaining;

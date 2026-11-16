@@ -43,6 +43,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         getOnBackPressedDispatcher().addCallback(this, shellBack);
         CardGen.resume(this);
         Reminder.schedule(this);
+        ScoutJob.reschedule(this);
         BackgroundJob.schedule(this); // a force-stop or crash drops scheduled jobs: opening the app picks up unfinished captures
         if (state == null) handleIntent(getIntent());
     }

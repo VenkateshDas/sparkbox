@@ -50,8 +50,10 @@ final class VaultWrite {
     }
 
     /** Text of the file at this path, or null when it does not exist. */
-    static String read(Context c, String path) throws Exception {
-        Uri tree = tree(c);
+    static String read(Context c, String path) throws Exception { return readPinned(c, VaultStore.tree(c), path); }
+
+    static String readPinned(Context c, String pinnedTree, String path) throws Exception {
+        Uri tree = Uri.parse(pinnedTree);
         String id = find(c, tree, path);
         return id == null ? null : VaultStore.text(c, DocumentsContract.buildDocumentUriUsingTree(tree, id));
     }
@@ -67,11 +69,18 @@ final class VaultWrite {
 
     private static void write(Context c, String path, String before, String after, boolean backup) throws Exception {
         VaultLock.L.lock();
-        try { locked(c, path, before, after, backup); } finally { VaultLock.L.unlock(); }
+        try { locked(c, tree(c), path, before, after, backup); } finally { VaultLock.L.unlock(); }
     }
 
-    private static void locked(Context c, String path, String before, String after, boolean backup) throws Exception {
-        Uri tree = tree(c);
+    static void writePinned(Context c, String pinnedTree, String path, String before, String after) throws Exception {
+        VaultLock.L.lock();
+        try {
+            if (!pinnedTree.equals(VaultStore.tree(c))) throw new IOException("Vault selection changed");
+            locked(c, Uri.parse(pinnedTree), path, before, after, true);
+        } finally { VaultLock.L.unlock(); }
+    }
+
+    private static void locked(Context c, Uri tree, String path, String before, String after, boolean backup) throws Exception {
         android.content.ContentResolver resolver = c.getContentResolver();
         String[] parts = path.split("/");
         String parent = DocumentsContract.getTreeDocumentId(tree);

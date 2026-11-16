@@ -135,3 +135,10 @@ Live test (three Wikipedia links shared back to back into the real inbox; vault 
 | Lane check and main answer | ran side by side on the 2 background slots (3.5 s and 10.0 s) | recorded |
 | Feed scroll while ingest runs | 892 frames, 0.45 % janky, p99 8 ms | b: pass |
 | Kill during the second capture | reopening resumed it at once and it finished; no capture lost | c: pass |
+
+
+## Scout candidate — 2026-11-16
+
+This implementation has host regression checks and built release/instrumentation artifacts. No new phone performance, keyboard, accessibility, lifecycle, SAF or scheduling measurements have been taken. The owner will connect the phone separately. Previous baseline numbers above are unchanged and are not Scout qualification evidence.
+
+See [Scout qualification](scout-qualification.md) for the exact implemented behavior, known gaps, host commands and remaining device scenarios. Discovery schedules remain disabled until their own gate passes.

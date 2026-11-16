@@ -44,51 +44,76 @@ public final class OpenRouter {
             try (OutputStream out = connection.getOutputStream()) { out.write(request.put("stream", true).toString().getBytes(StandardCharsets.UTF_8)); }
             int code = connection.getResponseCode();
             if (code != 200) throw new IOException("Smart tags paused: OpenRouter answered " + code + (code == 401 ? " (check the key)" : code == 402 ? " (out of credit)" : "") + detail(connection));
-            StringBuilder text = new StringBuilder();
-            JSONArray calls = new JSONArray();
-            String finish = "";
-            JSONObject usage = null;
-            try (java.io.BufferedReader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-                for (String line; (line = in.readLine()) != null; ) {
-                    if (cancel.stopped()) { calls = new JSONArray(); break; }
-                    if (!line.startsWith("data:")) continue; // blank lines and ": OPENROUTER PROCESSING" keep-alives
-                    String data = line.substring(5).trim();
-                    if (data.equals("[DONE]")) break;
-                    JSONObject chunk = new JSONObject(data);
-                    metadata.accept(chunk);
-                    if (chunk.has("error")) throw new IOException("Smart tags paused: " + chunk.getJSONObject("error").optString("message", "provider error"));
-                    if (chunk.optJSONObject("usage") != null) usage = chunk.getJSONObject("usage"); // OpenRouter sends usage in the last chunk by itself
-                    JSONArray choices = chunk.optJSONArray("choices");
-                    if (choices != null && choices.length() > 0 && !choices.getJSONObject(0).isNull("finish_reason")) finish = choices.getJSONObject(0).optString("finish_reason", "");
-                    JSONObject delta = choices == null || choices.length() == 0 ? null : choices.getJSONObject(0).optJSONObject("delta");
-                    if (delta == null) continue;
-                    if (!delta.isNull("content") && delta.has("content")) { text.append(delta.getString("content")); if (live != null) live.accept(text.toString()); }
-                    JSONArray parts = delta.optJSONArray("tool_calls");
-                    for (int i = 0; parts != null && i < parts.length(); i++) {
-                        JSONObject part = parts.getJSONObject(i), fn = part.optJSONObject("function");
-                        int at = part.optInt("index", i);
-                        while (calls.length() <= at) calls.put(new JSONObject().put("id", "").put("type", "function").put("function", new JSONObject().put("name", "").put("arguments", "")));
-                        JSONObject slot = calls.getJSONObject(at), slotFn = slot.getJSONObject("function");
-                        if (part.optString("id", "").length() > 0) slot.put("id", part.getString("id"));
-                        if (fn != null) {
-                            if (!fn.isNull("name") && fn.has("name")) slotFn.put("name", slotFn.getString("name") + fn.getString("name"));
-                            if (!fn.isNull("arguments") && fn.has("arguments")) slotFn.put("arguments", slotFn.getString("arguments") + fn.getString("arguments"));
-                        }
-                    }
-                }
+            try (java.io.Reader in = new java.io.BufferedReader(new java.io.InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                return decode(in, live, cancel, metadata);
             }
-            JSONObject message = new JSONObject().put("content", text.toString());
-            if (calls.length() > 0) message.put("tool_calls", calls);
-            if (cancel.stopped()) message.put("finish_reason", "cancelled");
-            else if (!finish.isEmpty()) message.put("finish_reason", finish);
-            if (usage != null) message.put("usage", usage);
-            return message;
         } catch (IOException dropped) {
             if (cancel.stopped()) return new JSONObject().put("content", "").put("finish_reason", "cancelled"); // our own disconnect
             throw dropped;
         } finally { cancel.detach(connection); connection.disconnect(); }
     }
 
+
+    /** Pure decoder used by the transport and failure fixtures. No partial tool call escapes this boundary. */
+    public static JSONObject decode(java.io.Reader in, java.util.function.Consumer<String> live, Cancel cancel,
+                                    java.util.function.Consumer<JSONObject> metadata) throws Exception {
+        StringBuilder text = new StringBuilder();
+        JSONArray calls = new JSONArray();
+        String finish = "";
+        JSONObject usage = null;
+        Sse events = new Sse(in);
+        try {
+            for (String data; (data = events.next()) != null;) {
+                if (cancel.stopped()) return new JSONObject().put("content", text.toString()).put("finish_reason", "cancelled");
+                if (data.equals("[DONE]")) break;
+                JSONObject chunk;
+                try { chunk = new JSONObject(data); } catch (org.json.JSONException bad) { throw new Sse.Protocol("Invalid SSE JSON"); }
+                metadata.accept(chunk);
+                if (chunk.has("error")) throw new Sse.Protocol("Provider error: " + chunk.getJSONObject("error").optString("message", "provider error"));
+                if (chunk.optJSONObject("usage") != null) usage = chunk.getJSONObject("usage");
+                JSONArray choices = chunk.optJSONArray("choices");
+                JSONObject choice = choices == null || choices.length() == 0 ? null : choices.getJSONObject(0);
+                if (choice == null) continue;
+                if (!choice.isNull("finish_reason")) finish = choice.optString("finish_reason");
+                JSONObject delta = choice.optJSONObject("delta");
+                if (delta == null) continue;
+                if (!delta.isNull("content") && delta.has("content")) {
+                    text.append(delta.getString("content"));
+                    if (text.length() > 2 * 1024 * 1024) throw new Sse.Protocol("Answer exceeds 2 MiB");
+                    if (live != null) live.accept(text.toString());
+                }
+                JSONArray parts = delta.optJSONArray("tool_calls");
+                for (int i = 0; parts != null && i < parts.length(); i++) {
+                    JSONObject part = parts.getJSONObject(i), fn = part.optJSONObject("function");
+                    int at = part.optInt("index", i);
+                    if (at < 0 || at >= 60) throw new Sse.Protocol("Too many tool calls");
+                    while (calls.length() <= at) calls.put(new JSONObject().put("id", "").put("type", "function").put("function", new JSONObject().put("name", "").put("arguments", "")));
+                    JSONObject slot = calls.getJSONObject(at), slotFn = slot.getJSONObject("function");
+                    if (!part.optString("id").isEmpty()) slot.put("id", part.getString("id"));
+                    if (fn != null) {
+                        if (!fn.isNull("name") && fn.has("name")) slotFn.put("name", slotFn.getString("name") + fn.getString("name"));
+                        if (!fn.isNull("arguments") && fn.has("arguments")) slotFn.put("arguments", slotFn.getString("arguments") + fn.getString("arguments"));
+                        if (slotFn.getString("arguments").length() > 256 * 1024 || slotFn.getString("arguments").getBytes(StandardCharsets.UTF_8).length > 256 * 1024) throw new Sse.Protocol("Tool arguments exceed 256 KiB");
+                        if (slotFn.getString("name").length() > 256) throw new Sse.Protocol("Tool name exceeds limit");
+                    }
+                }
+            }
+        } catch (IOException failure) {
+            // A completed text answer remains usable when only the final usage event was lost.
+            if (calls.length() != 0 || !finish.equals("stop")) throw failure;
+        }
+        if (cancel.stopped()) return new JSONObject().put("content", text.toString()).put("finish_reason", "cancelled");
+        if (!(finish.equals("stop") || finish.equals("tool_calls") || finish.equals("length") || finish.equals("content_filter"))) throw new Sse.Protocol("Provider stream ended without a completion boundary");
+        if (calls.length() > 0 && !finish.equals("length")) for (int i = 0; i < calls.length(); i++) {
+            JSONObject call = calls.getJSONObject(i), fn = call.getJSONObject("function");
+            if (!finish.equals("tool_calls") || call.optString("id").isEmpty() || fn.optString("name").isEmpty()) throw new Sse.Protocol("Incomplete tool call");
+            try { new JSONObject(fn.getString("arguments")); } catch (org.json.JSONException bad) { throw new Sse.Protocol("Incomplete tool arguments"); }
+        }
+        JSONObject result = new JSONObject().put("content", text.toString()).put("finish_reason", finish);
+        if (calls.length() > 0) result.put("tool_calls", calls);
+        if (usage != null) result.put("usage", usage);
+        return result;
+    }
 
     /**
      * Thinking level on a request ("off", "low", "medium", "high"; anything else leaves the provider's default). A reasoning model otherwise spends the

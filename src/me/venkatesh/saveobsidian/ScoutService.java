@@ -16,7 +16,7 @@ public class ScoutService extends Service {
     /** Starts or stops the service to match the number of active runs. Starting needs the app to be visible, which it is when a run begins. */
     static void sync(Context c) {
         Intent i = new Intent(c, ScoutService.class);
-        if (ScoutRuns.active() > 0) { try { c.startForegroundService(i); } catch (RuntimeException notAllowed) { } }
+        if (ScoutRuns.foregroundActive() > 0) { try { c.startForegroundService(i); } catch (RuntimeException notAllowed) { } }
         else c.stopService(i);
     }
 
@@ -26,8 +26,13 @@ public class ScoutService extends Service {
         Notification n = new Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.notification_icon).setContentTitle("Scout is working")
             .setContentText("Your chats keep running while you are away").setOngoing(true).build();
         if (android.os.Build.VERSION.SDK_INT >= 29) startForeground(5, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC); else startForeground(5, n);
-        if (ScoutRuns.active() == 0) stopSelf();
+        if (ScoutRuns.foregroundActive() == 0) stopSelf();
         return START_NOT_STICKY;
+    }
+
+    @Override public void onTimeout(int startId, int fgsType) {
+        ScoutRuns.timeout();
+        stopSelf(startId);
     }
 
     @Override public IBinder onBind(Intent intent) { return null; }

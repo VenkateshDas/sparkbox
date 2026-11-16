@@ -22,7 +22,6 @@ import org.json.JSONObject;
 final class ScoutRuns {
     static final String SESSION = "session"; // intent extra: which chat to open
     private static final String CHANNEL = "scout_chat";
-    private static final long APPROVAL_WAIT_MS = 6L * 60 * 60 * 1000; // dataSync services may run about 6 hours
 
     private ScoutRuns() { }
 
@@ -33,28 +32,30 @@ final class ScoutRuns {
         void live(String file, String text);
     }
 
-    static final class Approval {
-        final String title, detail;
-        final java.util.concurrent.ArrayBlockingQueue<Boolean> answer = new java.util.concurrent.ArrayBlockingQueue<>(1);
-        Approval(String title, String detail) { this.title = title; this.detail = detail; }
-    }
-
     static final class Run {
         final String file;
         final String id = java.util.UUID.randomUUID().toString();
         final long began = System.currentTimeMillis();
         final Cancel cancel = new Cancel();
+        Session session;
+        String initialId = "";
+        JSONObject config;
         volatile Agent agent;
         volatile String status = "Starting…", live = "";
         /** The message just sent, shown at once; cleared when the agent has stored it (building the agent can take seconds: MCP servers connect first). */
         volatile String sent;
+        long publishedAt, savedPartialAt;
+        int partialChars;
+        long baseActive;
         /** How many user messages the log held when the run began: the echo shows only while the log still has no newer one. */
         int usersAtStart;
-        volatile Approval pending;
+        boolean scheduled;
+        Runnable settled;
         volatile boolean done;
         Run(String file) { this.file = file; }
     }
 
+    private static final java.util.Set<String> deleted = ConcurrentHashMap.newKeySet();
     private static final Map<String, Session> sessions = new ConcurrentHashMap<>();
     private static final Map<String, Run> runs = new ConcurrentHashMap<>();
     private static final List<Watcher> watchers = new CopyOnWriteArrayList<>();
@@ -68,7 +69,8 @@ final class ScoutRuns {
     static File dir(Context c) { return Scout.dir(c); }
 
     /** One Session object per file, shared by the run and the screen. */
-    static Session session(Context c, String file) throws java.io.IOException {
+    static synchronized Session session(Context c, String file) throws java.io.IOException {
+        if (deleted.contains(file)) throw new java.io.IOException("Chat was deleted");
         Session s = sessions.get(file);
         if (s == null) { s = Session.open(new File(dir(c), file)); sessions.put(file, s); }
         return s;
@@ -83,21 +85,69 @@ final class ScoutRuns {
     }
 
     static Run run(String file) { Run r = file == null ? null : runs.get(file); return r != null && !r.done ? r : null; }
-    static boolean waitingForYou(String file) { Run r = run(file); return r != null && r.pending != null; }
+    static boolean waitingForYou(String file) { Session s = sessions.get(file); return s != null && !ScoutChanges.pending(s).isEmpty(); }
+    static int foregroundActive() { int n = 0; for (Run r : runs.values()) if (!r.done && !r.scheduled) n++; return n; }
     static int active() { int n = 0; for (Run r : runs.values()) if (!r.done) n++; return n; }
 
     // ---- control ----
 
     /** Starts a run on this chat: the text as a new message, or (again) a continuation of what is stored. Returns false when it is already running. */
-    static synchronized boolean start(Context context, String file, String text, boolean again, boolean research) {
-        if (run(file) != null) return false;
+    static boolean start(Context context, String file, String text, boolean again, boolean research, boolean web) {
+        return start(context, file, text, again, research, web, null, false, null);
+    }
+
+    static synchronized boolean start(Context context, String file, String text, boolean again, boolean research, boolean web, JSONObject discovery, boolean scheduled, Runnable settled) {
+        if (run(file) != null || active() >= 2) return false;
         final Context c = context.getApplicationContext();
         final Run run = new Run(file);
+        run.scheduled = scheduled; run.settled = settled;
         run.sent = text == null ? null : text.startsWith("/research ") ? text.substring(10).trim() : text;
-        try { for (Chat.Row r : Chat.rows(session(c, file).context())) if (r.kind.equals("user")) run.usersAtStart++; } catch (java.io.IOException unreadable) { }
+        try {
+            run.session = session(c, file);
+            if (!run.session.writable() || !ScoutChanges.pending(run.session).isEmpty()) return false;
+            JSONObject previous = ScoutState.latest(run.session, "run_config");
+            String tree = VaultStore.tree(c);
+            if (again && previous != null && !tree.equals(previous.optString("tree"))) return false;
+            if (again && previous != null) {
+                research = previous.optBoolean("research");
+                JSONObject oldRevisions = previous.optJSONObject("serverRevisions");
+                if (oldRevisions != null) {
+                    org.json.JSONArray oldServers = previous.optJSONArray("servers");
+                    for (int i = 0; oldServers != null && i < oldServers.length(); i++) {
+                        JSONObject server = oldServers.getJSONObject(i);
+                        String name = server.optString("name").replaceAll("[^A-Za-z0-9_-]", "_");
+                        if (!oldRevisions.optString(name).equals(Scout.externalRevision(c, name, server.optString("url")))) return false;
+                    }
+                }
+            }
+            run.config = new JSONObject().put("runId", run.id).put("generation", run.id).put("tree", tree)
+                .put("model", again && previous != null ? previous.optString("model", Ask.model(c)) : Ask.model(c))
+                .put("thinking", again && previous != null ? previous.optString("thinking", Scout.thinking(c)) : Scout.thinking(c))
+                .put("research", research || text != null && text.startsWith("/research "))
+                .put("scope", again && previous != null ? previous.optString("scope", "vault") : web ? "vault+web" : "vault").put("promptRevision", 2).put("policyRevision", 1);
+            if (discovery != null) run.config.put("discovery", true).put("interestId", discovery.optString("id")).put("interest", discovery.optString("name")).put("discoveryCap", scheduled ? 3 : 5);
+            else if (again && previous != null && previous.optBoolean("discovery")) {
+                run.config.put("discovery", true).put("interestId", previous.optString("interestId")).put("interest", previous.optString("interest")).put("discoveryCap", previous.optInt("discoveryCap", 5));
+            }
+            run.config.put("budgetGroup", again && previous != null ? previous.optString("budgetGroup", previous.optString("runId")) : run.id);
+            run.baseActive = again ? ScoutState.budget(run.session).optLong("activeMs") : 0;
+            run.config.put("servers", Scout.serverList(c));
+            JSONObject revisions = new JSONObject();
+            org.json.JSONArray servers = Scout.serverList(c);
+            for (int i = 0; i < servers.length(); i++) {
+                JSONObject server = servers.getJSONObject(i);
+                String name = server.optString("name").replaceAll("[^A-Za-z0-9_-]", "_");
+                revisions.put(name, Scout.externalRevision(c, name, server.optString("url")));
+            }
+            run.config.put("serverRevisions", revisions);
+            run.session.appendCustom("run_config", run.config);
+            if (!again) run.session.appendCustom("budget", new JSONObject());
+            if (!again) run.initialId = ScoutState.accept(run.session, text, false);
+            for (Chat.Row r : Chat.rows(run.session.retained())) if (r.kind.equals("user")) run.usersAtStart++;
+        } catch (Exception unreadable) { return false; }
         runs.put(file, run);
-        ScoutService.sync(c);
-        new Thread(() -> execute(c, run, text, again, research)).start();
+        if (!scheduled) ScoutService.sync(c);
+        new Thread(() -> execute(c, run, text, again, run.config.optBoolean("research"))).start();
         return true;
     }
 
@@ -110,25 +160,47 @@ final class ScoutRuns {
             String key = Model.key(c);
             if (snap == null || key.isEmpty()) throw new Exception("The vault or the OpenRouter key is not set up.");
             if (text != null && text.startsWith("/research ")) { research = true; text = text.substring(10).trim(); }
-            Session session = session(c, run.file);
-            if (session.name() == null && text != null) nameChat(c, session, text, key, run.id, () -> changed(run.file));
-            Agent a = run.agent = Scout.agent(c, snap, key, session, (title, detail) -> ask(c, run, title, detail), run.cancel, w -> { run.status = w; changed(run.file); }, research, run.id, () -> changed(run.file));
+            Session session = run.session;
+            if (run.done || run.cancel.stopped()) throw new Exception("Stopped");
+            if (!run.config.optBoolean("discovery") && session.name() == null && text != null) nameChat(c, session, text, key, run.id, () -> changed(run.file));
+            Agent a = Scout.agent(c, snap, key, session, new Mcp.Approval() {
+                @Override public boolean ok(String title, String detail) { return false; }
+                @Override public void external(Mcp server, String tool, JSONObject arguments, Cancel cancel) throws Exception {
+                    if (cancel.stopped() || runs.get(run.file) != run) throw new Exception("Stopped");
+                    ScoutChanges.external(session, server.name, server.url, Scout.externalRevision(c, server.name, server.url), tool, arguments);
+                }
+            }, run.cancel, w -> { run.status = w; changed(run.file); }, research, run.id, () -> changed(run.file));
+            synchronized (run) {
+                if (run.done || run.cancel.stopped()) throw new Exception("Stopped");
+                run.agent = a;
+                for (JSONObject item : ScoutState.pending(session)) if (!run.initialId.equals(item.optString("queueId")))
+                    a.accepted(item.optString("queueId"), item.optString("text"), item.optBoolean("followUp"));
+            }
             ScoutUsage.model(c, a.model(), () -> changed(run.file));
             a.subscribe((type, data) -> events(c, run, type, data));
             Usage.hit(c, "ask");
             JSONObject last;
             if (again) last = a.resume();
-            else last = a.prompt(Scout.expand(c, snap, text));
+            else last = a.promptAccepted(run.initialId, Scout.expand(c, snap, text));
+            if (run.config.optBoolean("discovery") && last.optString("stopReason").equals("stop")) ScoutDiscovery.finish(c, run, last.optString("content"));
             if ("error".equals(last.optString("stopReason"))) { failure = last.optString("errorMessage"); loggedByAgent = true; } // the agent already stored its failed turn
         } catch (Exception e) { failure = String.valueOf(e.getMessage()); }
         if (failure != null && !loggedByAgent) { // kept in the log as a failed turn, so the chat shows it and offers to continue
-            try { Session s = session(c, run.file); s.appendMessage(new JSONObject().put("role", "assistant").put("content", "").put("stopReason", "error").put("errorMessage", friendly(failure))); } catch (Exception ignored) { }
+            try { Session s = run.session; s.appendMessage(new JSONObject().put("role", "assistant").put("content", "").put("stopReason", "error").put("errorMessage", friendly(failure))); } catch (Exception ignored) { }
         }
+        try {
+            JSONObject budget = ScoutState.budget(run.session);
+            budget.put("activeMs", run.baseActive + System.currentTimeMillis() - run.began);
+            run.session.appendCustom("budget", budget);
+            run.session.appendCustom("run_end", new JSONObject().put("runId", run.id).put("stopped", run.cancel.stopped()).put("suspended", !ScoutChanges.pending(run.session).isEmpty()));
+        } catch (Exception ignored) { }
         run.done = true;
-        run.live = ""; run.status = ""; run.pending = null;
+        run.live = ""; run.status = "";
+        if (runs.get(run.file) != run) return;
         changed(run.file);
-        if (!run.file.equals(watching) && !run.cancel.stopped()) notify(c, run.file, failure == null ? "Scout finished" : "Scout could not finish", title(c, run.file));
-        ScoutService.sync(c);
+        if (!run.config.optBoolean("discovery") && !run.file.equals(watching) && !run.cancel.stopped()) notify(c, run.file, waitingForYou(run.file) ? "Scout needs your OK" : failure == null ? "Scout finished" : "Scout could not finish", title(c, run.file));
+        if (!run.scheduled) ScoutService.sync(c);
+        if (run.settled != null) run.settled.run();
     }
 
     /** The chat's name: the start of the first message at once, then a short title from the small model (unless the user renamed it meanwhile). */
@@ -151,7 +223,8 @@ final class ScoutRuns {
     }
 
     /** Stops the chat's run if any, then removes its file. */
-    static void delete(Context c, String file) {
+    static synchronized void delete(Context c, String file) {
+        deleted.add(file);
         Run r = run(file);
         if (r != null) { r.cancel.stop(); r.done = true; }
         runs.remove(file);
@@ -178,12 +251,47 @@ final class ScoutRuns {
     }
 
     private static void events(Context c, Run run, String type, JSONObject data) {
+        if (runs.get(run.file) != run || run.done) return;
+        if (type.equals("session_error")) { run.status = data.optString("error"); run.cancel.stop(); }
         if (type.equals("message_end") || type.equals("compaction_end") || type.equals("turn_end") || type.equals("agent_settled")) snapshot(c, run, type);
-        if (type.equals("message_update")) { run.live = data.optString("text"); for (Watcher w : watchers) w.live(run.file, run.live); return; }
+        if (type.equals("message_update")) {
+            run.live = data.optString("text");
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now - run.savedPartialAt >= 1000 && run.live.length() > run.partialChars) {
+                try {
+                    int end = Math.min(run.live.length(), run.partialChars + 16000);
+                    run.session.appendCustom("partial_text", new JSONObject().put("runId", run.id).put("text", run.live.substring(run.partialChars, end)));
+                    run.partialChars = end; run.savedPartialAt = now;
+                } catch (Exception failed) { run.cancel.stop(); }
+            }
+            if (now - run.publishedAt >= 100) { run.publishedAt = now; for (Watcher w : watchers) w.live(run.file, run.live); }
+            return;
+        }
+        if (type.equals("message_start")) {
+            run.partialChars = 0;
+            try { run.session.appendCustom("partial_start", new JSONObject().put("runId", run.id)); }
+            catch (Exception failed) { run.cancel.stop(); }
+        }
         if (type.equals("message_end") && data.optJSONObject("message") != null && data.optJSONObject("message").optString("role").equals("user")) run.sent = null;
-        if (type.equals("message_end")) { run.live = ""; for (Watcher w : watchers) w.live(run.file, ""); }
+        if (type.equals("message_end")) {
+            try {
+                JSONObject message = data.optJSONObject("message");
+                if (message != null && message.optString("role").equals("assistant")) {
+                    if (run.live.length() > run.partialChars) run.session.appendCustom("partial_text", new JSONObject().put("runId", run.id).put("text", run.live.substring(run.partialChars)));
+                    if (!message.optString("stopReason").equals("error") && !message.optString("stopReason").equals("aborted")) run.session.appendCustom("partial_complete", new JSONObject().put("runId", run.id));
+                }
+            } catch (Exception failed) { run.cancel.stop(); }
+            run.partialChars = 0; run.live = ""; for (Watcher w : watchers) w.live(run.file, ""); }
         else if (type.equals("tool_execution_start")) run.status = Chat.step(data.optString("name"), data.optJSONObject("args"));
-        else if (type.equals("retry")) run.status = "Retrying…";
+        else if (type.equals("retry")) {
+            run.status = "Retry " + data.optInt("attempt") + " in " + Math.max(1, data.optLong("waitMs") / 1000) + " seconds…";
+            try {
+                if (run.live.length() > run.partialChars) run.session.appendCustom("partial_text", new JSONObject().put("runId", run.id).put("text", run.live.substring(run.partialChars)));
+                run.session.appendCustom("partial_start", new JSONObject().put("runId", run.id).put("retry", data.optInt("attempt")));
+            } catch (Exception failed) { run.cancel.stop(); }
+            run.partialChars = 0; run.live = "";
+            for (Watcher w : watchers) w.live(run.file, "");
+        }
         else if (type.equals("compaction_start")) run.status = "Summarising the conversation so far…";
         else if (type.equals("turn_start")) run.status = "Thinking…";
         if (type.equals("tool_execution_end") && !data.optBoolean("isError") && (data.optString("name").equals("edit") || data.optString("name").equals("write")))
@@ -191,36 +299,128 @@ final class ScoutRuns {
         changed(run.file);
     }
 
-    /** Blocks the run until the user answers the card in the chat (or stops the run). */
-    private static boolean ask(Context c, Run run, String title, String detail) {
-        synchronized (run) { return askOne(c, run, title, detail); } // parallel tool calls ask one after another: one card at a time, none lost
+    static void leaving(Context c, String file) {
+        if (file != null && waitingForYou(file)) notify(c, file, "Scout needs your OK", title(c, file));
     }
 
-    private static boolean askOne(Context c, Run run, String title, String detail) {
-        Approval a = new Approval(title, detail);
-        run.pending = a;
-        changed(run.file);
-        if (!run.file.equals(watching)) notify(c, run.file, "Scout needs your OK", title);
-        try {
-            long until = System.currentTimeMillis() + APPROVAL_WAIT_MS;
-            while (System.currentTimeMillis() < until) {
-                Boolean r = a.answer.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS);
-                if (r != null) return r;
-                if (run.cancel.stopped()) return false;
+    /** Applies exactly one stored proposal. Suspended chats own no thread or foreground lifetime. */
+    static synchronized void approve(Context context, String file, String proposalId, boolean yes) {
+        if (run(file) != null || active() >= 2) return;
+        Context c = context.getApplicationContext();
+        Session s;
+        try { s = session(c, file); } catch (Exception failed) { return; }
+        JSONObject proposal = null;
+        for (JSONObject p : ScoutChanges.pending(s)) if (proposalId.equals(p.optString("proposalId"))) proposal = p;
+        if (proposal == null) return;
+        JSONObject p = proposal;
+        Run r = new Run(file); r.session = s; runs.put(file, r);
+        ScoutService.sync(c); changed(file);
+        new Thread(() -> {
+            try {
+                if (p.optString("kind").equals("note")) ScoutChanges.applyNote(s, p, yes, new ScoutChanges.Notes() {
+                    @Override public String tree() { return VaultStore.tree(c); }
+                    @Override public String read(String tree, String path) throws Exception { return VaultWrite.readPinned(c, tree, path); }
+                    @Override public void write(String tree, String path, String before, String after) throws Exception { VaultWrite.writePinned(c, tree, path, before, after); }
+                }, r.cancel);
+                else applyExternal(c, r, p, yes);
+                if (p.optString("kind").equals("note")) { try { VaultStore.scan(c); } catch (Exception ignored) { } }
+            } catch (Exception failed) {
+                r.status = "Approval could not finish: " + failed.getMessage();
+                try { s.appendCustom("proposal_error", new JSONObject().put("proposalId", proposalId).put("message", r.status)); } catch (Exception ignored) { }
+            } finally {
+                r.done = true;
+                if (runs.get(file) == r) { changed(file); ScoutService.sync(c); }
             }
-            return false;
-        } catch (InterruptedException interrupted) { return false; }
-        finally { run.pending = null; changed(run.file); }
+        }, "scout-approval").start();
     }
 
-    /** The user left the chat while a change waits for their OK: say so in a notification. */
-    static void leaving(Context c, String file) { if (file != null && waitingForYou(file)) notify(c, file, "Scout needs your OK", run(file).pending.title); }
-
-    static void approve(String file, boolean yes) { Run r = run(file); Approval a = r == null ? null : r.pending; if (a != null) a.answer.offer(yes); }
+    private static void applyExternal(Context c, Run r, JSONObject p, boolean yes) throws Exception {
+        String server = p.getString("server"), endpoint = p.getString("endpoint");
+        ScoutChanges.applyExternal(r.session, p, yes, new ScoutChanges.External() {
+            private Mcp m;
+            @Override public String revision() { return Scout.externalRevision(c, server, endpoint); }
+            @Override public void connect(Cancel cancel) throws Exception { m = Scout.externalServer(c, server, endpoint); m.connect(cancel); }
+            @Override public Tool.Result call(String tool, JSONObject arguments, Cancel cancel) throws Exception {
+                JSONObject result = m.callTool(tool, arguments, cancel);
+                return new Tool.Result(Mcp.cap(Mcp.text(result), Mcp.OUTPUT_MAX), null, result.optBoolean("isError"), false);
+            }
+        }, r.cancel);
+    }
 
     static void cancel(String file) { Run r = run(file); if (r != null) { r.status = "Cancelling…"; r.cancel.stop(); changed(file); } }
 
-    static void steer(String file, String text) { Run r = run(file); if (r != null && r.agent != null) r.agent.steer(text); }
+    static boolean steer(String file, String text, boolean followUp) {
+        Run r = run(file);
+        if (r == null) return false;
+        synchronized (r) {
+            if (r.done || r.cancel.stopped()) return false;
+            try {
+                String id = ScoutState.accept(r.session, text, followUp);
+                if (r.agent != null) r.agent.accepted(id, text, followUp);
+                changed(file);
+                return true;
+            } catch (java.io.IOException failed) { r.status = failed.getMessage(); r.cancel.stop(); changed(file); return false; }
+        }
+    }
+
+    static boolean editQueue(Context c, String file, String id, String text, boolean remove) {
+        Run r = run(file);
+        try {
+            if (r != null) synchronized (r) {
+                if (id.equals(r.initialId)) return false;
+                if (r.agent != null) return r.agent.editQueued(id, text, remove);
+                return editStoredQueue(r.session, file, id, text, remove);
+            }
+            return editStoredQueue(session(c, file), file, id, text, remove);
+        } catch (Exception failed) { return false; }
+    }
+
+    private static boolean editStoredQueue(Session session, String file, String id, String text, boolean remove) throws Exception {
+        for (JSONObject item : ScoutState.pending(session)) if (id.equals(item.optString("queueId"))) {
+            session.appendCustom(remove ? "queue_remove" : "queue_edit", new JSONObject().put("queueId", id).put("text", text).put("followUp", item.optBoolean("followUp")));
+            changed(file); return true;
+        }
+        return false;
+    }
+
+    static synchronized boolean cards(Context context, String file, String path) {
+        if (run(file) != null || active() >= 2) return false;
+        Context c = context.getApplicationContext();
+        Run run = new Run(file);
+        try { run.session = session(c, file); if (!run.session.writable()) return false; }
+        catch (Exception unavailable) { return false; }
+        String tree = VaultStore.tree(c);
+        runs.put(file, run); ScoutService.sync(c); changed(file);
+        new Thread(() -> {
+            try {
+                if (!path.startsWith("Knowledge/Sources/") || !path.endsWith(".md") || path.endsWith("/My cards.md")) throw new Exception("Choose a source note path");
+                String before = VaultWrite.readPinned(c, tree, path);
+                if (before == null) throw new Exception("Source note not found");
+                JSONObject request = new JSONObject().put("model", CardGen.model(c)).put("max_tokens", 4000)
+                    .put("messages", new org.json.JSONArray().put(new JSONObject().put("role", "system").put("content", CardPrompt.SYSTEM))
+                        .put(new JSONObject().put("role", "user").put("content", CardPrompt.input(before))));
+                JSONObject reply = ScoutUsage.provider(c, Model.key(c), run.session, run.id, "cards", () -> changed(file)).stream(request, text -> {}, run.cancel);
+                if (run.cancel.stopped() || runs.get(file) != run || !tree.equals(VaultStore.tree(c))) return;
+                String text = reply.optString("content"); int from = text.indexOf('{'), to = text.lastIndexOf('}');
+                if (from < 0 || to <= from || !reply.optString("finish_reason").equals("stop")) throw new Exception("Card draft was empty or incomplete");
+                List<Cards.Card> cards = CardGen.draft(path, new JSONObject(text.substring(from, to + 1)));
+                if (cards.isEmpty()) throw new Exception("No valid cards generated for review");
+                ScoutChanges.CALL.set(new JSONObject().put("id", "manual_" + run.id).put("name", "make_cards"));
+                ScoutChanges.prepareNote(run.session, tree, path, before, Cards.add(before, cards), new org.json.JSONArray(), true);
+            } catch (Exception failed) {
+                try { run.session.appendCustom("cards_error", new JSONObject().put("message", failed.getMessage())); } catch (Exception ignored) { }
+            } finally { ScoutChanges.CALL.remove(); run.done = true; changed(file); ScoutService.sync(c); }
+        }, "scout-card-draft").start();
+        return true;
+    }
+
+    static void timeout() {
+        for (Run r : runs.values()) if (!r.done && !r.scheduled) {
+            r.cancel.halt(); // Fence new effects synchronously; disconnect outside Service.onTimeout.
+            r.status = "Android execution limit reached; continuation required";
+            new Thread(r.cancel::stop, "scout-timeout-disconnect").start();
+        }
+    }
 
     // ---- notifications ----
 

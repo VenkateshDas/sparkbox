@@ -27,9 +27,10 @@ public final class Cites {
         StringBuffer out = new StringBuffer();
         while (m.find()) {
             if (m.group(1).equals("!")) { m.appendReplacement(out, Matcher.quoteReplacement(m.group())); continue; } // an embed, not a citation
-            String path = Vault.target(m.group(2));
+            String raw = m.group(2);
+            String path = raw.startsWith("https://") || raw.startsWith("http://") ? raw.split("\\|", 2)[0] : Vault.target(raw);
             if (path.isEmpty()) { m.appendReplacement(out, Matcher.quoteReplacement(m.group())); continue; }
-            String key = path.toLowerCase(Locale.ROOT);
+            String key = path.startsWith("https://") || path.startsWith("http://") ? path : path.toLowerCase(Locale.ROOT);
             Integer n = seen.get(key);
             if (n == null) {
                 n = sources.size() + 1;
@@ -54,8 +55,9 @@ public final class Cites {
         Matcher m = Vault.LINK.matcher(answer);
         while (m.find()) {
             if (m.group(1).equals("!")) continue;
-            String path = Vault.target(m.group(2));
-            if (path.isEmpty()) continue;
+            String raw = m.group(2);
+            String path = raw.startsWith("https://") || raw.startsWith("http://") ? raw.split("\\|", 2)[0] : Vault.target(raw);
+            if (path.isEmpty() || path.startsWith("cite:")) continue;
             String p = path.toLowerCase(Locale.ROOT), name = p.substring(p.lastIndexOf('/') + 1);
             // a listing shows names inside a folder, so a bare "name.md" in the evidence counts too
             if (!hay.contains(p) && !hay.contains(name + ".md") && !bad.contains(path)) bad.add(path);
@@ -63,7 +65,7 @@ public final class Cites {
         Matcher u = URL.matcher(answer);
         while (u.find()) {
             String url = u.group().replaceAll("[.,;:!?]+$", "").replaceAll("/+$", "");
-            if (!hay.contains(url.toLowerCase(Locale.ROOT)) && !bad.contains(url)) bad.add(url);
+            if (!evidence.contains(url) && !bad.contains(url)) bad.add(url);
         }
         return bad;
     }
@@ -77,7 +79,8 @@ public final class Cites {
         Matcher m = Vault.LINK.matcher(answer);
         StringBuffer out = new StringBuffer();
         while (m.find()) {
-            String path = Vault.target(m.group(2));
+            String raw = m.group(2);
+            String path = raw.startsWith("https://") || raw.startsWith("http://") ? raw.split("\\|", 2)[0] : Vault.target(raw);
             boolean drop = !m.group(1).equals("!") && !path.isEmpty() && bad.contains(path);
             m.appendReplacement(out, Matcher.quoteReplacement(drop ? Vault.label(m.group(2)) : m.group()));
         }

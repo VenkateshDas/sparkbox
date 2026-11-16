@@ -163,11 +163,17 @@ public final class VaultTools {
                 Truncate.Cut cut = Truncate.head(String.join("\n", Arrays.copyOfRange(lines, start, end)));
                 if (cut.truncated && cut.shownLines == 0)
                     return Result.ok("[Line " + (start + 1) + " is " + size(lines[start].getBytes("UTF-8").length) + ", exceeds " + size(Truncate.BYTES) + " limit. Use grep to find the part you need.]");
-                if (cut.truncated) return Result.ok(cut.text + "\n\n[Showing lines " + (start + 1) + "-" + (start + cut.shownLines) + " of " + lines.length + ". Use offset=" + (start + cut.shownLines + 1) + " to continue.]");
-                if (end < lines.length) return Result.ok(cut.text + "\n\n[" + (lines.length - end) + " more lines in file. Use offset=" + (end + 1) + " to continue.]");
-                return Result.ok(cut.text);
+                if (cut.truncated) return evidence(path, lines, start, end, cut.text + "\n\n[Showing lines " + (start + 1) + "-" + (start + cut.shownLines) + " of " + lines.length + ". Use offset=" + (start + cut.shownLines + 1) + " to continue.]", true);
+                if (end < lines.length) return evidence(path, lines, start, end, cut.text + "\n\n[" + (lines.length - end) + " more lines in file. Use offset=" + (end + 1) + " to continue.]", true);
+                return evidence(path, lines, start, end, cut.text, false);
             }
         };
+    }
+
+    private static Tool.Result evidence(String path, String[] lines, int start, int end, String text, boolean truncated) throws Exception {
+        JSONObject detail = obj("evidencePath", path, "coverage", !truncated && start == 0 && end == lines.length ? "full" : "excerpt",
+            "range", "lines " + (start + 1) + "-" + end + (truncated ? " (truncated)" : ""), "hash", ScoutChanges.hash(String.join("\n", lines)));
+        return new Tool.Result(text, detail, false, false);
     }
 
     // ---- ls ----

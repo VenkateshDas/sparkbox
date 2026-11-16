@@ -133,14 +133,14 @@ final class VaultToolsTest {
         List<me.venkatesh.saveobsidian.Chat.Row> rows = me.venkatesh.saveobsidian.Chat.rows(convo);
         StringBuilder shown = new StringBuilder();
         for (me.venkatesh.saveobsidian.Chat.Row r : rows) shown.append(r.kind).append(":").append(r.text).append("|");
-        check(shown.toString().equals("user:What about RAG?|work:Searched “rag”\nUsed tinyfish: fetch_content|answer:Fixed|"));
+        check(shown.toString().equals("user:What about RAG?|work:Unknown: Search “rag”\nUnknown: Call tinyfish: fetch_content|answer:Fixed|"));
         check(me.venkatesh.saveobsidian.Chat.clock(83).equals("1:23") && me.venkatesh.saveobsidian.Chat.clock(5).equals("0:05"));
         List<JSONObject> timed = new ArrayList<>();
         timed.add(new JSONObject("{role:user,content:q,ts:1000000}"));
         timed.add(new JSONObject("{role:assistant,content:'',tool_calls:[{id:c1,function:{name:read,arguments:'{\"path\":\"A.md\"}'}}],stopReason:toolUse,ts:1010000}"));
         check(me.venkatesh.saveobsidian.Chat.rows(timed).get(1).secs == me.venkatesh.saveobsidian.Chat.RUNNING);
         timed.add(new JSONObject("{role:assistant,content:done,stopReason:stop,ts:1083000}"));
-        check(me.venkatesh.saveobsidian.Chat.rows(timed).get(1).secs == 83 && me.venkatesh.saveobsidian.Chat.rows(timed).get(1).text.equals("Read A.md"));
+        check(me.venkatesh.saveobsidian.Chat.rows(timed).get(1).secs == 83 && me.venkatesh.saveobsidian.Chat.rows(timed).get(1).text.equals("Unknown: Read A.md"));
         convo.add(new JSONObject("{role:user,content:'more'}"));
         convo.add(new JSONObject("{role:assistant,content:'',stopReason:aborted}"));
         check(me.venkatesh.saveobsidian.Chat.interrupted(convo) && !me.venkatesh.saveobsidian.Chat.interrupted(new ArrayList<>()));
