@@ -26,6 +26,13 @@ public final class Extract {
         public String title = "", byline = "", site = "", description = "", image = "", text = "";
         /** The server answered with a bot check, a consent wall or a "turn on JavaScript" page instead of the article. */
         public boolean blocked;
+        public final List<Media> media = new ArrayList<>();
+    }
+
+    public static final class Media {
+        public final String url, caption;
+        public final boolean video;
+        public Media(String url, String caption, boolean video) { this.url = url; this.caption = caption; this.video = video; }
     }
 
     private static final int I = Pattern.CASE_INSENSITIVE;
@@ -63,7 +70,7 @@ public final class Extract {
         out.title = trimSite(out.title, out.site);
         out.byline = out.byline.replaceAll("^(?i)by\\s+", "").trim();
 
-        String dom = article(doc);
+        String dom = article(doc, out.media);
         String text = dom;
         if (!ldBody.isEmpty() && (dom.length() < 300 || ldBody.length() > dom.length() * 1.3)) text = ldBody;
         if (text.length() < 200) {
@@ -74,6 +81,8 @@ public final class Extract {
         if (text.length() < 600 && (BLOCKED.matcher(text.length() < 400 ? text : text.substring(0, 400)).find() || BLOCKED.matcher(out.title).find())) { out.blocked = true; text = ""; }
         if (text.length() < 80 && !out.description.isEmpty() && !out.blocked) text = out.description;
         out.text = text;
+        if (out.blocked) out.media.clear();
+        else if (out.media.isEmpty() && !out.image.isEmpty()) out.media.add(new Media(out.image, out.description, false));
         return out;
     }
 
@@ -118,7 +127,7 @@ public final class Extract {
 
     // --- finding the article ---
 
-    private static String article(Document doc) {
+    private static String article(Document doc, List<Media> media) {
         Element body = doc.body();
         if (body == null) return "";
         doc.select("script, style, noscript, svg, iframe, canvas, form, button, select, input, textarea, template, dialog, audio, video, [hidden], [aria-hidden=true], nav, footer, aside, [role=navigation], [role=banner], [role=complementary], [role=contentinfo], [role=search]").remove();
@@ -149,7 +158,7 @@ public final class Extract {
             c.setValue(adjusted);
             if (adjusted > best) { best = adjusted; top = c.getKey(); }
         }
-        if (top == null) return render(body);
+        if (top == null) { images(body, media); return render(body); }
         // like Readability: when an ancestor scores higher than the winner (an article split into sections, each a small winner), the ancestor is the article
         double floor = best / 3, last = best;
         for (Element up = top.parent(); up != null && !up.tagName().equals("body") && !up.tagName().equals("html"); up = up.parent()) {
@@ -166,7 +175,7 @@ public final class Extract {
         }
         Element parent = top.parent();
         StringBuilder out = new StringBuilder();
-        if (parent == null || top.tagName().equals("article")) out.append(render(top));
+        if (parent == null || top.tagName().equals("article")) { images(top, media); out.append(render(top)); }
         else {
             double threshold = Math.max(10, best * 0.2);
             for (Element sib : parent.children()) {
@@ -180,11 +189,36 @@ public final class Extract {
                     else if ((sib.tagName().equals("section") || sib.tagName().equals("div")) && st.length() >= 300 && linkDensity(sib) < 0.35 && !NEGATIVE.matcher(sig).find()) take = true; // a long text section next to the winner
                     else if (sib.tagName().equals("p")) { String t = sib.text(); double d = linkDensity(sib); take = (t.length() > 80 && d < 0.25) || (t.length() > 25 && d == 0 && t.matches("(?s).*[.!?]\"?$")); }
                 }
-                if (take) { String r = render(sib); if (!r.isEmpty()) out.append(out.length() > 0 ? "\n\n" : "").append(r); }
+                if (!take && sib.tagName().equals("figure")) take = true;
+                if (take) { images(sib, media); String r = render(sib); if (!r.isEmpty()) out.append(out.length() > 0 ? "\n\n" : "").append(r); }
             }
         }
         String text = out.toString();
         return text;
+    }
+
+    /** Keep figures from the selected article, not avatars and navigation elsewhere. */
+    private static void images(Element root, List<Media> media) {
+        for (Element img : root.select("img")) {
+            String signature = (img.className() + " " + img.id() + " " + img.attr("alt")).toLowerCase(Locale.ROOT);
+            if (signature.matches(".*(avatar|logo|tracking|pixel|icon|emoji).*")) continue;
+            String width = img.attr("width"), height = img.attr("height");
+            if (width.matches("[0-9]+") && height.matches("[0-9]+") && width.length() < 6 && height.length() < 6
+                && Integer.parseInt(width) < 80 && Integer.parseInt(height) < 80) continue;
+            String src = first(img.attr("data-src"), img.attr("data-original"), img.attr("data-lazy-src"), img.attr("src"));
+            if (src.isEmpty() || src.startsWith("data:")) {
+                String set = first(img.attr("data-srcset"), img.attr("srcset"));
+                if (!set.isEmpty()) src = set.split(",")[0].trim().split("\\s+")[0];
+            }
+            String url = img.ownerDocument() == null ? src : abs(img.ownerDocument(), src);
+            if (!url.startsWith("https://") && !url.startsWith("http://")) continue;
+            boolean duplicate = false;
+            for (Media old : media) duplicate |= old.url.equals(url);
+            if (duplicate) continue;
+            Element figure = img.closest("figure");
+            Element caption = figure == null ? null : figure.selectFirst("figcaption");
+            media.add(new Media(url, first(caption == null ? "" : caption.text(), img.attr("alt")), false));
+        }
     }
 
     /** A div or section that holds other blocks is a container, not a text block of its own. */

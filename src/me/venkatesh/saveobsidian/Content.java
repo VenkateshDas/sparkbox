@@ -22,7 +22,20 @@ final class Content {
         } catch (Exception ignored) { } // a cache: losing it only costs a refetch
     }
 
-    static void remove(Context c, String url) { file(c, url).delete(); }
+    private static File mediaFile(Context c, String url) { return new File(file(c, url).getParentFile(), name(url) + ".media.json"); }
+
+    static org.json.JSONObject media(Context c, String url) {
+        try { return CaptureService.readJob(mediaFile(c, url)); }
+        catch (Exception none) { return new org.json.JSONObject(); }
+    }
+
+    static void saveMedia(Context c, String url, org.json.JSONObject data) throws Exception {
+        File f = mediaFile(c, url);
+        if (!f.getParentFile().isDirectory() && !f.getParentFile().mkdirs()) throw new java.io.IOException("Cannot save visual checkpoint");
+        CaptureService.writeJob(f, data);
+    }
+
+    static void remove(Context c, String url) { file(c, url).delete(); mediaFile(c, url).delete(); }
 
     static boolean has(Context c, String url) { return file(c, url).length() > 0; }
 
@@ -37,7 +50,10 @@ final class Content {
     /** Drops text of captures that are no longer in the inbox. */
     static void retain(Context c, List<InboxFile.Entry> entries) {
         Set<String> keep = new HashSet<>();
-        for (InboxFile.Entry e : entries) if (!e.url.isEmpty()) keep.add(name(e.url) + ".txt");
+        for (InboxFile.Entry e : entries) if (!e.url.isEmpty()) {
+            keep.add(name(e.url) + ".txt");
+            keep.add(name(e.url) + ".media.json");
+        }
         File[] saved = new File(c.getFilesDir(), "content").listFiles();
         if (saved != null) for (File f : saved) if (!keep.contains(f.getName())) f.delete();
     }

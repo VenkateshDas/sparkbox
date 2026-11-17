@@ -12,7 +12,7 @@ public final class Failures {
         if (m.startsWith("offline") || m.contains("no connection") || m.contains("unable to resolve host")) return OFFLINE;
         if (m.startsWith("instagram requires account access")) return ACCESS;
         if (m.startsWith("instagram ")) return OTHER;
-        if (m.contains(" 401") || m.contains(" 402") || m.contains(" 403") || m.contains("check the key") || m.contains("out of credit")) return KEY;
+        if ((m.contains("openrouter") && (m.contains(" 401") || m.contains(" 402") || m.contains(" 403"))) || m.contains("check the key") || m.contains("out of credit")) return KEY;
         if (m.contains(" 429") || m.contains("rate limit") || m.contains("rate-limit")) return RATE;
         if (m.contains("changed while") || m.contains("inbox changed") || m.contains("changed just now") || m.contains("read-back differs")) return CONFLICT;
         if (m.contains("no topic") || m.contains("json") || m.contains("refused this request") || m.contains("returned nothing") || m.contains("incomplete") || m.contains("could not be read as")) return MALFORMED;
@@ -23,7 +23,7 @@ public final class Failures {
     public static String recovery(String kind, String message) {
         switch (kind) {
             case ACCESS: return message;
-            case OFFLINE: return "No connection to the AI service. It is tried again by itself when you are back online; Retry tries now.";
+            case OFFLINE: return "Could not reach the source or AI service. Saved safely; processing retries automatically when a connection is available.";
             case KEY: return message.replaceFirst("^Smart tags paused: ", "") + ". Check the key, account balance and key spending limit. Retry after updating them.";
             case RATE: return "OpenRouter is limiting requests right now. It waits longer before the next try.";
             case MALFORMED: return "The model's answer could not be used. The next try asks again, then switches to the fallback model.";

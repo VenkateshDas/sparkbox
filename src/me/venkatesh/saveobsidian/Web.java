@@ -59,7 +59,8 @@ final class Web {
 
     static Reply get(String address, int maxBytes, String agent) throws IOException {
         IOException last = null;
-        for (int attempt = 0; attempt < 3; attempt++) { // first as a phone, then as a desktop browser
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (Cancel.current().stopped()) throw new java.io.InterruptedIOException("Processing stopped"); // first as a phone, then as a desktop browser
             try {
                 Reply r = once(address, attempt == 0 ? agent : DESKTOP, maxBytes);
                 if (r.code == 403 || r.code == 401 || r.code == 429 || r.code >= 500) { last = new IOException("The site answered " + r.code); if (attempt < 2) { pause(700L * (attempt + 1)); continue; } return r; }
@@ -71,7 +72,10 @@ final class Web {
         throw last == null ? new IOException("Could not fetch the page") : last;
     }
 
-    private static void pause(long ms) { try { Thread.sleep(ms); } catch (InterruptedException stop) { Thread.currentThread().interrupt(); } }
+    private static void pause(long ms) throws IOException {
+        try { if (!Cancel.current().pause(ms)) throw new java.io.InterruptedIOException("Processing stopped"); }
+        catch (InterruptedException stop) { Thread.currentThread().interrupt(); throw new java.io.InterruptedIOException("Processing stopped"); }
+    }
 
     private static Reply once(String address, String agent, int maxBytes) throws IOException {
         URL current = new URL(address);
@@ -102,7 +106,7 @@ final class Web {
                 r.code = code;
                 r.url = current.toString();
                 r.type = c.getContentType() == null ? "" : c.getContentType();
-                if (maxBytes > MAX_BYTES && c.getContentLengthLong() > maxBytes) throw new IOException("Video exceeds 24 MB. Share a shorter clip.");
+                if (maxBytes > MAX_BYTES && c.getContentLengthLong() > maxBytes) throw new IOException("Source media exceeds the download size limit. Share a smaller file.");
                 Matcher m = Pattern.compile("charset\\s*=\\s*[\"']?([^\\s;\"']+)", Pattern.CASE_INSENSITIVE).matcher(r.type);
                 if (m.find()) r.charset = m.group(1);
                 InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
@@ -113,12 +117,12 @@ final class Web {
                     while (bytes.size() < maxBytes && (n = body.read(buffer, 0, Math.min(buffer.length, maxBytes - bytes.size()))) != -1) {
                         bytes.write(buffer, 0, n);
                         if (System.currentTimeMillis() > deadline) {
-                            if (maxBytes > MAX_BYTES) throw new IOException("Video download took too long");
+                            if (maxBytes > MAX_BYTES) throw new IOException("Source media download took too long");
                             break;
                         }
                     }
                     if (maxBytes > MAX_BYTES && bytes.size() == maxBytes && body.read() != -1)
-                        throw new IOException("Video exceeds 24 MB. Share a shorter clip.");
+                        throw new IOException("Source media exceeds the download size limit. Share a smaller file.");
                     r.body = bytes.toByteArray();
                 }
                 if (r.charset.isEmpty() && r.html()) { // the page names its own encoding in a <meta> near the top

@@ -57,7 +57,7 @@ final class Ingest {
     private static String entryKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.url)); }
 
     static boolean eligible(Context c, InboxFile.Entry e) {
-        return !e.text && !e.url.isEmpty() && e.file.isEmpty() && !Tagger.stale(c, e); // an untagged link is tagged by this same model call
+        return !e.text && !e.url.isEmpty() && e.file.isEmpty(); // the plan's input hash also covers edited Why and Ideas
     }
 
     /** Captures are processed one by one until none is due, eight are done or the time budget ends. A failure is kept with its reason and tried again later (see MAX_TRIES). */
@@ -69,6 +69,16 @@ final class Ingest {
         try {
             VaultStore.Snap snap = VaultStore.cached(c);
             if (snap == null) snap = VaultStore.scan(c);
+            boolean repairDns = !prog.getBoolean("dnsRecoveryV1", false);
+            if (repairDns) {
+                SharedPreferences.Editor repair = prog.edit();
+                for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
+                    String ek = entryKey(e);
+                    if (prog.getString("err:" + ek, "").equals("Not a public web address"))
+                        repair.remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek);
+                }
+                if (!repair.putBoolean("dnsRecoveryV1", true).commit()) throw new IOException("Could not save recovery checkpoint");
+            }
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
                 if (done >= PER_RUN || Tagger.halt() || System.currentTimeMillis() - started > RUN_BUDGET) break;
                 String ek = entryKey(e);
@@ -80,6 +90,9 @@ final class Ingest {
                 android.util.Log.i("Sparkbox", "ingest start " + e.shownTitle() + " tries=" + tries);
                 long began = System.currentTimeMillis();
                 try {
+                    activeKey = ek;
+                    activeCancel = Cancel.current();
+                    prog.edit().remove("err:" + ek).apply();
                     process(c, key, e, ek, snap, tries);
                     android.util.Log.i("Sparkbox", "ingest done " + e.shownTitle() + " in " + (System.currentTimeMillis() - began) + " ms");
                     done++;
@@ -88,6 +101,12 @@ final class Ingest {
                 } catch (Exception failed) {
                     prog.edit().remove("stage:" + ek).apply();
                     android.util.Log.i("Sparkbox", "ingest failed " + e.shownTitle() + " after " + (System.currentTimeMillis() - began) + " ms: " + failed);
+                    if (Tagger.halt() || failed instanceof InterruptedException) break;
+                    if (Net.temporary(failed)) {
+                        prog.edit().putLong("next:" + ek, System.currentTimeMillis() +
+                            Math.max(MINUTE, Failures.minWaitMs(Failures.kind(failed.getMessage())))).apply();
+                        break;
+                    }
                     if (Net.offline(failed)) { // no connection is not this capture's fault: no try is used, and the job comes back in a couple of minutes
                         prog.edit().putLong("next:" + ek, System.currentTimeMillis() + 2 * MINUTE).putString("err:" + ek, OFFLINE).apply();
                         prefs.edit().putString("ingestProblem", OFFLINE).apply();
@@ -100,6 +119,9 @@ final class Ingest {
                     prog.edit().putInt("tries:" + ek, n).putLong("next:" + ek, System.currentTimeMillis() + wait).putString("err:" + ek, m).apply();
                     prefs.edit().putString("ingestProblem", e.shownTitle() + ": " + m).apply();
                     if (m.startsWith("Smart tags paused")) break; // the provider or the network is down: the next captures would fail the same way
+                } finally {
+                    activeKey = "";
+                    prog.edit().remove("stage:" + ek).apply();
                 }
             }
         } catch (Exception unreadable) { prefs.edit().putString("ingestProblem", String.valueOf(unreadable.getMessage())).apply(); }
@@ -107,6 +129,8 @@ final class Ingest {
 
     /** The steps a capture goes through, shown live on its Feed card. Step 0 is already done when processing starts. */
     static final String[] STEPS = {"Saved to your inbox", "Reading the page", "Understanding it with AI", "Choosing Craft or Life", "Writing the note", "Updating topics and people", "Filing and indexing"};
+    private static volatile String activeKey = "";
+    private static volatile Cancel activeCancel = new Cancel();
     private static final long STAGE_FRESH = 6 * MINUTE;
 
     /** Told (on the worker thread) whenever a capture moves to another step, so the Feed redraws then instead of polling. */
@@ -118,6 +142,7 @@ final class Ingest {
 
     /** The step this capture is on right now (1 to 6), or -1 when it is not being processed. A step silent for six minutes is taken as dead. */
     static int stage(Context c, InboxFile.Entry e) {
+        if (!entryKey(e).equals(activeKey) || activeCancel.stopped()) return -1;
         String v = c.getSharedPreferences("ingest", 0).getString("stage:" + entryKey(e), "");
         int bar = v.indexOf('|');
         if (bar < 0) return -1;
@@ -148,11 +173,10 @@ final class Ingest {
         return say + (wait > MINUTE ? " Next try in " + (wait / MINUTE) + " min." : " Next try soon.");
     }
 
-    /** Clears what is remembered about one capture (tries, waits, the model's plan) and runs the whole pipeline now. For the owner's Retry. */
+    /** Retry through the durable job, keeping paid evidence and a valid saved plan. */
     static void retry(Context c, InboxFile.Entry e) {
         forget(c, e);
-        final Context app = c.getApplicationContext();
-        new Thread(() -> Tagger.run(app)).start();
+        BackgroundJob.now(c);
     }
 
     /** Every capture that failed or stopped gets another go now. */
@@ -162,33 +186,32 @@ final class Ingest {
             SharedPreferences prog = c.getSharedPreferences("ingest", 0);
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) if (!prog.getString("err:" + entryKey(e), "").isEmpty() || prog.getInt("tries:" + entryKey(e), 0) > 0) { forget(c, e); n++; }
         } catch (Exception unreadable) { }
-        final Context app = c.getApplicationContext();
-        if (n > 0) new Thread(() -> Tagger.run(app)).start();
+        if (n > 0) BackgroundJob.now(c);
         return n;
     }
 
     private static void forget(Context c, InboxFile.Entry e) {
         String ek = entryKey(e);
-        c.getSharedPreferences("ingest", 0).edit().remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek).remove("plan:" + ek).remove("planHash:" + ek).apply();
+        c.getSharedPreferences("ingest", 0).edit().remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek).remove("stage:" + ek).apply();
         c.getSharedPreferences("enriched", 0).edit().remove("tagfail:" + Tagger.notesKey(e)).apply();
-        if (!Transcript.videoId(e.url).isEmpty()) Content.remove(c, e.url); // a YouTube video is read again, including its transcript
     }
 
     /** Milliseconds until the next capture that failed is due, or -1 when none waits. Lets the background job come back on time. */
     static long retryDelay(Context c) {
+        if (!ready(c)) return -1;
         try {
             SharedPreferences prog = c.getSharedPreferences("ingest", 0);
             long soonest = Long.MAX_VALUE, now = System.currentTimeMillis();
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
                 String ek = entryKey(e);
                 int tries = prog.getInt("tries:" + ek, 0);
-                if ((tries > 0 || prog.getString("err:" + ek, "").equals(OFFLINE)) && tries < MAX_TRIES && eligible(c, e)) soonest = Math.min(soonest, prog.getLong("next:" + ek, 0) - now);
+                if (tries < MAX_TRIES && eligible(c, e)) soonest = Math.min(soonest, prog.getLong("next:" + ek, 0) - now);
             }
             if (soonest == Long.MAX_VALUE) { // a capture that is ready but was never picked up (a run ended just before it arrived): look again in a minute
                 for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) if (queued(c, e)) return MINUTE;
             }
             return soonest == Long.MAX_VALUE ? -1 : Math.max(soonest, MINUTE);
-        } catch (Exception unreadable) { return -1; }
+        } catch (Exception unreadable) { return 2 * MINUTE; }
     }
 
     private static final class Topic { String title, core = ""; List<String[]> claims = new ArrayList<>(); List<String> related = new ArrayList<>(), questions = new ArrayList<>(); }
@@ -219,6 +242,7 @@ final class Ingest {
 
         // 1. ask the model once; the answer is kept so a retry does not pay again
         String saved = prog.getString("plan:" + ek, "");
+        if (done.isEmpty() && !Visuals.complete(c, e.url)) saved = ""; // uncommitted legacy plans must read source images once
         if (!IngestText.samePlanInputs(prog.getString("planHash:" + ek, ""), Tagger.notesHash(e))) saved = ""; // asked with older Why or Ideas: ask again
         JSONObject plan;
         if (saved.isEmpty()) {
@@ -241,7 +265,8 @@ final class Ingest {
             laneThread.join(45000);
             String[] filed = laneBox[0];
             if (filed != null) plan.put("category", filed[1]).put("lane", filed[0]);
-            prog.edit().putString("plan:" + ek, plan.toString()).putString("planHash:" + ek, Tagger.notesHash(e)).apply();
+            if (!prog.edit().putString("plan:" + ek, plan.toString()).putString("planHash:" + ek, Tagger.notesHash(e)).commit())
+                throw new IOException("Could not save the processing checkpoint");
         } else plan = new JSONObject(saved);
 
         // 1b. the same answer tags the capture, so it shows its type, tags and title in the inbox at once
@@ -330,6 +355,7 @@ final class Ingest {
             throw new IOException("Why or Ideas changed while processing: it will be processed again");
         }
 
+        if (Tagger.halt()) throw new IOException("Processing paused");
         VaultLock.L.lock(); // every read, edit and write below is one step against other in-app writers
         try {
         // 3. write, one recorded step at a time
@@ -477,22 +503,21 @@ final class Ingest {
 
     private static void step(SharedPreferences prog, String ek, Set<String> done, String name) {
         done.add(name);
-        prog.edit().putStringSet(ek, new HashSet<>(done)).apply();
+        if (!prog.edit().putStringSet(ek, new HashSet<>(done)).commit()) throw new IllegalStateException("Could not save the write checkpoint");
     }
 
-    /** The saved text of the link for the model. A video whose transcript was never looked for is read again with transcription, and a link with no saved text is fetched now. A network failure with nothing saved stops this try. */
-    private static String pageText(Context c, String key, InboxFile.Entry e, int tries) throws IOException {
+    /** Refresh legacy text-only caches once, then reuse completed visual evidence. */
+    private static String pageText(Context c, String key, InboxFile.Entry e, int tries) throws Exception {
         String page = Content.load(c, e.url, PAGE_FOR_MODEL);
-        boolean video = !Transcript.videoId(e.url).isEmpty();
-        boolean instagram = !Instagram.shortcode(e.url).isEmpty();
-        if (page.isEmpty() || (video && !page.contains("### Transcript")) || (instagram && !page.contains("### Video content"))) {
-            try {
-                Fetch.Result r = Fetch.page(e.url, key, instagram || tries < 4);
-                if (instagram && r.thin) throw new IOException(r.problem);
-                if (!r.text.isEmpty()) { Content.save(c, e.url, r.text); page = r.text.length() > PAGE_FOR_MODEL ? r.text.substring(0, PAGE_FOR_MODEL) : r.text; }
-            } catch (IOException offline) { if (page.isEmpty() || instagram) throw offline; }
+        if (!page.isEmpty() && Visuals.complete(c, e.url)) return Visuals.prompt(c, e.url, PAGE_FOR_MODEL);
+        Fetch.Result fetched = Fetch.page(e.url, key, tries < 4);
+        if (!fetched.problem.isEmpty() && (fetched.text.isEmpty() || fetched.thin && fetched.media.isEmpty())) {
+            if (fetched.problem.contains("429") || fetched.problem.matches(".*5[0-9][0-9].*")) throw new Net.Deferred(fetched.problem);
+            throw new IOException("Source could not be read: " + fetched.problem);
         }
-        return page;
+        if (fetched.text.isEmpty() && fetched.media.isEmpty()) throw new IOException("Source did not provide readable content. Retry or share the text or media.");
+        Visuals.read(c, key, e.url, fetched);
+        return Visuals.prompt(c, e.url, PAGE_FOR_MODEL);
     }
 
     /** The JSON object in a model reply, tolerating a Markdown fence, a sentence around it, stray commas and a cut-off ending. */

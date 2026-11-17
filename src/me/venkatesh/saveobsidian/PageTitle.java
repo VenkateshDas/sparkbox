@@ -48,14 +48,15 @@ final class PageTitle {
 
     /** A shared link must not make the phone probe its own network: loopback, LAN and link-local hosts are never fetched (also after redirects). */
     // ponytail: resolves twice, so DNS rebinding could still slip past; pin the resolved address if that ever matters
-    static boolean publicHost(String host) {
+    static boolean publicHost(String host) throws java.net.UnknownHostException {
+        if (host == null || host.isEmpty()) return false;
         try {
             for (java.net.InetAddress a : java.net.InetAddress.getAllByName(host))
                 if (a.isAnyLocalAddress() || a.isLoopbackAddress() || a.isLinkLocalAddress() || a.isSiteLocalAddress() || a.isMulticastAddress()
                     || (a.getAddress().length == 16 && (a.getAddress()[0] & 0xfe) == 0xfc) // fc00::/7 unique-local
                     || (a.getAddress().length == 4 && (a.getAddress()[0] & 0xff) == 100 && (a.getAddress()[1] & 0xc0) == 64)) return false; // 100.64.0.0/10 carrier-grade NAT
             return true;
-        } catch (java.net.UnknownHostException | RuntimeException unknown) { return false; }
+        } catch (RuntimeException invalid) { return false; }
     }
 
     /** Bounded HTTPS image download (2 MB max, same host and redirect rules as html()), or null. */

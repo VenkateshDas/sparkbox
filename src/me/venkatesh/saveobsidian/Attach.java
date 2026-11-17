@@ -121,6 +121,24 @@ final class Attach {
         }
     }
 
+    /** Bounded decode of downloaded images; inspect dimensions before allocating pixels. */
+    static byte[] jpeg(byte[] data, int edge) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 1;
+        while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > edge)
+            options.inSampleSize *= 2;
+        Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length, options);
+        if (bitmap == null) return null;
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out);
+            return out.toByteArray();
+        } finally { bitmap.recycle(); }
+    }
+
     /** Photo shrunk so its longest side is at most edge pixels, as JPEG. Null when it cannot be decoded. */
     static byte[] jpeg(Context c, Uri uri, int edge) throws IOException {
         BitmapFactory.Options bounds = new BitmapFactory.Options();

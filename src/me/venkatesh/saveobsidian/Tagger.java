@@ -18,18 +18,24 @@ final class Tagger {
     /** One run at a time, each with its own stop switch. A run silent for 20 minutes is asked to stop; a new one waits for its thread to end. */
     static final RunGate GATE = new RunGate();
     /** True when this thread's run was told to stop (Android ended the job): loops end after the call in flight. */
-    static boolean halt() { return Cancel.current().stopped(); }
+    private static final ThreadLocal<Long> deadline = new ThreadLocal<>();
+    static boolean halt() {
+        Long until = deadline.get();
+        return Cancel.current().stopped() || (until != null && android.os.SystemClock.elapsedRealtime() >= until);
+    }
 
     /** Provider and inbox errors end the run and are kept in prefs for Settings; the next job retries. */
-    static void run(Context c) {
+    static void run(Context c, Cancel cancel) {
         String key = Model.key(c);
         if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
-        try { if (GATE.enter(20 * 60000L, 30000L) == null) return; } catch (InterruptedException i) { return; } // busy: that run looks again when done
+        try { if (GATE.enter(20 * 60000L, 30000L, cancel) == null) return; } catch (InterruptedException i) { return; } // busy: that run looks again when done
+        deadline.set(android.os.SystemClock.elapsedRealtime() + 7 * 60_000L);
         String problem = "";
         try {
             // Each stage stands alone: a tagging failure must not stop ingest, and a dead network in one must not hide what another could still do.
-            String[] stages = {"sweep", "transcribe", "tag", "backfill", "file", "cards", "describe", "embed"};
+            String[] stages = {"sweep", "tag", "file", "transcribe", "describe", "cards", "backfill", "embed"};
             for (String stage : stages) {
+                if (halt()) break;
                 long stageBegan = System.currentTimeMillis();
                 try {
                     switch (stage) {
@@ -51,15 +57,15 @@ final class Tagger {
             }
         } finally {
             c.getSharedPreferences("capture", 0).edit().putString("aiProblem", problem).apply();
+            deadline.remove();
             GATE.exit();
         }
-        if (GATE.again) run(c); // a capture arrived while this run was busy (even if Android stopped the job meanwhile: the process is still here)
     }
 
     private static void tag(Context c, String key) throws Exception {
         String model = c.getSharedPreferences("capture", 0).getString("aiModel", Model.DEFAULT);
         Set<String> skipped = new HashSet<>();
-        for (int calls = 0; calls < 40 && !halt(); ) {
+        for (int calls = 0; calls < 8 && !halt(); ) {
             String destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             InboxFile.Entry next = null;
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
@@ -127,7 +133,7 @@ final class Tagger {
         android.content.SharedPreferences tried = c.getSharedPreferences("enriched", 0);
         int fetched = 0;
         for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
-            if (fetched >= 10 || halt()) return;
+            if (fetched >= 3 || halt()) return;
             String mark = "page:" + Long.toHexString(Index.key(Capture.identity(e.url)));
             if (e.text || e.url.isEmpty() || e.type.isEmpty() || Content.has(c, e.url) || tried.getBoolean(mark, false)) continue;
             fetched++;

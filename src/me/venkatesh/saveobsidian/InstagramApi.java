@@ -41,7 +41,7 @@ final class InstagramApi {
                 + "&lsd=" + encode(lsd) + "&av=" + encode(av.isEmpty() ? "0" : av);
             if (!dtsg.isEmpty()) body += "&fb_dtsg=" + encode(dtsg);
             Instagram.Media media = Instagram.data(request("/api/graphql", body, lsd), shortcode);
-            if (media.video.isEmpty() && media.caption.isEmpty()) throw new Instagram.AccessRequired();
+            if (media.items.isEmpty() && media.caption.isEmpty()) throw new Instagram.AccessRequired();
             return media;
         } catch (org.json.JSONException invalid) { throw new IOException("Instagram metadata could not be read", invalid); }
     }

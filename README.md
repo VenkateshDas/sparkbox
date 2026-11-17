@@ -4,7 +4,7 @@ A personal Android app that catches links, thoughts, voice notes and files, and 
 
 Repository: https://github.com/VenkateshDas/sparkbox. The package ID keeps its original name (`me.venkatesh.saveobsidian`) so updates install in place.
 
-Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against API 37.
+Version `1.9.1` (version code `13`). Min API 26, target API 35, compiled against API 37.
 
 ## What it does
 
@@ -15,6 +15,8 @@ Version `1.9.0` (version code `12`). Min API 26, target API 35, compiled against
 - Captures are queued in private app storage first, then appended to the vault inbox (`Knowledge/Sources/Inbox.md`) with a verified write.
 
 **Processing** (in the background, needs an OpenRouter key)
+- Processing runs only inside a persisted Android job, including Retry. Fresh captures request expedited execution with an ordinary-job fallback; interrupted jobs resume after Android allows work again. Force stop requires user interaction before processing resumes.
+- Article figures and Instagram photo/carousel media are read visually before planning. Each visual result is checkpointed, large carousels continue across bounded passes, and every inspected item is represented in the plan. Private media bytes go to OpenRouter; Instagram cookies stay on the phone.
 - **Ingest** turns each link into a Source note, adds claims to existing Topic pages, creates new Topics, People and Entities, updates the indexes and the log, and removes the capture from the inbox. Each step is checkpointed, so a stopped or killed run resumes without paying for the model again.
 - A second, cheaper model files each Source under **Craft** (work) or **Life**.
 - **Why** and **My ideas** written on a capture are instructions to the model.
@@ -48,7 +50,7 @@ Schedules remain disabled pending device qualification. This is not yet the comp
 
 - No server, accounts, ads or analytics. Feature counters stay on the phone.
 - Only `Knowledge/` and `Sources/` in the vault are read; nothing else is read or sent anywhere.
-- What goes to OpenRouter: the page text and your Why/Ideas when a capture is processed, reel videos and shared videos when described, questions and the notes Ask reads, card prompts, voice clips for transcription, and text to embed for search. The key is stored encrypted on the phone.
+- What goes to OpenRouter: source images, the page text and your Why/Ideas when a capture is processed, reel videos and shared videos when described, questions and the notes Ask reads, card prompts, voice clips for transcription, and text to embed for search. The key is stored encrypted on the phone.
 - Write access is granted through Android's folder picker. The app writes only under `Knowledge` and `Sources`, adds to pages rather than rewriting them, reads every write back, and keeps the previous text privately for two weeks.
 
 ## Build

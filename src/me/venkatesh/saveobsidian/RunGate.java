@@ -12,6 +12,10 @@ public final class RunGate {
 
     /** The new run's token, or null when another run still holds the gate (then again is set, so that run goes round once more). */
     public Cancel enter(long hungMs, long waitMs) throws InterruptedException {
+        return enter(hungMs, waitMs, new Cancel());
+    }
+
+    public Cancel enter(long hungMs, long waitMs, Cancel requested) throws InterruptedException {
         if (!busy.compareAndSet(false, true)) {
             if (System.currentTimeMillis() - began < hungMs) { again = true; return null; }
             Cancel old = token; Thread t = owner;
@@ -22,7 +26,7 @@ public final class RunGate {
         began = System.currentTimeMillis();
         again = false;
         owner = Thread.currentThread();
-        token = new Cancel();
+        token = requested;
         Cancel.use(token);
         return token;
     }

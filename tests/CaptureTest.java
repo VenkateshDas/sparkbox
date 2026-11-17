@@ -784,6 +784,30 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(Instagram.data("{\"data\":{\"xig_polaris_media\":null}}", "Ab_12-").video.isEmpty());
         check(Failures.kind("Instagram requires account access for this reel").equals(Failures.ACCESS));
         check(!Failures.retries(Failures.ACCESS));
+        org.json.JSONObject photo = new org.json.JSONObject().put("code", "Photos").put("media_type", 1)
+            .put("image_versions2", new org.json.JSONObject().put("candidates", new org.json.JSONArray()
+                .put(new org.json.JSONObject().put("url", "https://cdn.example/first.jpg"))));
+        org.json.JSONObject carousel = new org.json.JSONObject().put("code", "Slides").put("media_type", 3)
+            .put("carousel_media", new org.json.JSONArray().put(photo).put(product));
+        Instagram.Media slides = Instagram.data(carousel.toString(), "Slides");
+        check(slides.items.size() == 2 && !slides.items.get(0).video && slides.items.get(1).video);
+        check(slides.items.get(0).url.equals("https://cdn.example/first.jpg"));
+        org.json.JSONObject sidecar = new org.json.JSONObject().put("shortcode", "GraphSlides")
+            .put("edge_sidecar_to_children", new org.json.JSONObject().put("edges", new org.json.JSONArray()
+                .put(new org.json.JSONObject().put("node", new org.json.JSONObject().put("display_url", "https://cdn.example/slide.jpg")))));
+        check(Instagram.data(sidecar.toString(), "GraphSlides").items.get(0).url.endsWith("/slide.jpg"));
+        String prose = "Readable paragraphs explain how the background worker reads each pending event. ".repeat(8);
+        Extract.Page diagram = Extract.parse("<nav><img src='/logo.jpg'></nav><article><p>" + prose
+            + "</p><figure><img src='data:image/gif;base64,abc' data-src='/diagram.png' alt='Queue diagram'>"
+            + "<figcaption>Read pending events</figcaption></figure><img src='/diagram.png'><img width='1' height='1' src='/track'></article>", "https://example.com/post");
+        check(diagram.media.size() == 1 && diagram.media.get(0).url.equals("https://example.com/diagram.png"));
+        check(diagram.media.get(0).caption.equals("Read pending events"));
+        Cancel supplied = new Cancel();
+        RunGate owned = new RunGate();
+        check(owned.enter(1000, 0, supplied) == supplied && Cancel.current() == supplied);
+        supplied.stop();
+        check(Cancel.current().stopped());
+        owned.exit();
     }
 
     static void limits() throws Exception {
@@ -815,6 +839,9 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(Failures.kind("Knowledge/index.md changed while it was being edited. It will be tried again.").equals(Failures.CONFLICT));
         check(Failures.kind("Why or Ideas changed while processing: it will be processed again").equals(Failures.CONFLICT));
         check(Failures.kind("Something odd").equals(Failures.OTHER));
+        check(Failures.kind("Source could not be read: The site answered 403").equals(Failures.OTHER));
+        check(Net.temporary(new java.net.SocketTimeoutException("slow source")));
+        check(!Net.temporary(new IOException("Invalid source")));
         check(Failures.kind("Instagram could not provide this post (HTTP 403). Retry later or share the video file.").equals(Failures.OTHER));
         check(Failures.kind("Instagram could not provide this post (HTTP 429). Retry later or share the video file.").equals(Failures.OTHER));
         check(!Failures.retries(Failures.KEY) && Failures.retries(Failures.RATE) && Failures.retries(Failures.CONFLICT));

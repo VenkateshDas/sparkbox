@@ -39,6 +39,7 @@ public final class Instagram {
     public static final class Media {
         public String caption = "", author = "", video = "", image = "";
         public boolean isVideo;
+        public final java.util.List<Extract.Media> items = new java.util.ArrayList<>();
     }
 
     public static Media parse(String html, String shortcode) {
@@ -64,6 +65,22 @@ public final class Instagram {
         if (result.video.isEmpty() && versions != null && versions.optJSONObject(0) != null) result.video = versions.optJSONObject(0).optString("url");
         if (!result.video.isEmpty()) result.isVideo = true;
         result.image = node.optString("display_url");
+        JSONObject candidates = node.optJSONObject("image_versions2");
+        JSONArray images = candidates == null ? null : candidates.optJSONArray("candidates");
+        if (result.image.isEmpty() && images != null && images.optJSONObject(0) != null)
+            result.image = images.optJSONObject(0).optString("url");
+        JSONArray children = node.optJSONArray("carousel_media");
+        JSONObject sidecar = node.optJSONObject("edge_sidecar_to_children");
+        if (children == null && sidecar != null) children = sidecar.optJSONArray("edges");
+        if (children != null) {
+            for (int i = 0; i < children.length(); i++) {
+                JSONObject child = children.optJSONObject(i);
+                if (child == null) continue;
+                if (child.optJSONObject("node") != null) child = child.optJSONObject("node");
+                result.items.addAll(media(child).items);
+            }
+        } else if (result.isVideo && !result.video.isEmpty()) result.items.add(new Extract.Media(result.video, "", true));
+        else if (!result.image.isEmpty()) result.items.add(new Extract.Media(result.image, "", false));
         JSONObject owner = node.optJSONObject("owner");
         if (owner == null) owner = node.optJSONObject("user");
         if (owner != null) result.author = owner.optString("username");
@@ -83,7 +100,7 @@ public final class Instagram {
         if (value instanceof JSONObject) {
             JSONObject o = (JSONObject) value;
             if ((shortcode.equals(o.optString("shortcode")) || shortcode.equals(o.optString("code")))
-                && (o.has("is_video") || o.has("video_url") || o.has("video_versions") || o.has("media_type"))) return o;
+                && (o.has("is_video") || o.has("video_url") || o.has("video_versions") || o.has("media_type") || o.has("display_url") || o.has("edge_sidecar_to_children"))) return o;
             for (java.util.Iterator<String> keys = o.keys(); keys.hasNext(); ) {
                 JSONObject found = find(o.opt(keys.next()), shortcode, depth + 1);
                 if (found != null) return found;

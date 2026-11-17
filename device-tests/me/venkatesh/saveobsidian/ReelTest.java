@@ -44,11 +44,12 @@ public class ReelTest extends Instrumentation {
                 if (Instagram.shortcode(url).isEmpty()) throw new IllegalArgumentException("Supply -e url with a public Instagram post");
                 boolean watch = "true".equals(arguments.getString("watch"));
                 Fetch.Result page = Fetch.page(url, Model.key(context), watch);
+                if (watch) page.text = Visuals.read(context, Model.key(context), url, page);
                 result.putString("title", page.title);
                 result.putString("problem", page.problem);
                 result.putInt("characters", page.text.length());
-                if (page.text.isEmpty()) throw new AssertionError("No usable reel content: " + page.problem);
-                if (watch && (page.thin || !page.text.contains("### Video content"))) throw new AssertionError("Reel was not watched");
+                if (page.text.isEmpty() && page.media.isEmpty()) throw new AssertionError("No usable reel content: " + page.problem);
+                if (watch && (!page.text.contains("#### Video ") && !page.text.contains("#### Image "))) throw new AssertionError("Reel was not watched");
             }
             result.putString("result", "PASS");
             finish(-1, result);
