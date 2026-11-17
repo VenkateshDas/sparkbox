@@ -300,6 +300,10 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
         meta.append(" · updated ").append(when(day(n)).toLowerCase(Locale.ROOT));
         b.add(new Body(meta.toString(), true, false));
         b.add(new Link("Open in Obsidian  ↗", () -> openInObsidian(n)));
+        if (!n.catalog) {
+            b.add(new Primary("Edit Markdown", () -> startActivity(new Intent(this, MainActivity.class).putExtra("noteAction", "edit").putExtra("notePath", n.path))));
+            b.add(new Primary("Cards", () -> startActivity(new Intent(this, MainActivity.class).putExtra("noteAction", "cards").putExtra("notePath", n.path))));
+        }
         if (!n.topics.isEmpty()) {
             List<Act> chips = new ArrayList<>();
             for (String t : n.topics) { Vault.Note to = snap.graph.resolve(t); chips.add(new Act(t, () -> { if (to != null) go("note", to.path); })); }

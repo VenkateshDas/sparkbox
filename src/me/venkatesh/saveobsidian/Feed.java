@@ -187,7 +187,12 @@ public final class Feed {
                 fresh++;
                 if (minutes(at) >= newest) { newest = minutes(at); lane = Lane.of(from.path, from.meta); }
             }
-            if (fresh < 2) continue;
+            boolean personal = n.meta("via").equals("Sparkbox") && !n.meta("captured").isEmpty();
+            if (fresh < 2 && !personal) continue;
+            if (personal) {
+                LocalDateTime captured = when(n.meta("captured"), new boolean[1]);
+                if (captured != null) newest = Math.max(newest, minutes(captured));
+            }
             Item it = new Item();
             it.kind = TOPIC; it.path = n.path; it.title = n.title; it.count = fresh; it.lane = lane;
             it.minute = newest; it.tie = n.mtime - 1; it.age = "";
@@ -224,6 +229,22 @@ public final class Feed {
         int from = Math.max(0, at - width / 3), to = Math.min(flat.length(), from + width);
         from = Math.max(0, Math.min(from, to - width));
         return (from > 0 ? "…" : "") + flat.substring(from, to).trim() + (to < flat.length() ? "…" : "");
+    }
+
+    public static List<Item> bookmarks(Collection<Vault.Note> notes, Set<String> kept) {
+        List<Item> out = new ArrayList<>();
+        for (Vault.Note n : notes) {
+            if (n.catalog || !kept.contains(n.path)) continue;
+            Item it = new Item();
+            it.path = n.path; it.title = n.title; it.kept = true; it.tie = n.mtime;
+            it.kind = n.path.startsWith("Knowledge/Topics/") ? TOPIC : n.path.startsWith("Knowledge/People/") ? PERSON : SOURCE;
+            it.lane = Lane.of(n.path, n.meta); it.url = n.meta("source"); it.sourceName = host(it.url);
+            it.tldr = n.description.equals(n.title) ? "" : n.description;
+            it.cards = Cards.parse(n.path, n.cardsText).size();
+            out.add(it);
+        }
+        out.sort((a, b) -> { int c = Long.compare(b.tie, a.tie); return c == 0 ? a.path.compareTo(b.path) : c; });
+        return out;
     }
 
     /** The items a filter chip shows: All, Craft, Life, Sources, Topics, People. People appear only under their own chip. */

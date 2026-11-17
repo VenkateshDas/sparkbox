@@ -26,7 +26,7 @@ final class TopicScreen extends Screen {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final PageState page = new PageState();
     private Ui ui;
-    private String text = "", draft;
+    private String text = "", draft, previousTake;
 
     TopicScreen(String path) { this.path = path; }
 
@@ -36,6 +36,8 @@ final class TopicScreen extends Screen {
         load();
         return PageView.create(ui.c, ui, "Topic", page, () -> host.onBackPressed());
     }
+
+    @Override void onShow() { load(); }
 
     private VaultStore.Snap snap() { return VaultStore.cached(ui.c); }
 
@@ -87,7 +89,8 @@ final class TopicScreen extends Screen {
         String section = Vault.section(text, "My take"), body = NoteEdit.takeText(section), edited = NoteEdit.takeEdited(section);
         String label = "Your take";
         if (!edited.isEmpty()) { try { long d = ChronoUnit.DAYS.between(LocalDate.parse(edited), LocalDate.now()); label += ", edited " + (d <= 0 ? "today" : d + "d ago"); } catch (RuntimeException bad) { } }
-        if (draft == null) draft = body;
+        if (draft == null || draft.equals(previousTake)) draft = body;
+        previousTake = body;
         b.add(new Editor(label, body, draft, "What you think about this topic, in your own words", d -> draft = d, (value, done) -> {
             String stamped = NoteEdit.takeBody(value, LocalDate.now().toString());
             Edits.section(ui.c, n.path, "My take", stamped, new String[]{"Core Mechanism"}, problem -> {
@@ -119,6 +122,8 @@ final class TopicScreen extends Screen {
         rows.add(count("People mentioned", people, "person", "people"));
         rows.add(count("Open questions", questions, "open", "open"));
         b.add(new Group(rows));
+        b.add(new Primary("Cards", () -> host.push(new CardsScreen(n.path))));
+        b.add(new Primary("Edit Markdown", () -> host.push(new NoteEditorScreen(n.path))));
         final Study.Scope study = Study.topicOf(g, n.path, n.title);
         int k = study == null ? 0 : Study.filter(CardStore.all(ui.c), study, System.currentTimeMillis()).size();
         if (k > 0) b.add(new Primary("Study " + k + (k == 1 ? " card" : " cards") + " in Spark", () -> host.study(study)));

@@ -123,7 +123,7 @@ final class SparkScreen extends Screen {
 
     /** Today's plan from every card in the vault. */
     static Spark.Plan plan(Ui ui) {
-        return Spark.plan(CardStore.all(ui.c), CardStore.kept(), System.currentTimeMillis(), ZoneId.systemDefault(), cap(ui), CardStore.newestFirst());
+        return Spark.plan(CardStore.all(ui.c), System.currentTimeMillis(), ZoneId.systemDefault(), cap(ui), CardStore.newestFirst());
     }
 
     // ---- inspire: old claims and links between notes, made on the spot and never scheduled ----
@@ -223,17 +223,17 @@ final class SparkScreen extends Screen {
         allowed = scope.kind.equals(Study.ALL) ? null : new HashSet<String>();
         if (allowed != null) for (Cards.Card k : all) allowed.add(k.path);
         boolean gate = scope.kind.equals(Study.ALL) && !mode.equals("all"); // you chose this scope or this mode: nothing is held back
-        Spark.Plan plan = Spark.plan(all, CardStore.kept(), now, zone, cap(ui), CardStore.newestFirst(), gate);
+        Spark.Plan plan = Spark.plan(all, now, zone, cap(ui), CardStore.newestFirst(), gate);
         card = null; note = null;
         List<Cards.Card> queue;
         int done;
         switch (mode) {
             case "quick": {
-                Spark.Plan p = Spark.plan(all, CardStore.kept(), now, zone, plan.reviewedToday + 6, CardStore.newestFirst(), gate);
+                Spark.Plan p = Spark.plan(all, now, zone, plan.reviewedToday + 6, CardStore.newestFirst(), gate);
                 queue = p.queue.subList(0, Math.min(6, p.queue.size())); done = sessionDone; break;
             }
             case "all": {
-                Spark.Plan p = Spark.plan(all, CardStore.kept(), now, zone, plan.reviewedToday + 100000, CardStore.newestFirst(), false);
+                Spark.Plan p = Spark.plan(all, now, zone, plan.reviewedToday + 100000, CardStore.newestFirst(), false);
                 queue = new ArrayList<>(p.queue);
                 for (Cards.Card c : all) if (c.state != null && c.state.due > now && !queue.contains(c)) queue.add(c); // "All" means all: cards scheduled for later too, so the count matches the Study button
                 done = sessionDone; break;

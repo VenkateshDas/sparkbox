@@ -43,10 +43,17 @@ public class RecordService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? STOP : intent.getAction();
-        if (START.equals(action) && !active) begin();
+        if (START.equals(action) && !active) {
+            try { destination(this, new JSONObject(intent.getStringExtra("destination") == null ? "{}" : intent.getStringExtra("destination"))); begin(); }
+            catch (Exception e) { toast("Could not save recording destination"); stopSelf(); }
+        }
         else if (STOP.equals(action) || CANCEL.equals(action)) end(STOP.equals(action));
         else if (!active) stopSelf(); // a stale start that cannot record still has to leave foreground cleanly
         return START_NOT_STICKY;
+    }
+
+    static void destination(android.content.Context c, JSONObject value) {
+        if (!c.getSharedPreferences("capture", 0).edit().putString("recordDestination", value.toString()).commit()) throw new IllegalStateException("Recording destination could not be saved");
     }
 
     private Notification notification() {
@@ -109,7 +116,8 @@ public class RecordService extends Service {
         active = false;
         if (save && kept) {
             try {
-                CaptureService.enqueue(this, new JSONObject().put("kind", "voice").put("audio", audio.getPath()).put("format", "m4a").put("label", "Voice note").put("time", startedAt));
+                CaptureService.enqueue(this, new JSONObject(getSharedPreferences("capture", 0).getString("recordDestination", "{}")).put("kind", "voice").put("audio", audio.getPath()).put("format", "m4a").put("label", "Voice note").put("time", startedAt));
+                getSharedPreferences("capture", 0).edit().remove("quickDestination").apply();
                 BackgroundJob.schedule(this);
                 toast(Model.key(this).isEmpty() ? "Saved. Add a key in Settings to transcribe." : "Saved. Transcribing…");
             } catch (Exception e) { toast("Recording kept on this phone but not queued: " + e.getMessage()); }

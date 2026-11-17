@@ -15,6 +15,7 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
     private static final int MIC = 7;
     private QuickState view;
     private boolean closing, wasRecording;
+    private org.json.JSONObject destination = new org.json.JSONObject();
     private long asked;
     private final Handler loop = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() { @Override public void run() { update(); loop.postDelayed(this, 60); } };
@@ -25,6 +26,8 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
         Ui ui = new Ui(this);
         view = new QuickState(getSharedPreferences("capture", 0).getString("draft", ""), CaptureService.inboxName(this),
             Model.key(this).isEmpty() ? "Add an OpenRouter key in Settings to turn recordings into text. Until then they wait on this phone." : "Sent to OpenRouter for a transcript, then the audio is deleted");
+        try { destination = new org.json.JSONObject(getSharedPreferences("capture", 0).getString(RecordService.active ? "recordDestination" : "quickDestination", "{}")); } catch (Exception ignored) { }
+        view.setDestination(DestinationPicker.label(destination));
         QuickViewHost.set(this, ui, view, actions);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) { @Override public void handleOnBackPressed() { close(); } });
         boolean voice = VOICE.equals(getIntent().getAction()) || RecordService.active;
@@ -37,9 +40,16 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
         @Override public void speak() { startSpeaking(); }
         @Override public void save(String text) { saveText(text); }
         @Override public void discard() { startService(new Intent(QuickActivity.this, RecordService.class).setAction(RecordService.CANCEL)); close(); }
-        @Override public void stop() { getWindow().getDecorView().performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); startService(new Intent(QuickActivity.this, RecordService.class).setAction(RecordService.STOP)); close(); }
+        @Override public void stop() { getSharedPreferences("capture", 0).edit().remove("quickDestination").apply(); getWindow().getDecorView().performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); startService(new Intent(QuickActivity.this, RecordService.class).setAction(RecordService.STOP)); close(); }
         @Override public void dismiss() { close(); }
-        @Override public void draft(String text) { }
+        @Override public void draft(String text) { getSharedPreferences("capture", 0).edit().putString("draft", text).apply(); }
+        @Override public void destination() { DestinationPicker.show(QuickActivity.this, destination, d -> {
+            try {
+                if (RecordService.active) RecordService.destination(QuickActivity.this, d);
+                if (!getSharedPreferences("capture", 0).edit().putString("quickDestination", d.toString()).commit()) throw new IllegalStateException();
+                destination = d; view.setDestination(DestinationPicker.label(d));
+            } catch (Exception e) { Toast.makeText(QuickActivity.this, "Destination could not be saved. Check the selected destination before saving.", Toast.LENGTH_LONG).show(); }
+        }); }
     };
 
     private void show(boolean speak) {
@@ -54,7 +64,7 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
         asked = System.currentTimeMillis();
         wasRecording = false;
         view.clear();
-        startForegroundService(new Intent(this, RecordService.class).setAction(RecordService.START));
+        startForegroundService(new Intent(this, RecordService.class).setAction(RecordService.START).putExtra("destination", destination.toString()));
         getWindow().getDecorView().performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
         show(true);
     }
@@ -82,9 +92,13 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
         String text = raw.trim();
         if (text.isEmpty()) return;
         try {
-            CaptureService.enqueue(this, "text", "", "", text);
-            getSharedPreferences("capture", 0).edit().remove("draft").apply();
-            ShareActivity.dispatch(this);
+            if (DirectCapture.direct(destination)) CaptureService.enqueue(this, new org.json.JSONObject(destination.toString()).put("kind", "text").put("text", raw));
+            else {
+                String url = null; try { url = Capture.firstUrl(text); } catch (IllegalArgumentException ignored) { }
+                CaptureService.enqueue(this, url == null ? "text" : "link", url == null ? "" : Capture.cleanUrl(url), "", raw);
+            }
+            getSharedPreferences("capture", 0).edit().remove("draft").remove("quickDestination").apply();
+            if (DirectCapture.direct(destination)) BackgroundJob.schedule(this); else ShareActivity.dispatch(this);
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
             closing = true;
             close();

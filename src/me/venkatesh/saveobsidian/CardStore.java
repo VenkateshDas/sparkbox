@@ -49,9 +49,9 @@ final class CardStore {
         Set<String> keep = new HashSet<>();
         List<Vault.Note> withCards = new ArrayList<>();
         for (Vault.Note n : snap.graph.notes) {
+            if (n.meta("kept").equalsIgnoreCase("true")) keep.add(n.path);
             if (n.cardsText.isEmpty()) continue;
             withCards.add(n);
-            if (n.meta("kept").equalsIgnoreCase("true")) keep.add(n.path);
             next.addAll(Cards.parse(n.path, n.cardsText));
         }
         withCards.sort((a, b) -> {
@@ -66,7 +66,8 @@ final class CardStore {
         kept = keep;
         newestFirst = order;
         loaded = snap.graph;
-        for (JSONObject op : pending(c)) applyToMemory(op); // changes not yet saved still show
+        try { for (JSONObject op : pending(c)) if (!op.has("vault") || op.optString("vault").equals(VaultStore.tree(c))) applyToMemory(op); }
+        catch (IllegalStateException damaged) { message(c, "Pending card queue needs recovery. No queued data was removed."); }
     }
 
     // ---- changes ----
@@ -85,10 +86,10 @@ final class CardStore {
     static void flag(Context c, Cards.Card card, boolean on) { keys(c, card, "Flag", on ? "yes" : null); }
     static void park(Context c, Cards.Card card, long until) { keys(c, card, "Parked", until > 0 ? Cards.time(until) : null); }
 
-    static void edit(Context c, Cards.Card card, String q, String a, String take) {
+    static boolean edit(Context c, Cards.Card card, String q, String a, String take) {
         Map<String, String> kv = new LinkedHashMap<>();
         kv.put("Q", q); kv.put("A", a); kv.put("Take", take.trim().isEmpty() ? null : take.trim());
-        change(c, op("keys", card.path, "id", card.id, "kv", json(kv)));
+        return change(c, op("keys", card.path, "id", card.id, "kv", json(kv)));
     }
 
     /** The owner's own card, on a note or (path null) in My cards. */
@@ -97,13 +98,12 @@ final class CardStore {
         card.path = path == null ? Layout.sources() + "/My cards.md" : path;
         card.q = q.trim(); card.a = a.trim(); card.take = take.trim(); card.origin = "mine";
         card.id = Cards.id("mine|" + System.currentTimeMillis(), card.q);
-        change(c, op("add", card.path, "block", Cards.format(card), "fresh", path == null));
-        return card;
+        return change(c, op("add", card.path, "block", Cards.format(card), "fresh", path == null)) ? card : null;
     }
 
     static void remove(Context c, Cards.Card card) { change(c, op("remove", card.path, "id", card.id)); }
 
-    /** Marks a note's cards to come first (Keep). */
+    /** Bookmarks a whole note independently of its cards. */
     static void keep(Context c, String path, boolean on) { change(c, op("key", path, "key", "kept", "value", on ? "true" : JSONObject.NULL)); }
 
     private static void keys(Context c, Cards.Card card, String key, String value) {
@@ -126,15 +126,20 @@ final class CardStore {
         return o;
     }
 
-    private static void change(Context c, JSONObject op) {
+    private static boolean change(Context c, JSONObject op) {
         synchronized (LOCK) {
+            if (!VaultWrite.writable(c)) { message(c, "Not saved. Allow vault write access in Settings."); return false; }
+            try {
+                op.put("operationId", java.util.UUID.randomUUID().toString()).put("vault", VaultStore.tree(c));
+                StringBuilder text = new StringBuilder();
+                for (JSONObject old : pending(c)) text.append(old).append('\n');
+                text.append(op).append('\n');
+                writeQueue(c, text.toString());
+            } catch (Exception e) { message(c, "Not saved. Could not queue your change."); return false; }
             applyToMemory(op);
-            try (java.io.FileOutputStream out = new java.io.FileOutputStream(queueFile(c), true)) {
-                out.write((op.toString() + "\n").getBytes(StandardCharsets.UTF_8));
-                out.getFD().sync();
-            } catch (Exception e) { android.util.Log.w("sparkbox", "card change not queued: " + e); }
         }
         flushSoon(c);
+        return true;
     }
 
     private static void applyToMemory(JSONObject op) {
@@ -185,11 +190,18 @@ final class CardStore {
     private static List<JSONObject> pending(Context c) {
         List<JSONObject> out = new ArrayList<>();
         File f = queueFile(c);
-        if (!f.exists()) return out;
+        if (!f.exists() && !new File(f.getPath() + ".bak").exists()) return out;
         try {
-            for (String line : new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).split("\n")) if (!line.trim().isEmpty()) out.add(new JSONObject(line));
-        } catch (Exception damaged) { android.util.Log.w("sparkbox", "card queue unreadable: " + damaged); }
+            for (String line : new String(new android.util.AtomicFile(f).readFully(), StandardCharsets.UTF_8).split("\n")) if (!line.trim().isEmpty()) out.add(new JSONObject(line));
+        } catch (Exception damaged) { throw new IllegalStateException("Card queue unreadable; retained for recovery", damaged); }
         return out;
+    }
+
+    private static void writeQueue(Context c, String text) throws Exception {
+        android.util.AtomicFile file = new android.util.AtomicFile(queueFile(c));
+        java.io.FileOutputStream out = file.startWrite();
+        try { out.write(text.getBytes(StandardCharsets.UTF_8)); file.finishWrite(out); }
+        catch (Exception e) { file.failWrite(out); throw e; }
     }
 
     private static volatile Runnable later;
@@ -207,18 +219,30 @@ final class CardStore {
     static void flushNow(Context c, Runnable done) {
         final Context app = c.getApplicationContext();
         WRITER.execute(() -> {
-            try { flush(app); } catch (Exception e) { android.util.Log.w("sparkbox", "card flush failed: " + e); }
+            try { flush(app); } catch (Exception e) { message(app, "Change pending on this phone. Vault save failed; reopen Cards to retry."); }
             if (done != null) MAIN.post(done);
         });
     }
+
+    static boolean pendingFor(Context c, String path) {
+        synchronized (LOCK) {
+            try { for (JSONObject op : pending(c)) if (path.equals(op.optString("path"))) return true; return false; }
+            catch (IllegalStateException damaged) { return true; }
+        }
+    }
+
+    private static void message(Context c, String text) { MAIN.post(() -> android.widget.Toast.makeText(c, text, android.widget.Toast.LENGTH_LONG).show()); }
 
     private static void flush(Context c) throws Exception {
         if (!VaultWrite.writable(c)) return;
         List<JSONObject> ops;
         synchronized (LOCK) { ops = pending(c); }
         if (ops.isEmpty()) return;
+        final String tree = VaultStore.tree(c);
         Map<String, List<JSONObject>> byPath = new LinkedHashMap<>();
-        for (JSONObject op : ops) { List<JSONObject> l = byPath.get(op.getString("path")); if (l == null) byPath.put(op.getString("path"), l = new ArrayList<>()); l.add(op); }
+        for (JSONObject op : ops) {
+            if (op.has("vault") && !op.optString("vault").equals(tree)) throw new java.io.IOException("Pending change belongs to another vault");
+            List<JSONObject> l = byPath.get(op.getString("path")); if (l == null) byPath.put(op.getString("path"), l = new ArrayList<>()); l.add(op); }
         Set<JSONObject> done = new HashSet<>();
         for (Map.Entry<String, List<JSONObject>> e : byPath.entrySet()) {
             String path = e.getKey();
@@ -226,22 +250,20 @@ final class CardStore {
             VaultLock.L.lock(); // read, transform and write as one step against other in-app writers
             try {
             for (int attempt = 0; attempt < 3 && !saved; attempt++) {
-                String before = VaultWrite.read(c, path);
+                String before = VaultWrite.readPinned(c, tree, path);
                 if (before == null) {
                     boolean create = false;
                     for (JSONObject op : e.getValue()) create |= op.optBoolean("fresh");
                     if (!create) { saved = true; break; } // the note is gone: its cards go with it
                     before = "---\ntype: source\ndescription: My own cards\nvia: Sparkbox\n---\n\n# My cards\n";
                     String after = transform(before, e.getValue());
-                    try { VaultWrite.write(c, path, null, after); saved = true; } catch (java.io.IOException exists) { /* appeared meanwhile: retry from its text */ }
+                    try { VaultWrite.writePinned(c, tree, path, null, after); saved = true; } catch (java.io.IOException exists) { /* appeared meanwhile: retry from its text */ }
                     continue;
                 }
                 String after = transform(before, e.getValue());
                 if (after.equals(before)) { saved = true; break; }
                 try {
-                    boolean frontmatter = false;
-                    for (JSONObject op : e.getValue()) frontmatter |= op.getString("t").equals("key");
-                    if (frontmatter) VaultWrite.write(c, path, before, after); else VaultWrite.writeNoBackup(c, path, before, after);
+                    VaultWrite.writePinned(c, tree, path, before, after);
                     saved = true;
                 } catch (VaultWrite.Stale changed) { /* the file changed under us: read it again and re-apply */ }
             }
@@ -252,7 +274,7 @@ final class CardStore {
             List<JSONObject> now = pending(c);
             StringBuilder keep = new StringBuilder();
             for (JSONObject op : now) { boolean gone = false; for (JSONObject d : done) gone |= d.toString().equals(op.toString()); if (!gone) keep.append(op).append('\n'); }
-            Files.write(queueFile(c).toPath(), keep.toString().getBytes(StandardCharsets.UTF_8));
+            writeQueue(c, keep.toString());
         }
         VaultStore.scan(c); // re-reads only the changed notes
     }
@@ -270,7 +292,7 @@ final class CardStore {
                 }
                 case "add": out = Cards.add(out, Cards.parse(op.getString("path"), "## Cards\n\n" + op.getString("block"))); break;
                 case "remove": out = Cards.remove(out, op.getString("id")); break;
-                case "key": out = NoteEdit.setKey(out, op.getString("key"), op.isNull("value") ? null : op.getString("value")); break;
+                case "key": out = NoteEdit.bookmark(out, !op.isNull("value")); break;
                 default:
             }
         }

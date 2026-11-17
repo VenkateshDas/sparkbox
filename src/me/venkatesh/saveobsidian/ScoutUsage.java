@@ -110,14 +110,14 @@ final class ScoutUsage {
         changed.run();
     }
 
-    private static JSONObject get(String path, String key) throws Exception {
+    static JSONObject get(String path, String key) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setConnectTimeout(5000); connection.setReadTimeout(5000);
         if (!key.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + key);
         try (java.io.InputStream in = connection.getInputStream()) {
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
-            for (int n; (n = in.read(buffer)) != -1;) out.write(buffer, 0, n);
+            for (int n; (n = in.read(buffer)) != -1;) { if (out.size() + n > 8 * 1024 * 1024) throw new java.io.IOException("Model response exceeds 8 MiB"); out.write(buffer, 0, n); }
             return new JSONObject(new String(out.toByteArray(), StandardCharsets.UTF_8));
         } finally { connection.disconnect(); }
     }

@@ -1,3 +1,5 @@
+import me.venkatesh.saveobsidian.DirectText;
+import me.venkatesh.saveobsidian.ModelCatalog;
 import me.venkatesh.saveobsidian.Capture;
 import me.venkatesh.saveobsidian.AppendCheck;
 import me.venkatesh.saveobsidian.InboxFile;
@@ -291,21 +293,21 @@ public class CaptureTest {
         java.util.List<Cards.Card> deck = new java.util.ArrayList<>();
         for (int i = 0; i < 12; i++) { Cards.Card c = new Cards.Card(); c.id = "c" + i; c.path = i < 6 ? "a.md" : "b.md"; c.q = "q"; c.a = "a"; deck.add(c); }
         java.util.List<String> newest = java.util.Arrays.asList("b.md", "a.md");
-        Spark.Plan p = Spark.plan(deck, new java.util.HashSet<String>(), n, utc, 7, newest);
+        Spark.Plan p = Spark.plan(deck, n, utc, 7, newest);
         check(p.state.equals("question") && p.queue.size() == 7 && p.queue.get(0).path.equals("b.md") && p.minutes() == 4 && p.reviewedToday == 0); // newest note first, capped at 7
         java.util.Set<String> kept = new java.util.HashSet<>(); kept.add("a.md");
-        check(Spark.plan(deck, kept, n, utc, 7, newest).queue.get(0).path.equals("a.md")); // kept notes first
+        check(Spark.plan(deck, n, utc, 7, newest).queue.get(0).path.equals("b.md")); // bookmarks do not affect study order
         deck.get(0).flag = true; deck.get(1).parked = n + DAYMS; deck.get(2).state = new Cards.State(n - DAYMS, 3, 2.5, 2, 0); deck.get(3).state = new Cards.State(n + 5 * DAYMS, 3, 2.5, 2, 0);
-        Spark.Plan q = Spark.plan(deck, kept, n, utc, 7, newest);
+        Spark.Plan q = Spark.plan(deck, n, utc, 7, newest);
         check(q.queue.get(0).id.equals("c2")); // due cards before new ones
         boolean none = true;
         for (Cards.Card c : q.queue) none &= !c.id.equals("c0") && !c.id.equals("c1") && !c.id.equals("c3"); // flagged, parked and not-yet-due stay out
         check(none && q.nextDue == n + 5 * DAYMS);
         deck.get(4).log = Cards.logWith("", n - 60 * MIN, "good", 5); deck.get(5).log = Cards.logWith(Cards.logWith("", n - 3 * 60 * MIN, "again", 5), n - 2 * 60 * MIN, "good", 5);
-        check(Spark.reviewedToday(deck, n, utc) == 2 && Spark.plan(deck, kept, n, utc, 7, newest).queue.size() == 5); // each card counts once; cap 7 minus 2
-        check(Spark.plan(deck, kept, n, utc, 2, newest).state.equals("cap_reached") && Spark.plan(new java.util.ArrayList<Cards.Card>(), kept, n, utc, 7, newest).state.equals("no_cards"));
+        check(Spark.reviewedToday(deck, n, utc) == 2 && Spark.plan(deck, n, utc, 7, newest).queue.size() == 5); // each card counts once; cap 7 minus 2
+        check(Spark.plan(deck, n, utc, 2, newest).state.equals("cap_reached") && Spark.plan(new java.util.ArrayList<Cards.Card>(), n, utc, 7, newest).state.equals("no_cards"));
         java.util.List<Cards.Card> one = new java.util.ArrayList<>(); Cards.Card done = new Cards.Card(); done.id = "d"; done.path = "a.md"; done.state = new Cards.State(n + DAYMS, 1, 2.5, 1, 0); done.log = Cards.logWith("", n - MIN, "good", 4); one.add(done);
-        check(Spark.plan(one, kept, n, utc, 7, newest).state.equals("caught_up") && Spark.plan(one, kept, n, utc, 1, newest).state.equals("caught_up") && Spark.clampCap(1) == 3 && Spark.clampCap(99) == 20);
+        check(Spark.plan(one, n, utc, 7, newest).state.equals("caught_up") && Spark.plan(one, n, utc, 1, newest).state.equals("caught_up") && Spark.clampCap(1) == 3 && Spark.clampCap(99) == 20);
 
         // ---- card types: parse, validate ----
         java.util.List<String[]> typed = new java.util.ArrayList<>();
@@ -335,10 +337,10 @@ public class CaptureTest {
         Cards.Card base = new Cards.Card(); base.id = "base"; base.path = "g.md"; gate.add(base);
         Cards.Card why = new Cards.Card(); why.id = "why"; why.path = "g.md"; why.type = "why"; gate.add(why);
         Cards.Card lone = new Cards.Card(); lone.id = "lone"; lone.path = "h.md"; lone.type = "teach"; gate.add(lone);
-        java.util.List<Cards.Card> gq = Spark.plan(gate, new java.util.HashSet<String>(), n, utc, 7, newest).queue;
-        check(gq.size() == 2 && !gq.contains(why) && gq.contains(lone) && Spark.plan(gate, new java.util.HashSet<String>(), n, utc, 7, newest, false).queue.contains(why)); // why waits for the note's basic card; a note with only elaboration cards is not blocked
+        java.util.List<Cards.Card> gq = Spark.plan(gate, n, utc, 7, newest).queue;
+        check(gq.size() == 2 && !gq.contains(why) && gq.contains(lone) && Spark.plan(gate, n, utc, 7, newest, false).queue.contains(why)); // why waits for the note's basic card; a note with only elaboration cards is not blocked
         base.state = new Cards.State(n + DAYMS, 1, 2.5, 1, 0);
-        check(Spark.plan(gate, new java.util.HashSet<String>(), n, utc, 7, newest).queue.contains(why));
+        check(Spark.plan(gate, n, utc, 7, newest).queue.contains(why));
         java.util.List<Cards.Card> rv = new java.util.ArrayList<>();
         Cards.Card m1 = new Cards.Card(); m1.id = "m1"; m1.path = "a.md"; m1.log = Cards.logWith("", n - MIN, "again", 3, "sure"); rv.add(m1);
         Cards.Card m2 = new Cards.Card(); m2.id = "m2"; m2.path = "a.md"; m2.log = Cards.logWith(Cards.logWith("", n - 5 * MIN, "again", 3), n - MIN, "good", 3); rv.add(m2);
@@ -802,6 +804,59 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
             + "<figcaption>Read pending events</figcaption></figure><img src='/diagram.png'><img width='1' height='1' src='/track'></article>", "https://example.com/post");
         check(diagram.media.size() == 1 && diagram.media.get(0).url.equals("https://example.com/diagram.png"));
         check(diagram.media.get(0).caption.equals("Read pending events"));
+        // Responsive figures prefer useful image evidence over placeholder src.
+        Extract.Page responsive = Extract.parse("<article><p>" + prose + "</p><figure><picture><source srcset='/large.jpg 1200w, /small.jpg 400w'><img src='/placeholder.jpg'></picture><figcaption>Result chart</figcaption></figure></article>", "https://example.com/read");
+        check(responsive.media.size() == 1 && responsive.media.get(0).url.equals("https://example.com/large.jpg"));
+        check(responsive.media.get(0).caption.equals("Result chart"));
+        Extract.Page lazy = Extract.parse("<article><p>" + prose + "</p><img src='/placeholder.jpg' data-srcset='/chart.png 2x, /tiny.png 1x'></article>", "https://example.com/read");
+        check(lazy.media.size() == 1 && lazy.media.get(0).url.endsWith("/chart.png"));
+        Extract.Page noneMedia = Extract.parse("<article><p>" + prose + "</p></article>", "https://example.com/read");
+        check(noneMedia.media.isEmpty());
+
+        // Whole-note bookmarks include dormant Topics and People without recall cards.
+        Vault.Note savedTopic = Vault.parse("Knowledge/Topics/Old.md", 1, "# Old\n");
+        Vault.Note savedPerson = Vault.parse("Knowledge/People/Ada.md", 2, "# Ada\n");
+        java.util.Set<String> savedPaths = new java.util.HashSet<>(java.util.Arrays.asList(savedTopic.path, savedPerson.path));
+        List<Feed.Item> savedNotes = Feed.bookmarks(java.util.Arrays.asList(savedTopic, savedPerson), savedPaths);
+        check(savedNotes.size() == 2 && savedNotes.get(0).path.equals(savedPerson.path));
+        check(savedNotes.get(1).cards == 0 && savedNotes.get(1).kept);
+        Vault.Note personalTopic = Vault.parse("Knowledge/Topics/Personal.md", 3, "---\ntype: topic\nvia: Sparkbox\ncaptured: 2026-11-17 11:00\n---\n# Personal\n");
+        Vault.Graph personalGraph = Vault.build(java.util.Arrays.asList(personalTopic));
+        check(Feed.build(personalGraph.notes, personalGraph, new ArrayList<InboxFile.Entry>(), java.time.LocalDateTime.of(2026, 11, 17, 12, 0)).stream().anyMatch(it -> it.path.equals(personalTopic.path)));
+
+        String personal = "# Original\r\n\r\nMy words.\r\n";
+        check(NoteEdit.bookmark(personal, true).endsWith(personal));
+        check(NoteEdit.bookmark(NoteEdit.bookmark(personal, true), false).equals("---\r\n---\r\n" + personal));
+        check(NoteEdit.bookmark(NoteEdit.bookmark(personal, true), true).equals(NoteEdit.bookmark(personal, true)));
+
+        // Destination rules reject escape paths and special knowledge files.
+        check(DirectText.allowed("Knowledge/Topics/Topic.md") && DirectText.allowed("Knowledge/People/Ada.md"));
+        for (String denied : new String[]{"Knowledge/../Daily/x.md", "Daily/x.md", "Knowledge/Sources/Inbox.md", "Knowledge/index.md", "Knowledge/log.md", "Knowledge/Topics/./x.md", "Knowledge/.trash/x.md", "Knowledge/Attachments/x.md"}) check(!DirectText.allowed(denied));
+        String originalNote = "# T\n\n## My Notes\nOld text.\n\n## Cards\nExisting cards.\n";
+        String capturedWords = "  My thought\n\nThen another thought.  ";
+        String appended = DirectText.append(originalNote, capturedWords, "2026-11-17 10:00", "capture-one");
+        check(appended.contains(capturedWords) && appended.indexOf(capturedWords) < appended.indexOf("## Cards"));
+        check(DirectText.append(appended, capturedWords, "2026-11-17 10:00", "capture-one").equals(appended));
+        check(!DirectText.append(appended, capturedWords, "2026-11-17 10:00", "capture-two").equals(appended));
+        check(DirectText.append("# T\n\n```\n## My Notes\n```\n", "Real", "2026-11-17", "capture-one").endsWith("Real\n\n"));
+        String freshNote = DirectText.newNote("My topic", capturedWords, "2026-11-17", "capture-one");
+        check(freshNote.contains("type: topic") && freshNote.contains("confidence: low") && freshNote.contains(capturedWords));
+        check(DirectText.recovery(originalNote, appended, appended) == 0); // crash after write, before checkpoint
+        check(DirectText.recovery(originalNote, originalNote, appended) == 1); // crash before write
+        check(DirectText.recovery(null, null, freshNote) == 1 && DirectText.recovery(null, freshNote, freshNote) == 0);
+        boolean recoveryConflict = false; try { DirectText.recovery(originalNote, "Edited on Mac", appended); } catch (java.io.IOException conflict) { recoveryConflict = true; } check(recoveryConflict);
+        recoveryConflict = false; try { DirectText.recovery(null, "", freshNote); } catch (java.io.IOException conflict) { recoveryConflict = true; } check(recoveryConflict); // partial new file cannot be replayed blindly
+        Cards.Card topicCard = new Cards.Card(); topicCard.path = savedTopic.path; topicCard.id = "topic-direct";
+        Vault.Graph directGraph = Vault.build(java.util.Arrays.asList(savedTopic));
+        Study.Scope directScope = Study.topicOf(directGraph, savedTopic.path, savedTopic.title);
+        check(directScope != null && directScope.paths.contains(savedTopic.path) && Study.filter(java.util.Arrays.asList(topicCard), directScope, System.currentTimeMillis()).size() == 1);
+        check(Study.topics(directGraph, java.util.Arrays.asList(topicCard), System.currentTimeMillis()).get(0).path.equals(savedTopic.path));
+
+        org.json.JSONArray catalog = ModelCatalog.parse(new org.json.JSONObject("{\"data\":[{\"id\":\"acme/tool\",\"name\":\"Tool model\",\"supported_parameters\":[\"tools\"]},{\"id\":\"acme/plain\",\"name\":\"Plain model\"},{\"name\":\"Missing ID\"}]}"));
+        check(catalog.length() == 2 && ModelCatalog.search(catalog, "ACME", false).size() == 2);
+        check(ModelCatalog.search(catalog, "model", true).size() == 1 && ModelCatalog.search(catalog, "plain", true).isEmpty());
+        check(ModelCatalog.search(catalog, "unavailable", false).isEmpty());
+        boolean badCatalog = false; try { ModelCatalog.parse(new org.json.JSONObject("{\"data\":[]}")); } catch (Exception bad) { badCatalog = true; } check(badCatalog);
         Cancel supplied = new Cancel();
         RunGate owned = new RunGate();
         check(owned.enter(1000, 0, supplied) == supplied && Cancel.current() == supplied);

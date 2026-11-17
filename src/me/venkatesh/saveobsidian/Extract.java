@@ -205,11 +205,13 @@ public final class Extract {
             String width = img.attr("width"), height = img.attr("height");
             if (width.matches("[0-9]+") && height.matches("[0-9]+") && width.length() < 6 && height.length() < 6
                 && Integer.parseInt(width) < 80 && Integer.parseInt(height) < 80) continue;
-            String src = first(img.attr("data-src"), img.attr("data-original"), img.attr("data-lazy-src"), img.attr("src"));
-            if (src.isEmpty() || src.startsWith("data:")) {
-                String set = first(img.attr("data-srcset"), img.attr("srcset"));
-                if (!set.isEmpty()) src = set.split(",")[0].trim().split("\\s+")[0];
+            String set = first(img.attr("data-srcset"), img.attr("srcset"));
+            Element picture = img.closest("picture");
+            if (set.isEmpty() && picture != null) for (Element source : picture.select("source")) {
+                if (source.attr("type").contains("svg")) continue;
+                set = first(source.attr("data-srcset"), source.attr("srcset")); if (!set.isEmpty()) break;
             }
+            String src = first(img.attr("data-src"), img.attr("data-original"), img.attr("data-lazy-src"), imageSet(set), img.attr("src"));
             String url = img.ownerDocument() == null ? src : abs(img.ownerDocument(), src);
             if (!url.startsWith("https://") && !url.startsWith("http://")) continue;
             boolean duplicate = false;
@@ -219,6 +221,18 @@ public final class Extract {
             Element caption = figure == null ? null : figure.selectFirst("figcaption");
             media.add(new Media(url, first(caption == null ? "" : caption.text(), img.attr("alt")), false));
         }
+    }
+
+    private static String imageSet(String set) {
+        String best = ""; double size = -1;
+        for (String entry : set.split(",")) {
+            String[] parts = entry.trim().split("\\s+");
+            if (parts.length == 0 || parts[0].isEmpty()) continue;
+            double rank = 1;
+            try { if (parts.length > 1) rank = Double.parseDouble(parts[1].replaceAll("[wx]$", "")); } catch (NumberFormatException ignored) { }
+            if (rank > size) { size = rank; best = parts[0]; }
+        }
+        return best;
     }
 
     /** A div or section that holds other blocks is a container, not a text block of its own. */

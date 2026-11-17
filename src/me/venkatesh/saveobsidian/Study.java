@@ -69,7 +69,8 @@ public final class Study {
         Map<String, Map<String, Integer>> lanes = new HashMap<>();
         for (Vault.Note n : g.notes) {
             if (!byNote.containsKey(n.path)) continue;
-            boolean any = false;
+            boolean any = n.path.startsWith("Knowledge/Topics/");
+            if (any) add(out, lanes, n.path, n.title, n);
             for (String name : n.topics) {
                 Vault.Note t = g.resolve(name);
                 if (t == null || !t.path.startsWith("Knowledge/Topics/")) continue;
@@ -104,7 +105,9 @@ public final class Study {
 
     /** The scope for a topic note path, from the graph: every source note that lists it. Null when no source does. */
     public static Scope topicOf(Vault.Graph g, String topicPath, String title) {
+        if (g.byPath(topicPath) == null) return null;
         Set<String> notes = new LinkedHashSet<>();
+        notes.add(topicPath);
         for (Vault.Note n : g.notes) for (String name : n.topics) { Vault.Note t = g.resolve(name); if (t != null && t.path.equals(topicPath)) notes.add(n.path); }
         return notes.isEmpty() ? null : new Scope(TOPIC, topicPath, title, notes);
     }

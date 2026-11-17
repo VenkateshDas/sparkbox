@@ -35,7 +35,7 @@ public class Reminder extends BroadcastReceiver {
         schedule(c); // the next one, whatever this one does (also covers a reboot)
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction()) || !on(c)) return;
         try {
-            Spark.Plan plan = Spark.plan(CardStore.all(c), CardStore.kept(), System.currentTimeMillis(), ZoneId.systemDefault(),
+            Spark.Plan plan = Spark.plan(CardStore.all(c), System.currentTimeMillis(), ZoneId.systemDefault(),
                 Spark.clampCap(c.getSharedPreferences("capture", 0).getInt("cardsPerDay", Spark.CAP_DEFAULT)), CardStore.newestFirst());
             if (plan.queue.isEmpty()) return; // nothing due: no notification
             NotificationManager nm = c.getSystemService(NotificationManager.class);

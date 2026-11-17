@@ -55,7 +55,9 @@ final class FeedScreen extends Screen {
         @Override public void link(String url) { openLink(url); }
         @Override public void ask(Feed.Item it) { host.askAbout(it.path, it.title); }
         @Override public void retry(Feed.Item it) { if (it.entry != null) FeedScreen.this.retry(it.entry); }
-        @Override public void keep(Feed.Item it) { it.kept = !it.kept; CardStore.keep(ui.c, it.path, it.kept); drawRows(); }
+        @Override public void keep(Feed.Item it) { CardStore.keep(ui.c, it.path, !it.kept); drawRows(); }
+        @Override public void edit(Feed.Item it) { host.push(new NoteEditorScreen(it.path)); }
+        @Override public void cards(Feed.Item it) { host.push(new CardsScreen(it.path)); }
         @Override public void share(Feed.Item it) {
             String shared = it.url.isEmpty() ? it.title : it.title + "\n" + it.url;
             host.startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, shared), null));
@@ -87,19 +89,47 @@ final class FeedScreen extends Screen {
         @Override public void retryCapture(String key) {
             Attention a = attentionByKey.get(key);
             if (a == null) return;
-            if ("voice".equals(a.kind)) { try { JSONObject j = CaptureService.readJob(a.file); j.remove("error"); CaptureService.writeJob(a.file, j); } catch (Exception ignored) { } BackgroundJob.schedule(ui.c); }
+            if ("voice".equals(a.kind) || directJob(a.file)) {
+                new Thread(() -> { synchronized (DirectCapture.LOCK) {
+                    try { if (a.file.exists()) { JSONObject j = CaptureService.readJob(a.file); j.remove("error"); CaptureService.writeJob(a.file, j); BackgroundJob.schedule(ui.c); } }
+                    catch (Exception e) { main.post(() -> Toast.makeText(ui.c, "Could not retry; capture kept.", Toast.LENGTH_LONG).show()); }
+                } }, "capture-retry").start();
+            }
             else CaptureService.start(ui.c, a.file.getName());
             Toast.makeText(ui.c, "Trying again", Toast.LENGTH_SHORT).show();
             main.postDelayed(FeedScreen.this::drawRows, 1500);
+        }
+        @Override public void destinationCapture(String key) {
+            Attention a = attentionByKey.get(key); if (a == null) return;
+            try {
+                JSONObject job = CaptureService.readJob(a.file);
+                if (!DirectCapture.direct(job) || job.has("write:note")) { Toast.makeText(ui.c, "Inspect the current note before changing a capture with an attempted write.", Toast.LENGTH_LONG).show(); return; }
+                DestinationPicker.show(host, job, d -> {
+                    if (!DirectCapture.direct(d)) { Toast.makeText(ui.c, "Choose an existing or new note for this capture.", Toast.LENGTH_LONG).show(); return; }
+                    new Thread(() -> { synchronized (DirectCapture.LOCK) {
+                        try {
+                            if (!a.file.exists()) throw new java.io.IOException("Capture already completed.");
+                            JSONObject latest = CaptureService.readJob(a.file);
+                            if (latest.has("write:note")) throw new java.io.IOException("A write was attempted. Inspect the note before changing destination.");
+                            for (String field : new String[]{"destination", "destinationVersion", "vault", "target", "noteTitle"}) { latest.remove(field); if (d.has(field)) latest.put(field, d.get(field)); }
+                            latest.remove("error"); latest.remove("waiting"); latest.put("phase", "queued"); CaptureService.writeJob(a.file, latest);
+                            BackgroundJob.schedule(ui.c);
+                        } catch (Exception e) { main.post(() -> Toast.makeText(ui.c, e.getMessage(), Toast.LENGTH_LONG).show()); }
+                        main.post(FeedScreen.this::drawRows);
+                    } }, "capture-destination-change").start();
+                });
+            } catch (Exception ignored) { }
         }
         @Override public void dismissCapture(String key) {
             Attention a = attentionByKey.get(key);
             if (a == null) return;
             new AlertDialog.Builder(host).setTitle("Dismiss this capture?").setMessage("It leaves the queue. A private copy is kept until app data is cleared.")
                 .setPositiveButton("Dismiss", (d, w) -> {
-                    try { CaptureService.discard(ui.c, a.file); Toast.makeText(ui.c, "Dismissed. Private copy kept.", Toast.LENGTH_SHORT).show(); }
-                    catch (Exception e) { Toast.makeText(ui.c, "Could not dismiss", Toast.LENGTH_SHORT).show(); }
-                    drawRows();
+                    new Thread(() -> { synchronized (DirectCapture.LOCK) {
+                        try { CaptureService.discard(ui.c, a.file); main.post(() -> Toast.makeText(ui.c, "Dismissed. Private copy kept.", Toast.LENGTH_SHORT).show()); }
+                        catch (Exception e) { main.post(() -> Toast.makeText(ui.c, "Could not dismiss", Toast.LENGTH_SHORT).show()); }
+                        main.post(FeedScreen.this::drawRows);
+                    } }, "capture-dismiss").start();
                 }).setNegativeButton("Cancel", null).show();
         }
         @Override public void trash(Feed.Item it) { Edits.confirmDelete(host, it.path, it.title, FeedScreen.this::scan); }
@@ -141,6 +171,7 @@ final class FeedScreen extends Screen {
         String k = kind(n);
         switch (chip) {
             case "Craft": case "Life": return Lane.of(n.path, n.meta).equals(chip);
+            case "Kept": return CardStore.kept().contains(n.path);
             case "Sources": return k.equals("Source");
             case "Topics": return k.equals("Topic");
             case "People": return k.equals("Person");
@@ -179,27 +210,24 @@ final class FeedScreen extends Screen {
     }
 
     private void captureText() {
-        android.widget.EditText input = new android.widget.EditText(ui.c);
-        input.setHint("Paste a link or write a note");
-        input.setMinLines(3);
-        input.setGravity(Gravity.TOP);
-        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); // autocorrect breaks pasted URLs
-        LinearLayout box = new LinearLayout(ui.c);
-        box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
-        box.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        AlertDialog d = new AlertDialog.Builder(host).setTitle("New capture").setView(box)
-            .setPositiveButton("Save", (dialog, w) -> {
-                String value = input.getText().toString().trim();
-                if (!value.isEmpty()) host.startActivity(new Intent(host, ShareActivity.class).setAction(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, value));
-            }).setNegativeButton("Cancel", null).create();
-        d.show();
-        input.requestFocus();
-        d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        host.startActivity(new Intent(host, QuickActivity.class));
     }
 
-    @Override void onHide() { shown = false; main.removeCallbacks(ticker); Ingest.onStage = null; }
+    private boolean listening;
+    private final android.content.BroadcastReceiver changed = new android.content.BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent intent) { refreshFromCache(); }
+    };
+    @Override void onHide() {
+        shown = false; main.removeCallbacks(ticker); Ingest.onStage = null;
+        if (listening) { ui.c.unregisterReceiver(changed); listening = false; }
+    }
 
     @Override void onShow() {
+        if (!listening) {
+            android.content.IntentFilter filter = new android.content.IntentFilter(CaptureService.CHANGED);
+            androidx.core.content.ContextCompat.registerReceiver(ui.c, changed, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+            listening = true;
+        }
         shown = true;
         main.removeCallbacks(ticker);
         main.postDelayed(ticker, 10000);
@@ -251,18 +279,21 @@ final class FeedScreen extends Screen {
         drawRows();
     }
 
+    private boolean directJob(File file) { try { return DirectCapture.direct(CaptureService.readJob(file)); } catch (Exception e) { return false; } }
+
     private List<Attention> attention() {
         List<Attention> out = new ArrayList<>();
         for (File file : CaptureService.pending(ui.c)) {
             try {
                 JSONObject job = CaptureService.readJob(file);
                 String phase = job.optString("phase");
-                if (!"failed".equals(phase) && !"uncertain".equals(phase) && System.currentTimeMillis() - file.lastModified() < 120000) continue;
+                if (!DirectCapture.direct(job) && !job.has("waiting") && !job.has("error") && !"failed".equals(phase) && !"uncertain".equals(phase) && System.currentTimeMillis() - file.lastModified() < 120000) continue;
                 Attention a = new Attention();
                 a.file = file; a.kind = job.optString("kind", "link"); a.when = file.lastModified();
                 a.label = job.optString("label");
                 if (a.label.isEmpty()) a.label = "link".equals(a.kind) ? job.optString("url") : Capture.clean(job.optString("text"));
-                a.error = job.optString("error");
+                a.error = job.optString("error", job.optString("waiting"));
+                if (DirectCapture.direct(job) && a.error.isEmpty()) a.error = "Queued for " + DestinationPicker.label(job);
                 if (a.error.isEmpty() && "voice".equals(a.kind)) a.error = "Waiting to be transcribed. This needs a network connection and your OpenRouter key.";
                 else if (a.error.isEmpty()) a.error = "failed".equals(phase) ? "Not saved." : "Queued or interrupted. Retry checks without saving twice.";
                 out.add(a);
@@ -278,6 +309,7 @@ final class FeedScreen extends Screen {
     /** Builds the rows as plain data and hands them to Compose. Cheap: no views are made here. */
     private void drawRows() {
         if (ui == null) return;
+        CardStore.all(ui.c);
         if (!query.isEmpty()) { // searching: the results replace the stream, under the same filters
             List<FeedRow> found = searchRows();
             int count = found.size() == 1 && found.get(0) instanceof NoHitsRow ? 0 : found.size();
@@ -292,7 +324,11 @@ final class FeedScreen extends Screen {
             out.add(new HeadingRow("h:attention", "Needs attention (" + need.size() + ")"));
             for (Attention a : need) { String k = "a:" + a.file.getName(); attentionByKey.put(k, a); out.add(new AttentionRow(k, a.label, a.error, ago(a.when))); }
         }
-        List<Feed.Item> shown = Feed.filter(items, chip);
+        CardStore.all(ui.c);
+        java.util.Set<String> kept = CardStore.kept();
+        for (Feed.Item it : items) it.kept = kept.contains(it.path);
+        VaultStore.Snap snap = VaultStore.cached(ui.c);
+        List<Feed.Item> shown = chip.equals("Kept") && snap != null ? Feed.bookmarks(snap.graph.notes, kept) : Feed.filter(items, chip);
         if (!need.isEmpty() && all && !shown.isEmpty()) out.add(new HeadingRow("h:latest", "Latest"));
         boolean key = Model.key(ui.c).length() > 0;
         java.util.Set<String> seen = new java.util.HashSet<>();
@@ -304,7 +340,7 @@ final class FeedScreen extends Screen {
             out.add(new ItemRow(k, it, stage, queued, stage >= 0 ? Ingest.stageSeconds(ui.c, it.entry) : 0,
                 it.entry == null ? "" : Ingest.problem(ui.c, it.entry), it.kept,
                 it.entry != null && !it.entry.url.isEmpty() && it.entry.file.isEmpty() && key,
-                it.kind.equals(Feed.SOURCE) && it.entry == null && !it.path.isEmpty()));
+                it.entry == null && !it.path.isEmpty()));
         }
         if (shown.isEmpty() && (need.isEmpty() || !all)) out.add(new EmptyRow(VaultStore.ready(ui.c)));
         ConnectivityManager cm = (ConnectivityManager) ui.c.getSystemService(Context.CONNECTIVITY_SERVICE);

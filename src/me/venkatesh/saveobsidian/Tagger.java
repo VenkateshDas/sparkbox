@@ -27,11 +27,13 @@ final class Tagger {
     /** Provider and inbox errors end the run and are kept in prefs for Settings; the next job retries. */
     static void run(Context c, Cancel cancel) {
         String key = Model.key(c);
-        if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
+
         try { if (GATE.enter(20 * 60000L, 30000L, cancel) == null) return; } catch (InterruptedException i) { return; } // busy: that run looks again when done
         deadline.set(android.os.SystemClock.elapsedRealtime() + 7 * 60_000L);
         String problem = "";
         try {
+            DirectCapture.run(c, key);
+            if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
             // Each stage stands alone: a tagging failure must not stop ingest, and a dead network in one must not hide what another could still do.
             String[] stages = {"sweep", "tag", "file", "transcribe", "describe", "cards", "backfill", "embed"};
             for (String stage : stages) {
@@ -151,7 +153,7 @@ final class Tagger {
             if (halt()) return;
             JSONObject job;
             try { job = CaptureService.readJob(file); } catch (Exception unreadable) { continue; }
-            if (!"voice".equals(job.optString("kind")) || job.has("error")) continue;
+            if (DirectCapture.direct(job) || !"voice".equals(job.optString("kind")) || job.has("error")) continue;
             File audio = new File(job.optString("audio"));
             if (job.optString("entry").isEmpty()) {
                 String text;
@@ -174,7 +176,7 @@ final class Tagger {
     /** True while a clip still waits for its transcript, so BackgroundJob asks Android to run again later. */
     static boolean waiting(Context c) {
         for (File file : CaptureService.pending(c)) {
-            try { JSONObject job = CaptureService.readJob(file); if ("voice".equals(job.optString("kind")) && !job.has("error")) return true; }
+            try { JSONObject job = CaptureService.readJob(file); if (("voice".equals(job.optString("kind")) || DirectCapture.direct(job)) && !job.has("error") && !Model.key(c).isEmpty()) return true; }
             catch (Exception unreadable) { }
         }
         return false;

@@ -43,14 +43,11 @@ public final class Spark {
         return n;
     }
 
-    /**
-     * kept holds the paths of notes the owner marked Keep: their new cards come first. Due cards always come before new ones, so when the owner is
-     * behind, new cards pause. No overdue count is exposed anywhere.
-     */
-    public static Plan plan(List<Cards.Card> all, Set<String> kept, long now, ZoneId zone, int cap, List<String> newestFirstPaths) { return plan(all, kept, now, zone, cap, newestFirstPaths, true); }
+    /** Due cards precede new cards. Bookmarks never affect review order. */
+    public static Plan plan(List<Cards.Card> all, long now, ZoneId zone, int cap, List<String> newestFirstPaths) { return plan(all, now, zone, cap, newestFirstPaths, true); }
 
     /** gate false shows why, teach and apply cards from the start (the owner picked a topic or asked for everything). */
-    public static Plan plan(List<Cards.Card> all, Set<String> kept, long now, ZoneId zone, int cap, List<String> newestFirstPaths, boolean gate) {
+    public static Plan plan(List<Cards.Card> all, long now, ZoneId zone, int cap, List<String> newestFirstPaths, boolean gate) {
         int reviewed = reviewedToday(all, now, zone);
         final List<Cards.Card> due = new ArrayList<>(), fresh = new ArrayList<>();
         boolean any = false;
@@ -65,11 +62,8 @@ public final class Spark {
         }
         Collections.sort(due, new Comparator<Cards.Card>() { @Override public int compare(Cards.Card a, Cards.Card b) { return Long.compare(a.state.due, b.state.due); } });
         final List<String> order = newestFirstPaths;
-        final Set<String> keep = kept;
         Collections.sort(fresh, new Comparator<Cards.Card>() {
             @Override public int compare(Cards.Card a, Cards.Card b) {
-                boolean ka = keep.contains(a.path), kb = keep.contains(b.path);
-                if (ka != kb) return ka ? -1 : 1;
                 int pa = order.indexOf(a.path), pb = order.indexOf(b.path);
                 return pa == pb ? 0 : Integer.compare(pa < 0 ? Integer.MAX_VALUE : pa, pb < 0 ? Integer.MAX_VALUE : pb);
             }

@@ -46,6 +46,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         ScoutJob.reschedule(this);
         BackgroundJob.schedule(this); // a force-stop or crash drops scheduled jobs: opening the app picks up unfinished captures
         if (state == null) handleIntent(getIntent());
+        else if (state.containsKey("editor")) push(new NoteEditorScreen(state.getString("editor")));
     }
 
     /** The screen behind each tab. Replaced by the real ones as they are built. */
@@ -78,7 +79,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         startActivity(send);
     }
 
-    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); }
+    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putInt(TAB, tab); if (current() instanceof NoteEditorScreen) out.putString("editor", ((NoteEditorScreen) current()).path()); }
 
     @Override protected void onResume() {
         super.onResume();
@@ -247,6 +248,12 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     private void handleIntent(android.content.Intent intent) {
+        String noteAction = intent.getStringExtra("noteAction"), notePath = intent.getStringExtra("notePath");
+        if (noteAction != null && notePath != null) {
+            intent.removeExtra("noteAction");
+            if (noteAction.equals("cards")) push(new CardsScreen(notePath)); else push(new NoteEditorScreen(notePath));
+            return;
+        }
         String q = intent.getStringExtra(AskActivity.QUESTION);
         if (q != null && !q.trim().isEmpty()) { intent.removeExtra(AskActivity.QUESTION); ask(q.trim()); }
         else if (intent.hasExtra(ScoutRuns.SESSION)) { String f = intent.getStringExtra(ScoutRuns.SESSION); intent.removeExtra(ScoutRuns.SESSION); openSession(f); }

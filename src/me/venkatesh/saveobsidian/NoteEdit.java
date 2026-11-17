@@ -86,6 +86,17 @@ public final class NoteEdit {
         return crlf ? out.replace("\n", "\r\n") : out;
     }
 
+    /** Bookmark metadata also works on personal notes without frontmatter. */
+    public static String bookmark(String text, boolean on) {
+        if (!text.startsWith("---\n") && !text.startsWith("---\r\n")) {
+            String nl = text.contains("\r\n") ? "\r\n" : "\n";
+            return on ? "---" + nl + "kept: true" + nl + "---" + nl + text : text;
+        }
+        String out = setKey(text, "kept", on ? "true" : null);
+        if (on && out.equals(text) && !text.contains("kept: true")) throw new IllegalArgumentException("Repair malformed frontmatter before bookmarking.");
+        return out;
+    }
+
     /** The text of a "## My take" body without its "Edited:" line. */
     public static String takeText(String section) { return EDITED.matcher(section).replaceAll("").trim(); }
 

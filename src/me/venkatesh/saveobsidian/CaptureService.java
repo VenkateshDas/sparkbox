@@ -38,7 +38,9 @@ public class CaptureService extends Service {
         File directory = new File(context.getFilesDir(), "pending");
         if (!directory.exists() && !directory.mkdirs()) throw new IOException("Cannot create capture queue");
         if (!job.has("time")) job.put("time", Capture.timestamp());
-        writeJob(new File(directory, UUID.randomUUID().toString() + ".json"), job
+        if (!job.has("captureId")) job.put("captureId", UUID.randomUUID().toString());
+        if (job.optString("text").getBytes(StandardCharsets.UTF_8).length > 1024 * 1024) throw new IOException("Capture exceeds 1 MiB; nothing was shortened.");
+        writeJob(new File(directory, job.getString("captureId") + ".json"), job
             .put("created", System.currentTimeMillis()).put("writeAttempted", false).put("phase", "queued"));
     }
     /** Chosen inbox file name; older installs did not store it, so fall back to the document id. */
@@ -247,6 +249,7 @@ public class CaptureService extends Service {
         JSONObject job = null;
         try {
             job = readJob(file);
+            if (DirectCapture.direct(job)) { BackgroundJob.schedule(this); return; }
             if ("voice".equals(job.optString("kind"))) return; // Tagger transcribes it, then files it itself
             String phase = job.optString("phase");
             if ("failed".equals(phase)) return; // waits for an explicit Retry or Discard

@@ -58,13 +58,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-interface QuickActions { fun write(); fun speak(); fun save(text: String); fun discard(); fun stop(); fun dismiss(); fun draft(text: String) }
+interface QuickActions { fun write(); fun speak(); fun save(text: String); fun discard(); fun stop(); fun dismiss(); fun draft(text: String); fun destination() }
 
 /** The capture sheet's state. QuickActivity keeps recording and saving; this only draws. */
 class QuickState(draft: String, val inbox: String, val hint: String) {
     val shown = MutableTransitionState(false)
     var speaking by mutableStateOf(false)
     var text by mutableStateOf(draft)
+    var destination by mutableStateOf("Inbox")
     var clock by mutableStateOf("0:00")
     val levels = FloatArray(160)
     var frame by mutableIntStateOf(0)
@@ -100,6 +101,7 @@ fun QuickSheet(s: QuickState, a: QuickActions) {
                         Text(s.inbox, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 12.dp))
                     }
+                    androidx.compose.material3.TextButton(onClick = { a.destination() }, modifier = Modifier.fillMaxWidth()) { Text("Save to: " + s.destination, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     if (s.speaking) Speak(s, a) else Write(s, a)
                 }
             }

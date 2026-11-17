@@ -16,7 +16,7 @@ final class UnitScreen extends Screen {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final PageState page = new PageState();
     private Ui ui;
-    private String text = "", draft;
+    private String text = "", draft, previousMine;
     private boolean loadedMine;
 
     UnitScreen(String path) { this.path = path; }
@@ -27,6 +27,8 @@ final class UnitScreen extends Screen {
         load();
         return PageView.create(ui.c, ui, "Source", page, () -> host.onBackPressed());
     }
+
+    @Override void onShow() { load(); }
 
     private Vault.Note note() {
         VaultStore.Snap snap = VaultStore.cached(ui.c);
@@ -110,7 +112,8 @@ final class UnitScreen extends Screen {
     /** "In my words": the note's "## My ideas" section, edited in place. */
     private void mine(List<Block> b, Vault.Note n) {
         final String saved = Vault.section(text, "My ideas");
-        if (draft == null || !loadedMine) { draft = saved; loadedMine = !text.isEmpty(); }
+        if (draft == null || !loadedMine || draft.equals(previousMine)) { draft = saved; loadedMine = !text.isEmpty(); }
+        previousMine = saved;
         b.add(new Editor("In my words", saved, draft, "Add your own words", d -> draft = d, (value, done) ->
             Edits.section(ui.c, n.path, "My ideas", value, new String[]{"Why I captured this"}, problem -> {
                 if (problem.isEmpty()) { Toast.makeText(ui.c, "Saved", Toast.LENGTH_SHORT).show(); draft = value; text = Vault.clipLines(NoteEdit.setSection(text, "My ideas", value, "Why I captured this")); draw(); }

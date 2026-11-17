@@ -2,6 +2,8 @@ package me.venkatesh.saveobsidian
 
 import android.content.Context
 import android.view.View
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -89,6 +91,8 @@ interface FeedActions {
     fun link(url: String)
     fun ask(item: Feed.Item)
     fun retry(item: Feed.Item)
+    fun edit(item: Feed.Item)
+    fun cards(item: Feed.Item)
     fun keep(item: Feed.Item)
     fun share(item: Feed.Item)
     fun note(path: String)
@@ -99,6 +103,7 @@ interface FeedActions {
     fun capture()
     fun refresh()
     fun retryCapture(key: String)
+    fun destinationCapture(key: String)
     fun dismissCapture(key: String)
     fun trash(item: Feed.Item)
     fun lane(item: Feed.Item, lane: String)
@@ -123,7 +128,7 @@ class FeedState {
 }
 
 object FeedView {
-    val CHIPS = listOf("All", "Craft", "Life", "Sources", "Topics", "People")
+    val CHIPS = listOf("All", "Kept", "Craft", "Life", "Sources", "Topics", "People")
     @JvmStatic fun create(c: Context, ui: Ui, state: FeedState, a: FeedActions): View = ComposeView(c).apply {
         setContent { SparkTheme(ui) { FeedScreenUi(state, a, ui.dark) } }
     }
@@ -207,6 +212,12 @@ private fun HitCard(h: Hit, query: String, dark: Boolean, a: FeedActions) {
             Text(h.title, style = MaterialTheme.typography.titleLarge, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 10.dp))
             if (h.meta.isNotEmpty()) Text(h.meta, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
             if (h.snippet.isNotEmpty()) Text(emphasis(h.snippet, query), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            val note = Feed.Item().also { it.path = h.path; it.title = h.title; it.kept = CardStore.kept().contains(h.path) }
+            Row {
+                TextButton(onClick = { a.edit(note) }) { Text("Edit") }
+                TextButton(onClick = { a.keep(note) }) { Text(if (note.kept) "Unkeep" else "Keep") }
+                TextButton(onClick = { a.cards(note) }) { Text("Cards") }
+            }
         }
     }
 }
@@ -257,7 +268,7 @@ private fun CardBox(tint: Color? = null, onClick: (() -> Unit)? = null, onLong: 
 private fun AttentionCard(r: AttentionRow, a: FeedActions) = CardBox {
     Column(Modifier.padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Pill("Capture failed", MaterialTheme.colorScheme.error, MaterialTheme.colorScheme.errorContainer)
+            Pill("Pending capture", MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainerHigh)
             Spacer(Modifier.weight(1f))
             Text(r.ago, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -266,6 +277,8 @@ private fun AttentionCard(r: AttentionRow, a: FeedActions) = CardBox {
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { a.retryCapture(r.key) }, modifier = Modifier.weight(1f)) { Text("Retry") }
             OutlinedButton(onClick = { a.dismissCapture(r.key) }, modifier = Modifier.weight(1f)) { Text("Dismiss") }
+        }
+        TextButton(onClick = { a.destinationCapture(r.key) }) { Text("Change destination / title")
         }
     }
 }
@@ -295,10 +308,11 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
                 Avatar(who, dark)
                 Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                     Text(who, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val whenText = if (topic) "${it.count} new sources" else it.age
+                    val whenText = if (topic && it.count > 0) "${it.count} new sources" else if (topic) "Personal note" else it.age
                     val line = listOf(whenText, it.lane).filter { s -> s.isNotEmpty() }.joinToString(" · ")
                     if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                if (r.canEdit || r.canRetry) TextButton(onClick = onLong, modifier = Modifier.size(48.dp)) { Text("⋮", modifier = Modifier.semantics { contentDescription = "Note actions" }, style = MaterialTheme.typography.headlineSmall) }
                 if (source && it.status.isNotEmpty()) {
                     if (it.status == Feed.PROCESSED) Pill(it.status, MaterialTheme.colorScheme.onPrimaryContainer, MaterialTheme.colorScheme.primaryContainer)
                     else Pill(it.status, MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainerHigh)
@@ -315,7 +329,7 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
             if (it.why.isNotEmpty()) Small("Why saved: ${it.why}")
             if (it.waiting.isNotEmpty()) Small(it.waiting)
             if (it.made.isNotEmpty()) Small(it.made)
-            if (it.cards > 0) Small("${it.cards} ${if (it.cards == 1) "card" else "cards"}${if (r.kept) ", up first in Spark" else ""}")
+            if (it.cards > 0) Small("${it.cards} ${if (it.cards == 1) "card" else "cards"}")
             if (r.stage >= 0 || r.queued) Progress(r, steps)
             if (r.problem.isNotEmpty()) Text(r.problem, style = MaterialTheme.typography.bodyMedium, color = LocalStatus.current.warn,
                 modifier = Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(LocalStatus.current.warnBg).padding(12.dp))
@@ -331,7 +345,7 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
             Row(Modifier.fillMaxWidth()) {
                 if (it.entry == null) Action("Ask", R.drawable.ic_nav_ask) { a.ask(it) }
                 else if (r.canRetry) Action("Retry", R.drawable.ic_retry) { a.retry(it) }
-                if (it.cards > 0) Action(if (r.kept) "Kept" else "Keep", R.drawable.ic_keep) { a.keep(it) }
+                if (it.entry == null && it.path.isNotEmpty()) Action(if (r.kept) "Kept" else "Keep", R.drawable.ic_keep) { a.keep(it) }
                 if (it.url.isNotEmpty()) Action("Open", R.drawable.ic_open) { a.link(it.url) }
                 Action("Share", R.drawable.ic_share) { a.share(it) }
             }
@@ -389,6 +403,11 @@ private fun ItemSheet(r: ItemRow, a: FeedActions, close: () -> Unit) {
             Text(r.item.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             if (r.canRetry) SheetItem("Process again", "Read the page and file it again") { close(); a.retry(r.item) }
             if (r.canEdit) {
+                SheetItem("Edit note", "Full Markdown, including frontmatter") { close(); a.edit(r.item) }
+                SheetItem("Cards", "Add, edit or delete recall cards") { close(); a.cards(r.item) }
+                SheetItem(if (r.kept) "Unkeep" else "Keep", "Bookmark this note") { close(); a.keep(r.item) }
+            }
+            if (r.canEdit && r.item.kind == Feed.SOURCE) {
                 val other = if (r.item.lane == Lane.LIFE) Lane.CRAFT else Lane.LIFE
                 SheetItem("Move to $other", "Changes the lane in the note") { close(); a.lane(r.item, other) }
                 SheetItem("Move to trash", "To the vault's .trash folder; Obsidian can restore it", danger = true) { close(); a.trash(r.item) }

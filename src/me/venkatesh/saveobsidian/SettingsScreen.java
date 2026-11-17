@@ -147,15 +147,9 @@ final class SettingsScreen extends Screen {
     private android.content.SharedPreferences prefs() { return ui.c.getSharedPreferences("capture", 0); }
 
     private void modelDialog(String title, String hint, String pref, String current, String fallback) {
-        android.widget.EditText e = new android.widget.EditText(ui.c);
-        e.setText(current);
-        e.setSingleLine(true);
-        LinearLayout box = new LinearLayout(ui.c);
-        box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
-        box.addView(e, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        new android.app.AlertDialog.Builder(host).setTitle(title).setMessage(hint).setView(box)
-            .setPositiveButton("Save", (d, w) -> { String m = e.getText().toString().trim(); prefs().edit().putString(pref, m.isEmpty() ? fallback : m).apply(); draw(); })
-            .setNegativeButton("Cancel", null).show();
+        ModelPicker.show(host, title, current, pref.equals("askModel"), id -> {
+            prefs().edit().putString(pref, id).apply(); draw();
+        });
     }
 
     private void keyDialog() {

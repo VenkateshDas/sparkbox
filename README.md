@@ -4,7 +4,7 @@ A personal Android app that catches links, thoughts, voice notes and files, and 
 
 Repository: https://github.com/VenkateshDas/sparkbox. The package ID keeps its original name (`me.venkatesh.saveobsidian`) so updates install in place.
 
-Version `1.9.1` (version code `13`). Min API 26, target API 35, compiled against API 37.
+Version `1.9.2` (version code `14`). Min API 26, target API 35, compiled against API 37.
 
 ## What it does
 
@@ -12,7 +12,8 @@ Version `1.9.1` (version code `13`). Min API 26, target API 35, compiled against
 - Share a link, text, photo, PDF, document, audio or video to **Sparkbox** from any app. A **Source added** notification (an island on OnePlus) confirms within a second.
 - The **Quick capture sheet** (widget, Quick Settings tiles, launcher shortcuts, the Feed's **+**) writes a thought or records a voice note.
 - **Sparkbox Capture** is a separate 2×1 home-screen widget with Write and Speak icons. It follows system light/dark appearance and switches to a timer and Stop while recording.
-- Captures are queued in private app storage first, then appended to the vault inbox (`Knowledge/Sources/Inbox.md`) with a verified write.
+- Captures are queued in private app storage first. **Save to** keeps Inbox as default, or sends text/voice to an existing note or a new personal Topic. Existing notes receive your exact words under My Notes. New notes use your title, or an AI title when blank; AI titling and voice transcription wait safely when offline.
+- Direct captures bypass Inbox processing. Failed captures retain their text/recording, offer Retry, and allow a destination/title change before a note write has been attempted.
 
 **Processing** (in the background, needs an OpenRouter key)
 - Processing runs only inside a persisted Android job, including Retry. Fresh captures request expedited execution with an ordinary-job fallback; interrupted jobs resume after Android allows work again. Force stop requires user interaction before processing resumes.
@@ -26,13 +27,14 @@ Version `1.9.1` (version code `13`). Min API 26, target API 35, compiled against
 - Shared video files can be summarized and tagged through **Settings → Describe photos, PDFs and videos**, using the same video and transcription path. The original file stays in the attachments folder.
 
 **Use**
-- **Feed**: captures and notes as cards, with each capture's processing steps shown live on its card. Filter by Craft, Life, Sources, Topics or People. Long-press a note for **Move to Craft/Life** or **Move to trash**. Pull down to rescan the vault.
+- **Feed**: captures and notes as cards, with each capture's processing steps shown live on its card. Filter by Craft, Life, Sources, Topics or People. The visible **⋮** menu opens **Edit note** (full Markdown), **Cards**, and **Keep**; Sources also offer lane changes and trash. **Kept** collects bookmarked notes, including older Topics and People without recall cards. Keep never changes Feed or Spark order. Pull down to rescan the vault.
 - **Spark**: a daily spaced-repetition review of the cards (a small SM-2 scheduler, a daily cap, park and flag).
 - **Search** (top of the Feed, with the same filters): word match first, meaning-based matches merged in.
 - **Ask**: a chat over your notes. Answers cite the notes they come from, and say "Not in your knowledge base" instead of guessing.
-- **Source** and **Topic** pages mark each section as *from the source*, *AI* or *yours*. Your own words are edited in place.
+- **Source** and **Topic** pages mark each section as *from the source*, *AI* or *yours*. Your own words are edited in place. The full Markdown editor retains drafts, checks for concurrent edits, and keeps recovery copies when a save cannot be verified.
+- **Cards** supports creating, editing and deleting user or AI cards. Topics group their own cards with linked notes; changes affect the owning note. Parked and flagged cards remain manageable.
 - **Vault browser** (menu → Browse vault): folders, notes, Read / Links / Similar.
-- **Settings**: vault and inbox, processing switches, models, key, Spark, theme (System, Dark, Light), recovery.
+- **Settings**: vault and inbox, processing switches, models, key, Spark, theme (System, Dark, Light), recovery. Model roles use a searchable OpenRouter catalog, with offline cache, Refresh and Custom ID.
 
 ### Scout session usage
 
@@ -67,7 +69,7 @@ Build the signed release APK (R8 and resource shrinking on):
 ./gradlew assembleRelease
 ```
 
-The APK lands in `build/gradle/outputs/apk/release/sparkbox-release.apk`. Run the checks (293 JVM checks in `tests/CaptureTest.java`, then lint against `lint-baseline.xml`):
+The APK lands in `build/gradle/outputs/apk/release/sparkbox-release.apk`. Run the JVM/state checks and lint against `lint-baseline.xml`:
 
 ```bash
 ./gradlew check

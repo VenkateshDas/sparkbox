@@ -33,15 +33,19 @@ final class CardSheet {
         box.addView(q);
         box.addView(a);
         box.addView(take);
-        new AlertDialog.Builder(host).setTitle(existing == null ? "Write your own card" : "Edit card").setView(box)
-            .setPositiveButton("Save", (d, w) -> {
+        AlertDialog dialog = new AlertDialog.Builder(host).setTitle(existing == null ? "Write your own card" : "Edit card").setView(box)
+            .setPositiveButton("Save", null).setNegativeButton("Cancel", null).create();
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 String qs = q.getText().toString().trim(), as = a.getText().toString().trim();
                 if (qs.isEmpty() || as.isEmpty()) { Toast.makeText(ui.c, "A card needs a question and an answer", Toast.LENGTH_SHORT).show(); return; }
                 if (!VaultWrite.writable(ui.c)) { Toast.makeText(ui.c, "Allow write access to your vault folder in Settings.", Toast.LENGTH_LONG).show(); return; }
-                if (existing == null) CardStore.addOwn(ui.c, path, qs, as, take.getText().toString());
-                else CardStore.edit(ui.c, existing, qs, as, take.getText().toString());
+                boolean queued = existing == null ? CardStore.addOwn(ui.c, path, qs, as, take.getText().toString()) != null
+                    : CardStore.edit(ui.c, existing, qs, as, take.getText().toString());
+                if (!queued) return;
                 if (done != null) done.run();
-            }).setNegativeButton("Cancel", null).show();
+                dialog.dismiss();
+            });
     }
 
     /** Just the note on a card: add or change it. */

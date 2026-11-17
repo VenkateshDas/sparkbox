@@ -22,7 +22,7 @@ public class BackgroundJob extends JobService {
     }
 
     static void schedule(Context c) {
-        if (Model.key(c).isEmpty()) return;
+        if (Model.key(c).isEmpty() && CaptureService.pending(c).length == 0) return;
         synchronized (LOCK) {
             if (active != null) { requested = true; return; }
             JobScheduler scheduler = c.getSystemService(JobScheduler.class);
@@ -38,7 +38,11 @@ public class BackgroundJob extends JobService {
     private static boolean submit(Context c, long delayMs, int id, boolean fresh) {
         JobScheduler scheduler = c.getSystemService(JobScheduler.class);
         JobInfo.Builder job = new JobInfo.Builder(id, new ComponentName(c, BackgroundJob.class))
-            .setPersisted(true).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
+            .setPersisted(true);
+        // Local destination writes must run offline; network calls retain their own bounded retries.
+        boolean local = false;
+        for (java.io.File f : CaptureService.pending(c)) try { org.json.JSONObject j = CaptureService.readJob(f); local |= DirectCapture.direct(j) && !j.has("error"); } catch (Exception ignored) { }
+        if (!local) job.setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
         if (delayMs > 0) job.setMinimumLatency(delayMs);
         if (fresh && Build.VERSION.SDK_INT >= 31) job.setExpedited(true);
         int result = scheduler.schedule(job.build());
@@ -71,7 +75,7 @@ public class BackgroundJob extends JobService {
             try {
                 Tagger.run(this, run.cancel);
                 wait = Ingest.retryDelay(this);
-                if (Tagger.waiting(this)) wait = wait < 0 ? 120_000L : Math.min(wait, 120_000L);
+                if (Tagger.waiting(this) || DirectCapture.pending(this, true)) wait = wait < 0 ? 120_000L : Math.min(wait, 120_000L);
             } catch (Exception failed) {
                 android.util.Log.w("Sparkbox", "Capture processor interrupted", failed);
             } finally {
