@@ -14,7 +14,7 @@ final class McpTest {
     static int count;
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("mcp check #" + count); }
 
-    static volatile String lastSession = "", lastAuth = "", lastProtocol = "";
+    static volatile String lastSession = "", lastAuth = "", lastProtocol = "", lastApiKey = "";
     static volatile boolean dropSession;
     static volatile int initialized;
 
@@ -27,12 +27,19 @@ final class McpTest {
     }
 
     static void run() throws Exception {
+        check(Mcp.authHeaders("Authorization", "dummy-token").get("Authorization").equals("Bearer dummy-token"));
+        check(Mcp.authHeaders("Authorization", "Bearer dummy-token").get("Authorization").equals("Bearer dummy-token"));
+        check(Mcp.authHeaders("X-API-Key", "dummy-token").get("X-API-Key").equals("dummy-token"));
+        check(Mcp.authHeaders("Authorization", "").isEmpty());
+        try { Mcp.authHeaders("Unexpected", "dummy"); check(false); } catch (IllegalArgumentException expected) { check(true); }
+        try { Mcp.authHeaders("Authorization", "dummy\r\nOther: value"); check(false); } catch (IllegalArgumentException expected) { check(true); }
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/mcp", x -> {
             try {
                 String body = new String(x.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 JSONObject m = new JSONObject(body);
                 lastAuth = String.valueOf(x.getRequestHeaders().getFirst("Authorization"));
+                lastApiKey = String.valueOf(x.getRequestHeaders().getFirst("X-API-Key"));
                 lastProtocol = String.valueOf(x.getRequestHeaders().getFirst("MCP-Protocol-Version"));
                 String method = m.getString("method");
                 if (method.equals("initialize")) {
@@ -62,7 +69,7 @@ final class McpTest {
                 if (tool.equals("echo")) result.put("content", new JSONArray().put(new JSONObject().put("type", "text").put("text", "echo:" + p.getJSONObject("arguments").getString("text"))).put(new JSONObject().put("type", "image").put("mimeType", "image/png").put("data", "xx")));
                 else if (tool.equals("boom")) result.put("isError", true).put("content", new JSONArray().put(new JSONObject().put("type", "text").put("text", "it broke")));
                 else if (tool.equals("big")) { StringBuilder s = new StringBuilder(); for (int i = 0; i < 6000; i++) s.append("0123456789"); result.put("content", new JSONArray().put(new JSONObject().put("type", "text").put("text", s.toString()))); }
-                else { send(x, 200, "application/json", new JSONObject().put("jsonrpc", "2.0").put("id", id).put("error", new JSONObject().put("code", -32601).put("message", "no such tool")).toString()); return; }
+                else { send(x, 200, "application/json", new JSONObject().put("jsonrpc", "2.0").put("id", id).put("error", new JSONObject().put("code", -32601).put("message", "no such tool " + lastAuth)).toString()); return; }
                 send(x, 200, "application/json", new JSONObject().put("jsonrpc", "2.0").put("id", id).put("result", result).toString());
             } catch (Exception e) { e.printStackTrace(); x.close(); }
         });
@@ -110,11 +117,17 @@ final class McpTest {
             try { echo.execute(new JSONObject().put("text", "again"), cancel); check(false); } catch (java.io.IOException expected) { check(initialized == before); }
             mcp.connect(cancel);
             // JSON-RPC errors and connection problems become errors, not crashes
-            try { mcp.callTool("nope", new JSONObject(), cancel); check(false); } catch (java.io.IOException e) { check(e.getMessage().contains("no such tool")); }
+            try { mcp.callTool("nope", new JSONObject(), cancel); check(false); } catch (java.io.IOException e) { check(e.getMessage().contains("no such tool") && !e.getMessage().contains(headers.get("Authorization"))); }
             List<Tool> into = new ArrayList<>();
             String problems = Mcp.connectAll(Arrays.asList(new Object[]{new Mcp("dead", "http://127.0.0.1:1/mcp", headers), false}, new Object[]{new Mcp("ok", url, headers), false}), (t, d) -> true, into, cancel);
             check(problems.startsWith("dead: ") && into.size() == 5 && into.get(0).name.startsWith("mcp__ok__"));
             check(Mcp.toolName("s", "x".repeat(80), new HashSet<>()).length() == 64);
+            List<Tool> hidden = new ArrayList<>();
+            String filtered = Mcp.connectAll(java.util.Collections.singletonList(new Object[]{new Mcp("filtered", url, headers), false, Set.of("not_a_real_tool")}), (t, d) -> true, hidden, cancel);
+            check(hidden.isEmpty() && filtered.contains("allowlist"));
+            check(new Mcp("probe", url, headers).inspect(cancel, Set.of("echo")).contains("1 available"));
+            new Mcp("key-probe", url, Mcp.authHeaders("X-API-Key", "dummy-key")).inspect(cancel, null);
+            check(lastApiKey.equals("dummy-key") && lastAuth.equals("null"));
             // an allowlist exposes only the named tools
             List<Tool> only = Mcp.tools(new Mcp("o", url, headers), false, (t, d) -> true, new HashSet<>(), cancel, new HashSet<>(Arrays.asList("echo", "big")));
             check(only.size() == 2 && only.get(0).name.equals("mcp__o__echo") && only.get(1).name.equals("mcp__o__big"));

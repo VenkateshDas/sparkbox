@@ -144,20 +144,29 @@ final class Ask {
     // ---- notes ----
 
     static String search(Context c, VaultStore.Snap snap, String query, Status status) {
+        return searchResult(c, snap, query, status).text;
+    }
+
+    static Tool.Result searchResult(Context c, VaultStore.Snap snap, String query, Status status) {
         status.say("Searching “" + query + "”");
+        List<Vault.Note> words = VaultStore.keyword(snap, query, 24);
+        List<InboxFile.Entry> all = entries(c), wordHits = new ArrayList<>();
+        for (InboxFile.Entry entry : all) if (wordHits.size() < 24 && entry.contains(query)) wordHits.add(entry);
         float[] q = null;
         try { q = VaultStore.vector(c, query); } catch (Exception offline) { } // keyword results still work without the network
-        List<Vault.Note> words = VaultStore.keyword(snap, query, 12);
-        List<Vault.Note> found = q == null ? words : Vault.blend(VaultStore.nearest(c, snap, q, 12, Index.MIN_QUERY, null), words, query, 12);
-        List<InboxFile.Entry> all = entries(c), hits = new ArrayList<>();
-        if (q != null) hits.addAll(Index.load(new java.io.File(c.getFilesDir(), "index.bin")).rank(q, all, 4, Index.MIN_QUERY, 0));
-        for (InboxFile.Entry e : all) if (hits.size() < 6 && e.contains(query) && !hits.contains(e)) hits.add(e);
-        if (found.isEmpty() && hits.isEmpty()) return "No notes or captures found. Try other words.";
-        StringBuilder out = new StringBuilder();
+        List<Vault.Note> found = q == null ? words : Vault.fuse(VaultStore.nearest(c, snap, q, 24, Index.MIN_QUERY, null), words, 1, 12);
+        List<InboxFile.Entry> meaningHits = q == null ? List.of() : Index.cached(new java.io.File(c.getFilesDir(), "index.bin")).rank(q, all, 24, Index.MIN_QUERY, 0);
+        List<InboxFile.Entry> hits = Vault.fuse(meaningHits, wordHits, 1, 6, java.util.Comparator.comparing(entry -> entry.raw));
+        if (found.isEmpty() && hits.isEmpty()) return Tool.Result.ok(q == null ? "No keyword matches found; semantic retrieval is unavailable. Try different words or a scoped grep." : "No notes or captures found. Try other words.");
+        StringBuilder out = new StringBuilder(q == null ? "Keyword retrieval only; semantic retrieval unavailable for this request.\n" : "Hybrid retrieval (keyword + semantic ranks).\n");
         int n = 0;
         for (Vault.Note note : found) { if (++n > 8) break; out.append(line(note)).append('\n'); String ex = note.digest.replaceAll("\\s+", " ").trim(); if (!ex.isEmpty()) out.append("  excerpt: ").append(ex.length() > EXCERPT ? ex.substring(0, EXCERPT) : ex).append('\n'); }
         for (InboxFile.Entry e : hits) out.append(entryLine(c, e, false, 0)).append('\n');
-        return out.toString();
+        try {
+            JSONArray matches = new JSONArray();
+            for (Vault.Note note : found) { if (matches.length() >= 8) break; matches.put(note.path); }
+            return new Tool.Result(out.toString(), new JSONObject().put("matches", matches).put("retrieval", q == null ? "keyword" : "hybrid"), false, false);
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
     }
 
     private static String line(Vault.Note n) {

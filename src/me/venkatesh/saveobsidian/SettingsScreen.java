@@ -12,6 +12,11 @@ import android.widget.TextView;
 /** Settings, a plain list: vault, capture, ingest, AI key, Spark, theme. Drawn by Compose (the pilot screen); data and actions stay here. */
 final class SettingsScreen extends Screen {
     private Ui ui;
+    private boolean visible;
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final java.util.Map<String, Long> checkVersions = new java.util.HashMap<>();
+    private long checkVersion;
+    private final java.util.Map<String, String> serverChecks = new java.util.HashMap<>();
     private final SettingsState shown = new SettingsState();
     private java.util.List<SettingGroup> groups;
     private java.util.List<SettingRow> rows;
@@ -23,7 +28,8 @@ final class SettingsScreen extends Screen {
         return SettingsView.create(ui.c, ui, shown, () -> host.onBackPressed());
     }
 
-    @Override void onShow() { draw(); }
+    @Override void onShow() { visible = true; draw(); }
+    @Override void onHide() { visible = false; }
 
     private java.util.List<SettingRow> group(String title) {
         rows = new java.util.ArrayList<>();
@@ -94,9 +100,9 @@ final class SettingsScreen extends Screen {
         for (int i = 0; i < servers.length(); i++) {
             final int at = i;
             org.json.JSONObject s = servers.optJSONObject(i);
-            if (s != null) tools.add(row(s.optString("name"), (s.optBoolean("enabled", true) ? "On" : "Off") + (s.optBoolean("trusted") ? ", trusted" : ", asks first") + "  " + s.optString("url"), () -> serverDialog(at)));
+            if (s != null) tools.add(row(s.optString("name"), (s.optBoolean("enabled", true) ? "Enabled" : "Disabled") + " · " + serverChecks.getOrDefault(s.optString("name"), "not tested"), () -> serverDialog(at)));
         }
-        tools.add(row("Add a server", "Remote MCP over HTTP. Scout asks before each call.", () -> addServerDialog()));
+        tools.add(row("Add a server", "Remote MCP over HTTPS. Save and test the connection.", () -> addServerDialog()));
 
         java.util.List<SettingRow> spark = group("Spark");
         int[] p = snap == null ? new int[]{0, 0} : CardGen.progress(snap);
@@ -178,37 +184,85 @@ final class SettingsScreen extends Screen {
         return e;
     }
 
-    private void addServerDialog() {
+    private void addServerDialog() { serverEditor(-1); }
+
+    private void serverEditor(int at) {
+        org.json.JSONArray list = Scout.serverList(ui.c);
+        org.json.JSONObject previous = at < 0 ? null : list.optJSONObject(at);
         LinearLayout box = new LinearLayout(ui.c);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(ui.dp(20), ui.dp(8), ui.dp(20), 0);
-        android.widget.EditText name = field(box, "Name (letters, digits, - or _)", false), url = field(box, "https://server.example/mcp", false), token = field(box, "Bearer token (optional)", true);
-        new android.app.AlertDialog.Builder(host).setTitle("Add an MCP server").setMessage("Scout sends a tool call's arguments to this server, and its results come back as untrusted text. Each call asks you first.").setView(box)
-            .setPositiveButton("Add", (d, w) -> {
+        android.widget.EditText name = field(box, "Name (letters, digits, - or _)", false), url = field(box, "https://server.example/mcp", false);
+        android.widget.Spinner auth = new android.widget.Spinner(ui.c);
+        auth.setAdapter(new android.widget.ArrayAdapter<>(ui.c, android.R.layout.simple_spinner_dropdown_item, new String[]{"Bearer token", "X-API-Key"}));
+        box.addView(auth);
+        android.widget.EditText token = field(box, previous == null ? "Token or API key (optional)" : "Token or API key (blank keeps current)", true);
+        if (previous != null) {
+            name.setText(previous.optString("name")); name.setEnabled(false);
+            url.setText(previous.optString("url"));
+            auth.setSelection(previous.optString("authHeader", "Authorization").equals("X-API-Key") ? 1 : 0);
+        }
+        new android.app.AlertDialog.Builder(host).setTitle(previous == null ? "Add an MCP server" : "Edit MCP connection")
+            .setMessage("Use the server's HTTPS MCP endpoint and token. Browser sign-in in another app is not shared. Tokens stay encrypted on this device.")
+            .setView(box).setPositiveButton("Save and test", (d, w) -> {
                 String n = name.getText().toString().trim().replaceAll("[^A-Za-z0-9_-]", "_"), u = url.getText().toString().trim();
-                if (n.isEmpty() || !u.startsWith("https://")) { android.widget.Toast.makeText(ui.c, "Needs a name and an https:// address (plain http is blocked)", android.widget.Toast.LENGTH_SHORT).show(); return; }
                 try {
-                    if (!token.getText().toString().trim().isEmpty()) Model.seal(ui.c, "mcpToken:" + n, token.getText().toString().trim());
-                    org.json.JSONArray list = Scout.serverList(ui.c);
-                    list.put(new org.json.JSONObject().put("name", n).put("url", u).put("enabled", true).put("trusted", false));
+                    java.net.URI endpoint = java.net.URI.create(u);
+                    if (n.isEmpty() || !"https".equalsIgnoreCase(endpoint.getScheme()) || endpoint.getHost() == null || endpoint.getUserInfo() != null) throw new Exception("Needs a name and an HTTPS address without embedded credentials.");
+                    if (previous == null) for (int i = 0; i < list.length(); i++) if (n.equals(list.getJSONObject(i).optString("name"))) throw new Exception("A server already uses this name. Edit that connection instead.");
+                    String header = auth.getSelectedItemPosition() == 1 ? "X-API-Key" : "Authorization";
+                    String secret = token.getText().toString().trim();
+                    Mcp.authHeaders(header, secret); // Reject malformed credentials before saving.
+                    if (!secret.isEmpty()) Model.seal(ui.c, "mcpToken:" + n, secret);
+                    org.json.JSONObject entry = previous == null ? new org.json.JSONObject().put("enabled", true).put("trusted", false) : new org.json.JSONObject(previous.toString());
+                    entry.put("name", n).put("url", u).put("authHeader", header);
+                    if (previous == null) list.put(entry); else list.put(at, entry);
                     Scout.saveServers(ui.c, list);
-                } catch (Exception failed) { android.widget.Toast.makeText(ui.c, "Could not save the server", android.widget.Toast.LENGTH_SHORT).show(); }
-                draw();
+                    draw(); testServer(entry);
+                } catch (Exception failed) { android.widget.Toast.makeText(ui.c, failed.getMessage(), android.widget.Toast.LENGTH_LONG).show(); }
             }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void testServer(org.json.JSONObject config) {
+        final String name = config.optString("name"), revision = config.toString();
+        final long version = ++checkVersion; checkVersions.put(name, version);
+        serverChecks.put(name, "testing…"); draw();
+        new Thread(() -> {
+            String report, summary;
+            try {
+                report = Scout.inspectServer(ui.c, config);
+                if (!config.optBoolean("enabled", true)) report += "\n\nThis server is disabled in Scout. Turn it on to expose these tools.";
+                summary = report.substring(0, report.indexOf('\n'));
+            } catch (Exception failed) { report = String.valueOf(failed.getMessage()); summary = "Connection failed"; }
+            final String result = report, status = summary;
+            main.post(() -> {
+                boolean current = false;
+                org.json.JSONArray configured = Scout.serverList(ui.c);
+                for (int i = 0; i < configured.length(); i++) if (revision.equals(String.valueOf(configured.optJSONObject(i)))) current = true;
+                if (!current || !java.util.Objects.equals(checkVersions.get(name), version)) return;
+                serverChecks.put(name, status);
+                if (!visible || host.isFinishing() || host.isDestroyed()) return;
+                draw();
+                new android.app.AlertDialog.Builder(host).setTitle(name + " · Connection test").setMessage(result).setPositiveButton("Close", null).show();
+            });
+        }, "scout-mcp-test").start();
     }
 
     private void serverDialog(int at) {
         org.json.JSONArray list = Scout.serverList(ui.c);
         org.json.JSONObject s = list.optJSONObject(at);
         if (s == null) return;
-        boolean on = s.optBoolean("enabled", true), trusted = s.optBoolean("trusted");
-        new android.app.AlertDialog.Builder(host).setTitle(s.optString("name")).setItems(new String[]{on ? "Turn off" : "Turn on", "Allowed tools: " + (s.optString("allow").isEmpty() ? "all" : s.optString("allow")), "Read-only research tools: " + (s.optString("readOnly").isEmpty() ? "none" : s.optString("readOnly")), "Remove"}, (d, which) -> {
+        boolean on = s.optBoolean("enabled", true);
+        new android.app.AlertDialog.Builder(host).setTitle(s.optString("name")).setItems(new String[]{on ? "Turn off" : "Turn on", "Allowed tools: " + (s.optString("allow").isEmpty() ? "all" : s.optString("allow")), "Read-only research tools: " + (s.optString("readOnly").isEmpty() ? "none" : s.optString("readOnly")), "Test connection", "Edit connection", "Remove"}, (d, which) -> {
             try {
                 if (which == 1) { allowDialog(at, "allow"); return; }
                 if (which == 2) { allowDialog(at, "readOnly"); return; }
+                if (which == 3) { testServer(s); return; }
+                if (which == 4) { serverEditor(at); return; }
                 if (which == 0) s.put("enabled", !on);
-                else if (which == 3) { org.json.JSONArray keep = new org.json.JSONArray(); for (int i = 0; i < list.length(); i++) if (i != at) keep.put(list.get(i)); Scout.saveServers(ui.c, keep); ui.c.getSharedPreferences("capture", 0).edit().remove("mcpToken:" + s.optString("name")).apply(); draw(); return; }
+                else if (which == 5) { org.json.JSONArray keep = new org.json.JSONArray(); for (int i = 0; i < list.length(); i++) if (i != at) keep.put(list.get(i)); Scout.saveServers(ui.c, keep); ui.c.getSharedPreferences("capture", 0).edit().remove("mcpToken:" + s.optString("name")).apply(); serverChecks.remove(s.optString("name")); draw(); return; }
                 Scout.saveServers(ui.c, list);
+                serverChecks.remove(s.optString("name"));
             } catch (Exception ignored) { }
             draw();
         }).show();

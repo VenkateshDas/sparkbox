@@ -23,6 +23,8 @@ import org.json.JSONObject;
 public final class Session {
     public static final int VERSION = 1; // migrations: add a step per version in load()
 
+    // Approval effects serialize separately from journal reads, so network/storage I/O cannot freeze the chat.
+    final Object approvalLock = new Object();
     private final File file;
     private final String id;
     private final List<JSONObject> entries = new ArrayList<>();
@@ -293,8 +295,24 @@ public final class Session {
         return out;
     }
 
-    /** Stable deep copy for local metrics; never fed into context(). */
+    private boolean detached;
+
+    /** Capture off the UI thread; readers never compete with journal writes/fsync after this returns. */
+    public synchronized Session snapshot() {
+        Session copy = new Session(file, id);
+        try {
+            for (JSONObject entry : entries) {
+                JSONObject cloned = new JSONObject(entry.toString());
+                copy.entries.add(cloned); copy.byId.put(cloned.getString("id"), cloned);
+            }
+        } catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
+        copy.leaf = leaf; copy.storageError = storageError; copy.closed = true; copy.detached = true;
+        return copy;
+    }
+
+    /** Defensive records for live journals; detached snapshots already own their records. */
     public synchronized List<JSONObject> log() {
+        if (detached) return new ArrayList<>(entries);
         List<JSONObject> copy = new ArrayList<>();
         try { for (JSONObject e : entries) copy.add(new JSONObject(e.toString())); }
         catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }

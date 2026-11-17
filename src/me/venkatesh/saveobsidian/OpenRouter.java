@@ -12,6 +12,11 @@ import org.json.JSONObject;
 public final class OpenRouter {
     private OpenRouter() { }
 
+    /** Complete response boundary, but invalid arguments: no call has been admitted or executed. */
+    public static final class IncompleteArguments extends IOException {
+        public IncompleteArguments() { super("Incomplete tool arguments"); }
+    }
+
     /** The start of the error body (": message"), so a context-length refusal can be recognised and a 400 explained. */
     private static String detail(HttpURLConnection connection) {
         try (java.io.InputStream es = connection.getErrorStream()) {
@@ -59,6 +64,7 @@ public final class OpenRouter {
                                     java.util.function.Consumer<JSONObject> metadata) throws Exception {
         StringBuilder text = new StringBuilder();
         JSONArray calls = new JSONArray();
+        java.util.List<StringBuilder> arguments = new java.util.ArrayList<>();
         String finish = "";
         JSONObject usage = null;
         Sse events = new Sse(in);
@@ -88,12 +94,13 @@ public final class OpenRouter {
                     int at = part.optInt("index", i);
                     if (at < 0 || at >= 60) throw new Sse.Protocol("Too many tool calls");
                     while (calls.length() <= at) calls.put(new JSONObject().put("id", "").put("type", "function").put("function", new JSONObject().put("name", "").put("arguments", "")));
+                    while (arguments.size() <= at) arguments.add(new StringBuilder());
                     JSONObject slot = calls.getJSONObject(at), slotFn = slot.getJSONObject("function");
                     if (!part.optString("id").isEmpty()) slot.put("id", part.getString("id"));
                     if (fn != null) {
                         if (!fn.isNull("name") && fn.has("name")) slotFn.put("name", slotFn.getString("name") + fn.getString("name"));
-                        if (!fn.isNull("arguments") && fn.has("arguments")) slotFn.put("arguments", slotFn.getString("arguments") + fn.getString("arguments"));
-                        if (slotFn.getString("arguments").length() > 256 * 1024 || slotFn.getString("arguments").getBytes(StandardCharsets.UTF_8).length > 256 * 1024) throw new Sse.Protocol("Tool arguments exceed 256 KiB");
+                        if (!fn.isNull("arguments") && fn.has("arguments")) arguments.get(at).append(fn.getString("arguments"));
+                        if (arguments.get(at).length() > 256 * 1024) throw new Sse.Protocol("Tool arguments exceed 256 KiB");
                         if (slotFn.getString("name").length() > 256) throw new Sse.Protocol("Tool name exceeds limit");
                     }
                 }
@@ -104,10 +111,15 @@ public final class OpenRouter {
         }
         if (cancel.stopped()) return new JSONObject().put("content", text.toString()).put("finish_reason", "cancelled");
         if (!(finish.equals("stop") || finish.equals("tool_calls") || finish.equals("length") || finish.equals("content_filter"))) throw new Sse.Protocol("Provider stream ended without a completion boundary");
+        for (int i = 0; i < calls.length(); i++) {
+            String value = arguments.get(i).toString();
+            if (value.getBytes(StandardCharsets.UTF_8).length > 256 * 1024) throw new Sse.Protocol("Tool arguments exceed 256 KiB");
+            calls.getJSONObject(i).getJSONObject("function").put("arguments", value);
+        }
         if (calls.length() > 0 && !finish.equals("length")) for (int i = 0; i < calls.length(); i++) {
             JSONObject call = calls.getJSONObject(i), fn = call.getJSONObject("function");
             if (!finish.equals("tool_calls") || call.optString("id").isEmpty() || fn.optString("name").isEmpty()) throw new Sse.Protocol("Incomplete tool call");
-            try { new JSONObject(fn.getString("arguments")); } catch (org.json.JSONException bad) { throw new Sse.Protocol("Incomplete tool arguments"); }
+            try { new JSONObject(fn.getString("arguments")); } catch (org.json.JSONException bad) { throw new IncompleteArguments(); }
         }
         JSONObject result = new JSONObject().put("content", text.toString()).put("finish_reason", finish);
         if (calls.length() > 0) result.put("tool_calls", calls);

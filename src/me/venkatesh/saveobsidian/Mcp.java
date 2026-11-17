@@ -37,6 +37,41 @@ public final class Mcp {
 
     public Mcp(String name, String url, Map<String, String> headers) { this.name = name; this.url = url; this.headers = headers; }
 
+    /** Static token authentication. Browser OAuth sessions from other apps are not shared. */
+    public static Map<String, String> authHeaders(String header, String secret) {
+        if (!header.equals("Authorization") && !header.equals("X-API-Key")) throw new IllegalArgumentException("Unsupported token header");
+        String token = secret.trim();
+        if (token.contains("\r") || token.contains("\n")) throw new IllegalArgumentException("Token must be one line");
+        if (token.isEmpty()) return java.util.Collections.emptyMap();
+        if (header.equals("Authorization")) token = "Bearer " + token.replaceFirst("(?i)^Bearer\\s+", "");
+        return java.util.Collections.singletonMap(header, token);
+    }
+
+    /** Tests the real handshake and live tool discovery, without invoking a remote tool. */
+    public String inspect(Cancel cancel, Set<String> allow) throws Exception {
+        connect(cancel);
+        JSONArray listed = listTools(cancel);
+        List<String> available = new ArrayList<>();
+        for (int i = 0; i < listed.length(); i++) {
+            String tool = listed.getJSONObject(i).getString("name");
+            if (allow == null || allow.contains(tool)) available.add(tool);
+        }
+        java.util.Collections.sort(available);
+        return "Connected · " + listed.length() + " discovered · " + available.size() + " available\n\n"
+            + (available.isEmpty() ? "No tools are available. Check the allowed-tools list." : String.join("\n", available))
+            + "\n\nIn Scout, choose Vault + web before sending. Connection changes apply to the next request.";
+    }
+
+    private String safe(String message) {
+        String text = String.valueOf(message);
+        for (String value : headers.values()) {
+            if (!value.isEmpty()) text = text.replace(value, "[redacted]");
+            String token = value.replaceFirst("(?i)^Bearer\\s+", "");
+            if (!token.isEmpty()) text = text.replace(token, "[redacted]");
+        }
+        return text;
+    }
+
     private static JSONObject obj(Object... kv) {
         try { JSONObject o = new JSONObject(); for (int i = 0; i < kv.length; i += 2) o.put((String) kv[i], kv[i + 1]); return o; }
         catch (org.json.JSONException impossible) { throw new IllegalStateException(impossible); }
@@ -46,6 +81,7 @@ public final class Mcp {
 
     /** initialize + notifications/initialized. Safe to call again after the session was lost. */
     public synchronized void connect(Cancel cancel) throws Exception {
+        if (cancel.stopped()) throw new java.io.IOException("Operation aborted");
         session = null; protocol = null;
         JSONObject r = post(obj("jsonrpc", "2.0", "id", next++, "method", "initialize", "params", obj("protocolVersion", VERSION,
             "capabilities", new JSONObject(), "clientInfo", obj("name", "sparkbox-scout", "version", "1"))), cancel, true);
@@ -101,8 +137,8 @@ public final class Mcp {
             String sid = c.getHeaderField("Mcp-Session-Id");
             if (sid != null) session = sid;
             if (status == 404 && session != null && message.has("id") && !message.getString("method").equals("initialize")) throw new Gone();
-            if (status == 401 || status == 403) throw new java.io.IOException("MCP server " + name + " refused the request (" + status + "). Check its token.");
-            if (status >= 400) throw new java.io.IOException("MCP server " + name + " answered " + status + ": " + body(c));
+            if (status == 401 || status == 403) throw new java.io.IOException("MCP server " + name + " refused the request (" + status + "). Check the token and authentication header. Sparkbox needs its own API key or bearer token; OAuth sign-in in another app is not shared.");
+            if (status >= 400) throw new java.io.IOException("MCP server " + name + " answered " + status + ": " + safe(body(c)));
             if (!wait) return null;
             String type = String.valueOf(c.getContentType());
             Object id = message.get("id");
@@ -128,7 +164,7 @@ public final class Mcp {
 
     private JSONObject answer(JSONObject m, Object id) throws Exception {
         if (!m.has("id") || !m.get("id").equals(id)) throw new Sse.Protocol("MCP response ID mismatch");
-        if (m.has("error")) { JSONObject e = m.getJSONObject("error"); throw new java.io.IOException("MCP server " + name + ": " + e.optString("message", "error") + " (" + e.optInt("code") + ")"); }
+        if (m.has("error")) { JSONObject e = m.getJSONObject("error"); throw new java.io.IOException("MCP server " + name + ": " + safe(e.optString("message", "error")) + " (" + e.optInt("code") + ")"); }
         if (!m.has("result")) throw new java.io.IOException("MCP server " + name + " sent no result");
         return m;
     }
@@ -268,8 +304,15 @@ public final class Mcp {
         for (Tool t : into) taken.add(t.name);
         for (Object[] s : servers) { // {Mcp, Boolean trusted, Set<String> allow or absent}
             Mcp m = (Mcp) s[0];
-            try { m.connect(cancel); into.addAll(tools(m, (Boolean) s[1], confirm, taken, cancel, s.length > 2 ? (Set<String>) s[2] : null, s.length > 3 ? (Set<String>) s[3] : null)); }
-            catch (Exception e) { problems.append(m.name).append(": ").append(e.getMessage()).append('\n'); }
+            int callTimeout = m.timeoutMs;
+            try {
+                m.timeoutMs = Math.min(callTimeout, 15_000);
+                m.connect(cancel);
+                List<Tool> exposed = tools(m, (Boolean) s[1], confirm, taken, cancel, s.length > 2 ? (Set<String>) s[2] : null, s.length > 3 ? (Set<String>) s[3] : null);
+                into.addAll(exposed);
+                if (exposed.isEmpty()) problems.append(m.name).append(": No tools available; check the server tool list and allowed-tools allowlist.\n");
+            } catch (Exception e) { problems.append(m.name).append(": ").append(m.safe(e.getMessage())).append('\n'); }
+            finally { m.timeoutMs = callTimeout; }
         }
         return problems.toString();
     }

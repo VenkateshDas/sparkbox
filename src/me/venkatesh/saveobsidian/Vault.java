@@ -290,17 +290,22 @@ public final class Vault {
 
     /** Reciprocal rank fusion: notes that rank well in both lists come first. wb scales how much the second list counts. */
     public static List<Note> fuse(List<Note> a, List<Note> b, double wb, int limit) {
-        final Map<Note, Double> score = new HashMap<>();
+        return fuse(a, b, wb, limit, java.util.Comparator.comparing(note -> note.path));
+    }
+
+    /** Shared fusion for notes and inbox captures; each caller supplies a stable tie-break. */
+    public static <T> List<T> fuse(List<T> a, List<T> b, double wb, int limit, java.util.Comparator<T> tie) {
+        final Map<T, Double> score = new HashMap<>();
         for (int which = 0; which < 2; which++) {
-            List<Note> list = which == 0 ? a : b;
+            List<T> list = which == 0 ? a : b;
             for (int i = 0; i < list.size(); i++) {
                 Double old = score.get(list.get(i));
-                score.put(list.get(i), (old == null ? 0 : old) + (which == 0 ? 1 : wb) / (60 + i));
+                score.put(list.get(i), (old == null ? 0 : old) + (which == 0 ? 1 : wb) / (61 + i));
             }
         }
-        List<Note> out = new ArrayList<>(score.keySet());
-        Collections.sort(out, new java.util.Comparator<Note>() {
-            @Override public int compare(Note x, Note y) { return Double.compare(score.get(y), score.get(x)); }
+        List<T> out = new ArrayList<>(score.keySet());
+        Collections.sort(out, new java.util.Comparator<T>() {
+            @Override public int compare(T x, T y) { int rank = Double.compare(score.get(y), score.get(x)); return rank != 0 ? rank : tie.compare(x, y); }
         });
         return new ArrayList<>(out.subList(0, Math.min(limit, out.size())));
     }

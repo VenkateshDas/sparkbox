@@ -42,10 +42,10 @@ public final class Index {
 
     private static float[] unit(float[] v) {
         double sum = 0;
-        for (float x : v) sum += x * x;
-        float norm = (float) Math.sqrt(sum);
+        for (float x : v) sum += (double) x * x;
+        double norm = Math.sqrt(sum);
         float[] out = new float[v.length];
-        for (int i = 0; i < v.length; i++) out[i] = norm == 0 ? 0 : v[i] / norm;
+        for (int i = 0; i < v.length; i++) out[i] = norm == 0 ? 0 : (float) (v[i] / norm);
         return out;
     }
 
@@ -136,6 +136,25 @@ public final class Index {
             }
         }
         if (!temp.renameTo(file)) throw new IOException("Cannot save the search index");
+        synchronized (Index.class) { SNAPSHOTS.remove(file.getAbsolutePath()); }
+    }
+
+    private static final Map<String, Snapshot> SNAPSHOTS = new java.util.LinkedHashMap<>(4, 0.75f, true);
+    private static final class Snapshot {
+        final long modified, bytes;
+        final Index index;
+        Snapshot(File file, Index index) { modified = file.lastModified(); bytes = file.length(); this.index = index; }
+    }
+
+    /** Read-only resident snapshot. Writers use load(); successful saves invalidate this snapshot. */
+    public static synchronized Index cached(File file) {
+        String path = file.getAbsolutePath();
+        Snapshot found = SNAPSHOTS.get(path);
+        if (found != null && found.modified == file.lastModified() && found.bytes == file.length()) return found.index;
+        Index index = load(file);
+        SNAPSHOTS.put(path, new Snapshot(file, index));
+        if (SNAPSHOTS.size() > 4) SNAPSHOTS.remove(SNAPSHOTS.keySet().iterator().next());
+        return index;
     }
 
     /** Missing, corrupt, or built by another model: start empty and re-embed. Vectors are cheap to rebuild. */

@@ -3,10 +3,8 @@ package me.venkatesh.saveobsidian;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,6 +28,8 @@ public final class VaultTools {
         void write(String path, String before, String after) throws Exception;
         /** Notes by meaning and keywords, formatted for the model. */
         String search(String query) throws Exception;
+        /** Structured matches allow the search tool to open a few results without another model turn. */
+        default Tool.Result searchResult(String query) throws Exception { return Tool.Result.ok(search(query)); }
         /** False for notes the app manages itself (the inbox): shown to the model as read-only. */
         default boolean canWrite(String path) { return true; }
     }
@@ -43,7 +43,7 @@ public final class VaultTools {
     private final Files fs;
     private final Confirm confirm;
     private final String[] roots;
-    private final Map<String, String> cache = Collections.synchronizedMap(new HashMap<String, String>());
+    private final java.util.concurrent.ConcurrentHashMap<String, String> cache = new java.util.concurrent.ConcurrentHashMap<>();
 
     private VaultTools(Files fs, Confirm confirm, String[] roots) { this.fs = fs; this.confirm = confirm; this.roots = roots; }
 
@@ -92,9 +92,18 @@ public final class VaultTools {
     }
 
     private String text(String path) throws Exception {
-        String t = cache.get(path);
-        if (t == null) { t = fs.read(path); if (t == null) throw new java.io.IOException("File not found: " + path); cache.put(path, t); }
-        return t;
+        try {
+            // Concurrent scans share each cold read; unrelated notes can still load in parallel.
+            return cache.computeIfAbsent(path, key -> {
+                try {
+                    String text = fs.read(key);
+                    if (text == null) throw new java.io.IOException("File not found: " + key);
+                    return text;
+                } catch (Exception failed) { throw new java.util.concurrent.CompletionException(failed); }
+            });
+        } catch (java.util.concurrent.CompletionException failed) {
+            throw (Exception) failed.getCause();
+        }
     }
 
     /** Notes under dir ("" = the whole vault), sorted. Empty list when nothing is there. */
@@ -229,7 +238,7 @@ public final class VaultTools {
     // ---- grep ----
 
     private Tool grep() {
-        return new Tool("grep", "Search note contents for a pattern. Returns matching lines with note paths and line numbers. Output is truncated to " + GREP + " matches or " + Truncate.BYTES / 1024 + "KB (whichever is hit first). Long lines are truncated to " + LINE + " chars.",
+        return new Tool("grep", "Search note contents for a pattern. For topic discovery use search first; scope path or glob to the relevant notes instead of scanning the whole vault. Returns matching lines with note paths and line numbers. Output is truncated to " + GREP + " matches or " + Truncate.BYTES / 1024 + "KB (whichever is hit first). Long lines are truncated to " + LINE + " chars.",
             schema(obj("pattern", prop("string", "Search pattern (regex or literal string)"),
                 "path", prop("string", "Folder or note to search (default: the vault root)"),
                 "glob", prop("string", "Filter notes by glob pattern relative to path, e.g. '*.md'. Without '/', it matches note names at any depth"),
@@ -282,9 +291,33 @@ public final class VaultTools {
     // ---- search ----
 
     private Tool search() {
-        return new Tool("search", "Find notes by meaning and keywords. Returns the best matches with a one-line description. Use it when you do not know the exact words (grep) or the note name (find).",
-            schema(obj("query", prop("string", "What to look for")), "query"), false) {
-            @Override public Result execute(JSONObject args, Cancel cancel) throws Exception { return Result.ok(fs.search(args.getString("query"))); }
+        return new Tool("search", "Hybrid retrieval by meaning and keywords. Returns ranked matches and freshly read, citable excerpts from the best two notes. Listings alone are not evidence. Read more only if the excerpts do not answer the question.",
+            schema(obj("query", prop("string", "What to look for"), "read", prop("number", "Notes to open for excerpts: 0 to 3, default 2; use 0 for listings only")), "query"), false) {
+            @Override public Result execute(JSONObject args, Cancel cancel) throws Exception {
+                String query = args.getString("query").trim();
+                if (query.isEmpty()) return Result.error("Search query is empty. Use a topic or a few relevant words.");
+                Result result = fs.searchResult(query);
+                if (result.error || result.details == null) return result;
+                JSONArray matches = result.details.optJSONArray("matches"), evidence = new JSONArray();
+                StringBuilder out = new StringBuilder(result.text);
+                int count = Math.max(0, Math.min(3, args.optInt("read", 2)));
+                for (int i = 0; matches != null && i < Math.min(count, matches.length()); i++) {
+                    if (cancel.stopped()) return Result.error("Operation aborted");
+                    String path = note(matches.getString(i));
+                    if (path == null) continue;
+                    try {
+                        String full = fs.read(path);
+                        if (full == null) throw new java.io.IOException("File no longer exists");
+                        cache.put(path, full);
+                        String excerpt = full.substring(0, Math.min(1600, full.length()));
+                        String range = "characters 0-" + excerpt.length() + " of " + full.length();
+                        out.append("\n\nRead excerpt: ").append(path).append(" · ").append(range).append("\n").append(excerpt);
+                        evidence.put(obj("evidencePath", path, "coverage", excerpt.length() == full.length() ? "full" : "excerpt", "range", range, "hash", ScoutChanges.hash(full), "excerpt", excerpt));
+                    } catch (Exception unreadable) { out.append("\nCould not read ").append(path).append(": ").append(unreadable.getMessage()); }
+                }
+                JSONObject detail = new JSONObject(result.details.toString()).put("evidence", evidence);
+                return new Result(out.toString(), detail, false, false);
+            }
         };
     }
 
@@ -363,8 +396,8 @@ public final class VaultTools {
                 for (int[] s : spans) diff.append("- ").append(clip(edits.getJSONObject(s[2]).getString("oldText"))).append("\n+ ").append(clip(news[s[2]])).append("\n");
                 if (!confirm.ok("Edit " + path, diff.toString().trim())) return Result.error(DECLINED);
                 if (cancel.stopped()) return Result.error("Operation aborted");
-                fs.write(path, raw, crlf ? after.replace("\n", "\r\n") : after);
                 cache.remove(path);
+                fs.write(path, raw, crlf ? after.replace("\n", "\r\n") : after);
                 return Result.ok("Successfully replaced " + edits.length() + " block(s) in " + path + ".");
             }
         };
@@ -381,8 +414,8 @@ public final class VaultTools {
                 int old = before == null ? 0 : before.split("\n", -1).length, now = content.split("\n", -1).length;
                 if (!confirm.ok((before == null ? "Create " : "Overwrite ") + path, before == null ? now + " lines:\n" + clip(content) : old + " lines replaced by " + now + " lines:\n" + clip(content))) return Result.error(DECLINED);
                 if (cancel.stopped()) return Result.error("Operation aborted");
-                fs.write(path, before, content);
                 cache.remove(path);
+                fs.write(path, before, content);
                 return Result.ok("Successfully wrote to " + path);
             }
         };

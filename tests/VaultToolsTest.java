@@ -9,7 +9,7 @@ final class VaultToolsTest {
     static int count;
     private static void check(boolean ok) { count++; if (!ok) throw new AssertionError("vault tools check #" + count); }
 
-    static final class Mem implements VaultTools.Files {
+    static class Mem implements VaultTools.Files {
         final Map<String, String> notes = new TreeMap<>();
         public List<String> paths() { return new ArrayList<>(notes.keySet()); }
         public String read(String p) { return notes.get(p); }
@@ -45,6 +45,32 @@ final class VaultToolsTest {
         for (Tool t : VaultTools.create(m, (title, detail) -> { asked.add(title); return yes; }, "Knowledge")) tools.put(t.name, t);
 
         check(tools.keySet().toString().equals("[read, grep, find, ls, search, edit, write]"));
+        // Two cold greps must share the same provider read, not reopen every note twice.
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1), release = new java.util.concurrent.CountDownLatch(1), duplicate = new java.util.concurrent.CountDownLatch(1);
+        Mem provider = new Mem() {
+            @Override public String read(String path) {
+                if (reads.incrementAndGet() > 1) duplicate.countDown();
+                entered.countDown();
+                try { if (!release.await(2, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Read fixture timed out"); }
+                catch (InterruptedException e) { throw new AssertionError(e); }
+                return super.read(path);
+            }
+        };
+        provider.notes.put("Knowledge/One.md", "video editing with Claude");
+        Tool grep = VaultTools.create(provider, (title, detail) -> true, "Knowledge").get(1);
+        java.util.concurrent.ExecutorService workers = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<Tool.Result> first = workers.submit(() -> grep.execute(new JSONObject().put("pattern", "video"), new Cancel()));
+            check(entered.await(1, java.util.concurrent.TimeUnit.SECONDS));
+            java.util.concurrent.Future<Tool.Result> second = workers.submit(() -> grep.execute(new JSONObject().put("pattern", "Claude"), new Cancel()));
+            duplicate.await(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+            release.countDown();
+            check(first.get(2, java.util.concurrent.TimeUnit.SECONDS).text.contains("video"));
+            check(second.get(2, java.util.concurrent.TimeUnit.SECONDS).text.contains("Claude"));
+            System.out.println("Parallel grep provider reads: " + reads.get() + " (expected 1)");
+            check(reads.get() == 1);
+        } finally { release.countDown(); workers.shutdownNow(); }
         // read: path forms, offsets, truncation footers, errors
         check(run("read", "{\"path\":\"Knowledge/Topics/Agents\"}").equals(m.notes.get("Knowledge/Topics/Agents.md")));
         check(run("read", "{\"path\":\"/knowledge/topics/agents.md\",\"offset\":2,\"limit\":1}").equals("line two\n\n[3 more lines in file. Use offset=3 to continue.]"));
@@ -133,14 +159,16 @@ final class VaultToolsTest {
         List<me.venkatesh.saveobsidian.Chat.Row> rows = me.venkatesh.saveobsidian.Chat.rows(convo);
         StringBuilder shown = new StringBuilder();
         for (me.venkatesh.saveobsidian.Chat.Row r : rows) shown.append(r.kind).append(":").append(r.text).append("|");
-        check(shown.toString().equals("user:What about RAG?|work:Unknown: Search “rag”\nUnknown: Call tinyfish: fetch_content|answer:Fixed|"));
+        check(shown.toString().equals("user:What about RAG?|work:Result received: Search “rag”\nCall tinyfish: fetch_content|answer:Fixed|"));
         check(me.venkatesh.saveobsidian.Chat.clock(83).equals("1:23") && me.venkatesh.saveobsidian.Chat.clock(5).equals("0:05"));
         List<JSONObject> timed = new ArrayList<>();
         timed.add(new JSONObject("{role:user,content:q,ts:1000000}"));
         timed.add(new JSONObject("{role:assistant,content:'',tool_calls:[{id:c1,function:{name:read,arguments:'{\"path\":\"A.md\"}'}}],stopReason:toolUse,ts:1010000}"));
         check(me.venkatesh.saveobsidian.Chat.rows(timed).get(1).secs == me.venkatesh.saveobsidian.Chat.RUNNING);
+        check(me.venkatesh.saveobsidian.Chat.rows(timed, Map.of("c1", "Running")).get(1).text.equals("Running: Read A.md"));
+        check(me.venkatesh.saveobsidian.Chat.rows(timed, Map.of("c1", "Done")).get(1).text.equals("Done: Read A.md"));
         timed.add(new JSONObject("{role:assistant,content:done,stopReason:stop,ts:1083000}"));
-        check(me.venkatesh.saveobsidian.Chat.rows(timed).get(1).secs == 83 && me.venkatesh.saveobsidian.Chat.rows(timed).get(1).text.equals("Unknown: Read A.md"));
+        check(me.venkatesh.saveobsidian.Chat.rows(timed).get(1).secs == 83 && me.venkatesh.saveobsidian.Chat.rows(timed).get(1).text.equals("Read A.md"));
         convo.add(new JSONObject("{role:user,content:'more'}"));
         convo.add(new JSONObject("{role:assistant,content:'',stopReason:aborted}"));
         check(me.venkatesh.saveobsidian.Chat.interrupted(convo) && !me.venkatesh.saveobsidian.Chat.interrupted(new ArrayList<>()));

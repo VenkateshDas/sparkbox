@@ -69,7 +69,12 @@ public final class Agent {
     private final List<JSONObject> steering = new ArrayList<>(), followUps = new ArrayList<>();
     private final java.util.concurrent.CopyOnWriteArrayList<Listener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     public Hooks hooks = new Hooks() { };
+    /** Returns the durably stored result for an admitted proposal, or null to wait for the user. */
+    public interface Approvals { JSONObject resolve(JSONObject proposal) throws Exception; }
+    public Approvals approvals = proposal -> null;
     public int maxTokens = 3000, maxTurns = 8;
+    /** Bound automatic output growth independently of the context window. */
+    public int maxOutputTokens = 16384;
     /** Applied to the text of a final answer (no tool calls) before it is stored and shown: the place to drop what cannot be verified. */
     public java.util.function.UnaryOperator<String> polish = t -> t;
     /** Queue modes (Pi's steeringMode / followUpMode): false delivers one queued message per turn, true delivers all of them. */
@@ -292,7 +297,7 @@ public final class Agent {
                     carry += last.optString("content"); turns--; more = true; continue;
                 }
                 if (cut && last.optString("content").isEmpty() && !grown) { // the whole budget went on thinking: once more with double
-                    grown = true; maxTokens = budget * 2; turns--; more = true; continue;
+                    grown = true; maxTokens = Math.min(maxOutputTokens, budget * 2); turns--; more = true; continue;
                 }
                 if (!carry.isEmpty()) try { last.put("content", carry + last.optString("content")); carry = ""; } catch (Exception impossible) { throw new IllegalStateException(impossible); }
                 if (last.optString("stopReason").equals("stop") && last.optJSONArray("tool_calls") == null) try { last.put("content", polish.apply(last.optString("content"))); } catch (Exception keep) { }
@@ -306,7 +311,7 @@ public final class Agent {
                 more = false;
                 if (calls != null && calls.length() > 0) {
                     results = execute(calls, stop.equals("length"));
-                    if (stop.equals("length") && !grown) { grown = true; maxTokens = budget * 2; } // a long note needs room: the next try gets double
+                    if (stop.equals("length") && !grown) { grown = true; maxTokens = Math.min(maxOutputTokens, budget * 2); } // a long note needs room: the next try gets double
                     boolean allTerminate = true;
                     for (JSONObject r : results) allTerminate &= r.optBoolean("terminate");
                     more = !allTerminate;
@@ -388,7 +393,7 @@ public final class Agent {
             hooks.prepareRequest(request);
         } catch (Exception e) { return failed("error", String.valueOf(e.getMessage())); }
         emit("message_start", new JSONObject());
-        boolean compacted = false;
+        boolean compacted = false, repairedArguments = false;
         for (int attempt = 0; ; attempt++) {
             try {
                 JSONObject reply = provider.streamAttempt(request, text -> emit("message_update", text(text)), cancel, attempt, !carry.isEmpty());
@@ -396,6 +401,18 @@ public final class Agent {
             } catch (Exception e) {
                 if (cancel.stopped()) return failed("aborted", "Stopped");
                 String message = String.valueOf(e.getMessage()), kind = Failures.kind(message);
+                if (e instanceof OpenRouter.IncompleteArguments) {
+                    if (repairedArguments) return failed("error", "The model returned incomplete tool arguments twice. No partial tool call was executed.");
+                    repairedArguments = true;
+                    try {
+                        int limit = Math.min(maxOutputTokens, request.optInt("max_tokens") * 2);
+                        request.put("max_tokens", limit);
+                        maxTokens = limit;
+                        request.getJSONArray("messages").put(new JSONObject().put("role", "user").put("content", "Your tool arguments were incomplete and no tools from that response ran. Return complete JSON arguments. Keep note content concise; split long changes into separate targeted edits."));
+                        emit("retry", new JSONObject().put("attempt", attempt + 1).put("waitMs", 0).put("error", "Regenerating incomplete tool arguments"));
+                    } catch (Exception failed) { return failed("error", message); }
+                    continue;
+                }
                 if (!compacted && Compact.overflow(message) && hooks.onOverflow(this)) { // too long: shrink once, rebuild, send again
                     compacted = true;
                     try { request.put("messages", convertToLlm()); } catch (Exception bad) { return failed("error", message); }
@@ -435,7 +452,7 @@ public final class Agent {
 
     // ---- tools ----
 
-    private static final class Call { String id, name; Tool tool; JSONObject args; String error; Tool.Result result; }
+    private static final class Call { String id, name; Tool tool; JSONObject args; String error; Tool.Result result; JSONObject savedResult; long durationMs; }
 
     private List<JSONObject> execute(JSONArray calls, boolean truncated) {
         List<Call> batch = new ArrayList<>();
@@ -457,7 +474,7 @@ public final class Agent {
             for (Call c : batch) {
                 if (suspended) c.result = Tool.Result.error("Deferred: not executed while another call awaits approval. Propose again in a new turn if needed.");
                 else run(c);
-                if (c.result != null) { JSONObject result = result(c); add(result); out.add(result); }
+                if (c.result != null) appendResult(c, out);
             }
             return out;
         } else {
@@ -467,13 +484,20 @@ public final class Agent {
             pool.shutdown();
             for (Future<?> f : running) { try { f.get(); } catch (Exception ignore) { } } // run() never throws; results are read from the calls, in call order
         }
-        for (Call c : batch) { JSONObject result = result(c); add(result); out.add(result); }
+        for (Call c : batch) if (c.result != null) appendResult(c, out);
         return out;
+    }
+
+    private void appendResult(Call c, List<JSONObject> out) {
+        JSONObject result = c.savedResult == null ? result(c) : c.savedResult;
+        if (c.savedResult == null) add(result);
+        else messages.add(result); // approval already saved it; never duplicate a tool result in the journal
+        out.add(result);
     }
 
     private static JSONObject result(Call c) {
         try { return new JSONObject().put("role", "tool").put("tool_call_id", c.id).put("name", c.name).put("content", c.result.text)
-            .put("isError", c.result.error).put("terminate", c.result.terminate).put("details", c.result.details == null ? JSONObject.NULL : c.result.details); }
+            .put("durationMs", c.durationMs).put("isError", c.result.error).put("terminate", c.result.terminate).put("details", c.result.details == null ? JSONObject.NULL : c.result.details); }
         catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
 
@@ -494,6 +518,9 @@ public final class Agent {
 
     /** Never throws: an error, an exception or a stop becomes an error result the model can read. */
     private void run(Call c) {
+        long began = System.nanoTime();
+        Cancel previous = Cancel.CURRENT.get();
+        Cancel.use(cancel);
         try {
             emit("tool_execution_start", new JSONObject().put("id", c.id).put("name", c.name).put("args", c.args == null ? new JSONObject() : c.args));
             if (c.error != null) c.result = Tool.Result.error(c.error);
@@ -503,16 +530,25 @@ public final class Agent {
                     ScoutChanges.CALL.set(new JSONObject().put("id", c.id).put("name", c.name));
                     c.result = c.tool.execute(c.args, cancel);
                 } catch (ScoutChanges.Suspended waiting) {
-                    suspended = true;
-                    emit("tool_suspended", waiting.proposal);
-                    return;
+                    try { c.savedResult = approvals.resolve(waiting.proposal); }
+                    catch (Exception failed) {
+                        if (session != null) session.appendCustom("proposal_error", new JSONObject().put("proposalId", waiting.proposal.optString("proposalId")).put("message", "Action could not finish: " + failed.getMessage()));
+                    }
+                    if (c.savedResult == null) {
+                        suspended = true;
+                        emit("tool_suspended", waiting.proposal);
+                        return;
+                    }
+                    c.result = new Tool.Result(c.savedResult.optString("content"), c.savedResult.optJSONObject("details"), c.savedResult.optBoolean("isError"), false);
                 } catch (Exception e) { c.result = Tool.Result.error(String.valueOf(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())); }
                 finally { ScoutChanges.CALL.remove(); }
                 if (c.result == null) c.result = Tool.Result.error("The tool returned nothing.");
                 else c.result = hooks.afterToolCall(c.name, c.args, c.result);
             }
-            emit("tool_execution_end", new JSONObject().put("id", c.id).put("name", c.name).put("isError", c.result.error));
+            c.durationMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began);
+            emit("tool_execution_end", new JSONObject().put("id", c.id).put("name", c.name).put("isError", c.result.error).put("durationMs", c.durationMs));
         } catch (Exception e) { if (c.result == null) c.result = Tool.Result.error(String.valueOf(e.getMessage())); }
+        finally { Cancel.use(previous); }
     }
 
     // ---- events ----

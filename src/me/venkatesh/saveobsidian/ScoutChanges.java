@@ -85,6 +85,26 @@ public final class ScoutChanges {
         return new ArrayList<>(pending.values());
     }
 
+    /** Only explicit user-selected full access admits automatic approvals. Discovery remains read-only. */
+    public static boolean fullAccess(JSONObject config) {
+        return config != null && "full".equals(config.optString("approval")) && !config.optBoolean("discovery");
+    }
+
+    public interface Apply { void apply(JSONObject proposal) throws Exception; }
+
+    /** Full access executes inside the original tool batch, using the same durable fences as a manual approval. */
+    public static JSONObject autoApprove(Session session, JSONObject p, Cancel cancel, Apply apply) throws Exception {
+        if (!fullAccess(ScoutState.latest(session, "run_config")) || cancel.stopped()) return null;
+        org.json.JSONArray unknown = p.optJSONArray("previousUnknown");
+        String id = p.optString("proposalId");
+        if (p.optString("callId").startsWith("manual_") || unknown != null && unknown.length() > 0
+            || "external".equals(p.optString("kind")) && event(session, "dispatch_intent", id) && !event(session, "dispatch_result", id)) return null;
+        apply.apply(p);
+        if (!event(session, "proposal_resolved", id)) return null;
+        for (JSONObject result : session.retained()) if ("tool".equals(result.optString("role")) && id.equals(result.optString("proposalId"))) return result;
+        return null;
+    }
+
     public static boolean event(Session session, String kind, String id) {
         for (JSONObject e : session.log()) {
             JSONObject d = e.optJSONObject("data");
@@ -103,7 +123,7 @@ public final class ScoutChanges {
 
     /** Decision is durable before admission. Stop and intent admission serialize on the same Cancel monitor. */
     public static void applyNote(Session session, JSONObject p, boolean yes, Notes notes, Cancel cancel) throws Exception {
-        synchronized (session) {
+        synchronized (session.approvalLock) {
             String id = p.getString("proposalId");
             if (event(session, "proposal_resolved", id)) return;
             yes = yes && !declined(session, id);
@@ -152,7 +172,7 @@ public final class ScoutChanges {
 
     /** An uncertain remote dispatch cannot be reconciled by local content hashes or automatically retried. */
     public static void applyExternal(Session session, JSONObject p, boolean yes, External external, Cancel cancel) throws Exception {
-        synchronized (session) {
+        synchronized (session.approvalLock) {
             String id = p.getString("proposalId");
             if (event(session, "proposal_resolved", id)) return;
             yes = yes && !declined(session, id);
@@ -171,7 +191,7 @@ public final class ScoutChanges {
                 if (!p.getString("revision").equals(external.revision())) { resolve(session, p, "Server configuration changed. Review a new proposal.", true); return; }
                 session.appendCustom("dispatch_intent", new JSONObject().put("proposalId", id));
             }
-            Tool.Result result = external.call(p.getString("tool"), p.getJSONObject("arguments"), cancel);
+            Tool.Result result = ScoutEvidence.annotate(session, p.getString("name"), external.call(p.getString("tool"), p.getJSONObject("arguments"), cancel));
             session.appendCustom("dispatch_result", new JSONObject().put("proposalId", id).put("text", result.text).put("error", result.error));
             resolve(session, p, result.text, result.error);
         }

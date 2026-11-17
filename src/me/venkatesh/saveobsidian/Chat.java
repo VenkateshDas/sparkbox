@@ -45,19 +45,21 @@ public final class Chat {
         }
     }
 
-    private static String outcome(List<JSONObject> messages, int at, String id) {
+    private static String outcome(List<JSONObject> messages, int at, String id, java.util.Map<String, String> live) {
         for (int i = at + 1; i < messages.size(); i++) {
             JSONObject m = messages.get(i);
             if (m.optString("role").equals("assistant") || m.optString("role").equals("user")) break;
             if (!m.optString("role").equals("tool") || !id.equals(m.optString("tool_call_id"))) continue;
-            if (!m.has("isError")) return "Unknown";
-            if (!m.optBoolean("isError")) return "Success";
-            return m.optString("content").toLowerCase(java.util.Locale.ROOT).contains("declined") ? "Declined" : "Error";
+            if (!m.has("isError")) return "Result received";
+            if (!m.optBoolean("isError")) return "Done";
+            return m.optString("content").toLowerCase(java.util.Locale.ROOT).contains("declined") ? "Declined" : "Failed";
         }
-        return "Unknown";
+        return live.getOrDefault(id, "");
     }
 
-    public static List<Row> rows(List<JSONObject> messages) {
+    public static List<Row> rows(List<JSONObject> messages) { return rows(messages, java.util.Collections.emptyMap()); }
+
+    public static List<Row> rows(List<JSONObject> messages, java.util.Map<String, String> live) {
         List<Row> out = new ArrayList<>();
         List<String> steps = new ArrayList<>();
         long userAt = 0;
@@ -77,9 +79,18 @@ public final class Chat {
             if (calls != null && calls.length() > 0) {
                 for (int c = 0; c < calls.length(); c++) {
                     JSONObject fn = calls.optJSONObject(c) == null ? null : calls.optJSONObject(c).optJSONObject("function");
-                    if (fn != null) steps.add(outcome(messages, i, calls.optJSONObject(c).optString("id")) + ": " + step(fn.optString("name"), JsonFix.object(fn.optString("arguments", "{}"))));
+                    if (fn != null) {
+                        String status = outcome(messages, i, calls.optJSONObject(c).optString("id"), live);
+                        steps.add((status.isEmpty() ? "" : status + ": ") + step(fn.optString("name"), JsonFix.object(fn.optString("arguments", "{}"))));
+                    }
                 }
                 continue;
+            }
+            String stop = m.optString("stopReason", "stop");
+            if (stop.equals("error") || stop.equals("aborted") || stop.equals("max-steps")) {
+                long end = m.optLong("ts");
+                if (!steps.isEmpty()) out.add(new Row("work", String.join("\n", steps), userAt > 0 && end >= userAt ? (end - userAt) / 1000 : UNKNOWN));
+                steps.clear();
             }
             boolean corrected = i + 1 < messages.size() && messages.get(i + 1).optString("content").startsWith(CHECK);
             if (!content.isEmpty() && (m.optString("stopReason", "stop").equals("stop") || m.optString("stopReason").equals("length")) && !corrected) {

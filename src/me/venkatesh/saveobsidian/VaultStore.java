@@ -244,10 +244,12 @@ final class VaultStore {
     /** Word match, rare words and title words first. See Vault.search. */
     static List<Vault.Note> keyword(Snap snap, String query, int limit) { return Vault.search(snap.graph.notes, query, limit); }
 
-    /** Unit vector of the query, or null without a key. Throws when the network or provider fails. */
+    private static final QueryVectors QUERIES = new QueryVectors(128, Index.DIMS);
+
+    /** Cached unit query vector. In-flight requests are shared only within the same run. */
     static float[] vector(Context c, String query) throws Exception {
         String key = Model.key(c);
-        return key.isEmpty() ? null : Index.normalized(Model.embed(key, java.util.Collections.singletonList(query)).get(0));
+        return key.isEmpty() ? null : QUERIES.get(Index.MODEL + ":" + Index.DIMS, query, Cancel.current(), () -> Model.queryVector(key, query.trim()));
     }
 
     /** Closest in meaning to the query. Needs a key and network for the query vector; throws when it cannot get one. */
@@ -258,12 +260,12 @@ final class VaultStore {
 
     /** Notes closest in meaning to this one, offline from stored vectors. */
     static List<Vault.Note> similar(Context c, Snap snap, Vault.Note note, int limit) {
-        float[] v = Index.load(indexFile(c)).vector(note.digest);
+        float[] v = Index.cached(indexFile(c)).vector(note.digest);
         return v == null ? new ArrayList<Vault.Note>() : nearest(c, snap, v, limit, Index.MIN_RELATED, note);
     }
 
     static List<Vault.Note> nearest(Context c, Snap snap, float[] q, int limit, float min, Vault.Note self) {
-        Index index = Index.load(indexFile(c));
+        Index index = Index.cached(indexFile(c));
         final Map<Vault.Note, Float> score = new HashMap<>();
         for (Vault.Note n : snap.graph.notes) {
             float[] v = n == self || n.catalog ? null : index.vector(n.digest);

@@ -41,31 +41,44 @@ public final class ScoutEvidence {
             @Override public JSONObject prepareArguments(JSONObject args) { return original.prepareArguments(args); }
             @Override public Result execute(JSONObject args, Cancel cancel) throws Exception {
                 Result result = original.execute(args, cancel);
-                if (result == null || result.error) return result;
-                StringBuilder ids = new StringBuilder();
-                JSONObject detail = result.details;
-                if (detail != null && detail.has("evidencePath")) {
-                    String target = detail.getString("evidencePath");
-                    String id = register(session, target, target.substring(target.lastIndexOf('/') + 1).replaceFirst("\\.md$", ""), "note", detail.optString("coverage", "excerpt"), result.text, detail.optString("range"), detail.optString("hash"));
-                    ids.append("\nSource [[cite:").append(id).append("]] · ").append(detail.optString("coverage", "excerpt"));
-                } else if (name.equals("inbox")) {
-                    String id = register(session, Layout.inbox() + ".md", "Inbox captures", "capture", "excerpt", result.text, "returned captures", null);
-                    ids.append("\nSource [[cite:").append(id).append("]] · excerpt");
-                } else if (name.startsWith("mcp__")) {
-                    Matcher urls = URL.matcher(result.text);
-                    java.util.Set<String> found = new java.util.LinkedHashSet<>();
-                    while (urls.find() && found.size() < 20) {
-                        String target = urls.group().replaceAll("[.,;]+$", "");
-                        if (!validUrl(target) || !found.add(target)) continue;
-                        int start = Math.max(0, urls.start() - 200), end = Math.min(result.text.length(), urls.end() + 800);
-                        String id = register(session, target, java.net.URI.create(target).getHost(), "web", "unknown", result.text.substring(start, end), "tool excerpt; page coverage unknown", null);
-                        ids.append("\nSource [[cite:").append(id).append("]] · coverage unknown · ").append(target);
-                    }
-                }
-                return ids.length() == 0 ? result : result.withText(result.text + "\n\nHost evidence IDs (coverage is not claim verification):" + ids);
+                return annotate(session, name, result);
             }
         });
         return out;
+    }
+
+    /** Shared by direct tool calls and durable approved external calls. */
+    public static Tool.Result annotate(Session session, String name, Tool.Result result) throws Exception {
+        if (result == null || result.error) return result;
+        StringBuilder ids = new StringBuilder();
+        JSONObject detail = result.details;
+        if (detail != null && detail.optJSONArray("evidence") != null) {
+            org.json.JSONArray evidence = detail.getJSONArray("evidence");
+            for (int i = 0; i < evidence.length(); i++) {
+                JSONObject item = evidence.getJSONObject(i);
+                String target = item.getString("evidencePath");
+                String id = register(session, target, target.substring(target.lastIndexOf('/') + 1).replaceFirst("\\.md$", ""), "note", item.getString("coverage"), item.getString("excerpt"), item.getString("range"), item.getString("hash"));
+                ids.append("\nSource [[cite:").append(id).append("]] · ").append(item.getString("coverage")).append(" · ").append(target).append(" · ").append(item.getString("range"));
+            }
+        } else if (detail != null && detail.has("evidencePath")) {
+            String target = detail.getString("evidencePath");
+            String id = register(session, target, target.substring(target.lastIndexOf('/') + 1).replaceFirst("\\.md$", ""), "note", detail.optString("coverage", "excerpt"), result.text, detail.optString("range"), detail.optString("hash"));
+            ids.append("\nSource [[cite:").append(id).append("]] · ").append(detail.optString("coverage", "excerpt"));
+        } else if (name.equals("inbox")) {
+            String id = register(session, Layout.inbox() + ".md", "Inbox captures", "capture", "excerpt", result.text, "returned captures", null);
+            ids.append("\nSource [[cite:").append(id).append("]] · excerpt");
+        } else if (name.startsWith("mcp__")) {
+            Matcher urls = URL.matcher(result.text);
+            java.util.Set<String> found = new java.util.LinkedHashSet<>();
+            while (urls.find() && found.size() < 20) {
+                String target = urls.group().replaceAll("[.,;]+$", "");
+                if (!validUrl(target) || !found.add(target)) continue;
+                int start = Math.max(0, urls.start() - 200), end = Math.min(result.text.length(), urls.end() + 800);
+                String id = register(session, target, java.net.URI.create(target).getHost(), "web", "unknown", result.text.substring(start, end), "tool excerpt; page coverage unknown", null);
+                ids.append("\nSource [[cite:").append(id).append("]] · coverage unknown · ").append(target);
+            }
+        }
+        return ids.length() == 0 ? result : result.withText(result.text + "\n\nHost evidence IDs (coverage is not claim verification):" + ids);
     }
 
     public static boolean validUrl(String value) {

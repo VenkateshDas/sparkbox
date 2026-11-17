@@ -144,15 +144,31 @@ final class AgentTest {
         a.prompt("go");
         check(a.messages().get(2).getString("content").equals("count=5"));
 
+        // Nested HTTP helpers must use the run's stop token, then restore the caller's token.
+        Cancel outerToken = new Cancel(), toolToken = new Cancel();
+        Cancel.use(outerToken);
+        try {
+            Tool tokenProbe = new Tool("token", "token", schema(), false) {
+                public Result execute(JSONObject args, Cancel cancel) { return Result.ok(Cancel.current() == cancel ? "bound" : "unbound"); }
+            };
+            f = new Faux().then(calls("token", "{}"), say("ok"));
+            a = agent(f, toolToken, tokenProbe);
+            a.prompt("go");
+            check(a.messages().get(2).getString("content").equals("bound"));
+            check(Cancel.current() == outerToken);
+        } finally { Cancel.use(null); }
+
         // parallel batch: results persist in call order even when the first call finishes last; events fire in completion order
         Tool slow = tool("slow", schema(), false, args -> { Thread.sleep(150); return Tool.Result.ok("slow"); });
         Tool quick = tool("quick", schema(), false, args -> Tool.Result.ok("quick"));
         f = new Faux().then(calls("slow", "{}", "quick", "{}"), say("ok"));
         a = agent(f, new Cancel(), slow, quick);
         List<String> ends = Collections.synchronizedList(new ArrayList<>());
-        a.subscribe((type, data) -> { if (type.equals("tool_execution_end")) ends.add(data.optString("name")); });
+        a.subscribe((type, data) -> { if (type.equals("tool_execution_end")) { ends.add(data.optString("name")); if (!data.has("durationMs") || data.optLong("durationMs") < 0) throw new AssertionError("Missing tool duration"); } });
         a.prompt("go");
         check(ends.toString().equals("[quick, slow]") && a.messages().get(2).getString("content").equals("slow") && a.messages().get(3).getString("content").equals("quick"));
+
+        check(a.messages().get(2).getLong("durationMs") >= 100);
 
         // one sequential tool forces the whole batch to run one after another
         List<String> order = Collections.synchronizedList(new ArrayList<>());

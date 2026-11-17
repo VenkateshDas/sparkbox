@@ -1,8 +1,23 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package me.venkatesh.saveobsidian
 
+import androidx.compose.material3.*
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import android.content.Context
 import android.view.View
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
@@ -10,21 +25,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.remember
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,9 +46,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -65,12 +68,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.TextStyle
@@ -81,13 +80,16 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 
 class SourceRef(val num: String, val title: String, val meta: String, val onClick: Runnable)
 
 class QueuedItem(val text: String, val after: Boolean, val edit: Runnable, val remove: Runnable) : AskItem
 class DiscoveryItem(val title: String, val detail: String, val open: Runnable, val investigate: Runnable, val save: Runnable, val dismiss: Runnable) : AskItem
 sealed interface AskItem
-class Question(val text: String) : AskItem
+data class Question(val text: String) : AskItem
 class Answer(val text: String, val singleSource: Boolean, val sources: List<SourceRef>, val raw: String, val keep: Runnable, val topic: Runnable, val cards: Runnable, val retry: Runnable) : AskItem
 class NotFound(val near: List<SourceRef>) : AskItem
 class Failure @JvmOverloads constructor(val message: String, val partial: String = "") : AskItem
@@ -95,7 +97,7 @@ class Failure @JvmOverloads constructor(val message: String, val partial: String
 class Stopped(val partial: String) : AskItem
 class Intro(val text: String, val suggestions: List<String>) : AskItem
 /** A turn's tool steps, folded under "Worked for m:ss". secs: Chat.UNKNOWN or Chat.RUNNING when there is no time. */
-class Work(val secs: Long, val steps: List<String>) : AskItem
+data class Work(val secs: Long, val steps: List<String>) : AskItem
 /** A change or call waiting for the user's OK; the run waits for it, whenever the user comes back. */
 class Approval(val id: String, val title: String, val detail: String, val busy: Boolean) : AskItem
 
@@ -108,10 +110,10 @@ interface AskActions {
     fun searchVault()
     fun addNote()
     fun draft(text: String)
-    fun optionsChanged()
     fun suggest(text: String)
     fun attachNote()
     fun attachQuote()
+    fun approvalMode()
     fun discover()
     fun approve(id: String, yes: Boolean)
     fun drawer(open: Boolean)
@@ -126,48 +128,100 @@ interface AskActions {
 /** One line of the chats drawer. status: "", "Working…" or "Needs your OK". */
 class ChatRow(val file: String, val title: String, val status: String, val current: Boolean)
 
+data class AskUiState(
+    val afterAnswer: Boolean = false,
+    val caret: Int = 0,
+    val expanded: Boolean = false,
+    val research: Boolean = false,
+    val web: Boolean = true,
+    val fullAccess: Boolean = false,
+    val keys: List<String> = emptyList(),
+    val usage: String = "",
+    val sessionFile: String = "",
+    val items: List<AskItem> = emptyList(),
+    val running: Boolean = false,
+    val status: String = "",
+    val live: String = "",
+    val input: String = "",
+    val subtitle: String = "",
+    val offline: Boolean = false,
+    val title: String = "",
+    val context: String = "",
+    val began: Long = 0L,
+    val drawer: Boolean = false,
+    val chats: List<ChatRow> = emptyList(),
+    val query: String = "",
+    val toolNotice: String = "",
+    val dialog: AskDialog? = null
+) {
+    /** Streaming text belongs to its leaf, not the history/composer layout. */
+    fun chrome() = if (live.isEmpty()) this else copy(live = "")
+}
+
+/** Per-chat position and user intent survive layout changes and navigation. */
+class ChatScrollPosition(var index: Int = 0, var offset: Int = 0) {
+    private val follow = MutableStateFlow(true)
+    val following = follow.asStateFlow()
+    val followLatest: Boolean get() = follow.value
+    private var userScrolling = false
+    fun scrollChanged(scrolling: Boolean, dragging: Boolean, atBottom: Boolean) {
+        if (dragging) { userScrolling = true; follow.value = false }
+        else if (userScrolling && !scrolling) { follow.value = atBottom; userScrolling = false }
+    }
+    fun jumpToLatest() { follow.value = true }
+    fun restoreOffset(itemIndex: Int, itemSize: Int): Int? = if (itemIndex == index && itemSize > offset) offset else null
+    fun shouldFollow(hasContent: Boolean, scrolling: Boolean, atBottom: Boolean) = followLatest && hasContent && !scrolling && !atBottom
+}
+
+/** Java actions publish immutable snapshots; Compose only reads the flow. */
 class AskState {
-    var afterAnswer by mutableStateOf(false); private set
-    fun afterAnswer(on: Boolean) { afterAnswer = on }
-    var caret by mutableStateOf(0); private set
-    fun caret(at: Int) { caret = at.coerceIn(0, input.length) }
-    var expanded by mutableStateOf(false); private set
-    fun expanded(on: Boolean) { expanded = on }
-    var research by mutableStateOf(false); private set
-    fun research(on: Boolean) { research = on }
-    var web by mutableStateOf(false); private set
-    fun web(on: Boolean) { web = on }
-    val scrollPositions = mutableMapOf<String, Pair<Int, Int>>()
-    var keys by mutableStateOf(emptyList<String>()); private set
-    fun session(file: String) { sessionFile = file }
-    var usage by mutableStateOf(""); private set
-    var sessionFile by mutableStateOf(""); private set
-    fun usage(file: String, text: String) { sessionFile = file; usage = text }
-    var items by mutableStateOf(emptyList<AskItem>()); private set
-    var running by mutableStateOf(false); private set
-    var status by mutableStateOf(""); private set
-    var live by mutableStateOf(""); private set
-    var input by mutableStateOf(""); private set
-    var subtitle by mutableStateOf(""); private set
-    var offline by mutableStateOf(false); private set
-    var title by mutableStateOf(""); private set
-    var context by mutableStateOf(""); private set
-    fun context(t: String) { context = t }
-    var began by mutableStateOf(0L); private set
-    fun began(ms: Long) { began = ms }
-    var drawer by mutableStateOf(false); private set
-    var chats by mutableStateOf(emptyList<ChatRow>()); private set
-    var query by mutableStateOf(""); private set
-    fun title(t: String) { title = t }
-    fun drawer(on: Boolean) { drawer = on; if (!on) query = "" }
-    fun chats(list: List<ChatRow>) { chats = list }
-    fun query(q: String) { query = q }
-    fun publish(items: List<AskItem>, keys: List<String>) { this.items = items; this.keys = keys }
-    fun running(on: Boolean) { running = on; if (!on) { status = ""; live = "" } }
-    fun status(s: String) { status = s }
-    fun live(s: String) { live = s }
-    fun input(s: String) { input = s; caret = caret.coerceAtMost(s.length) }
-    fun header(subtitle: String, offline: Boolean) { this.subtitle = subtitle; this.offline = offline }
+    private val mutable = MutableStateFlow(AskUiState())
+    val state = mutable.asStateFlow()
+    val scrollPositions = mutableMapOf<String, ChatScrollPosition>()
+    val afterAnswer: Boolean get() = mutable.value.afterAnswer
+    val caret: Int get() = mutable.value.caret
+    val expanded: Boolean get() = mutable.value.expanded
+    val research: Boolean get() = mutable.value.research
+    val fullAccess: Boolean get() = mutable.value.fullAccess
+    val web: Boolean get() = mutable.value.web
+    val keys: List<String> get() = mutable.value.keys
+    val usage: String get() = mutable.value.usage
+    val sessionFile: String get() = mutable.value.sessionFile
+    val items: List<AskItem> get() = mutable.value.items
+    val running: Boolean get() = mutable.value.running
+    val status: String get() = mutable.value.status
+    val live: String get() = mutable.value.live
+    val input: String get() = mutable.value.input
+    val subtitle: String get() = mutable.value.subtitle
+    val offline: Boolean get() = mutable.value.offline
+    val title: String get() = mutable.value.title
+    val context: String get() = mutable.value.context
+    val began: Long get() = mutable.value.began
+    val drawer: Boolean get() = mutable.value.drawer
+    val chats: List<ChatRow> get() = mutable.value.chats
+    val query: String get() = mutable.value.query
+    fun afterAnswer(value: Boolean) { mutable.update { it.copy(afterAnswer = value) } }
+    fun expanded(value: Boolean) { mutable.update { it.copy(expanded = value) } }
+    fun research(value: Boolean) { mutable.update { it.copy(research = value) } }
+    fun fullAccess(value: Boolean) { mutable.update { it.copy(fullAccess = value) } }
+    fun web(value: Boolean) { mutable.update { it.copy(web = value) } }
+    fun status(value: String) { mutable.update { it.copy(status = value) } }
+    fun live(value: String) { mutable.update { it.copy(live = value) } }
+    fun title(value: String) { mutable.update { it.copy(title = value) } }
+    fun context(value: String) { mutable.update { it.copy(context = value) } }
+    fun began(value: Long) { mutable.update { it.copy(began = value) } }
+    fun chats(value: List<ChatRow>) { mutable.update { it.copy(chats = value.toList()) } }
+    fun query(value: String) { mutable.update { it.copy(query = value) } }
+    fun toolNotice(text: String) { mutable.update { it.copy(toolNotice = text) } }
+    fun dialog(request: AskDialog?) { mutable.update { it.copy(dialog = request) } }
+    fun caret(at: Int) { mutable.update { it.copy(caret = at.coerceIn(0, it.input.length)) } }
+    fun input(text: String) { mutable.update { it.copy(input = text, caret = it.caret.coerceAtMost(text.length)) } }
+    fun session(file: String) { mutable.update { it.copy(sessionFile = file) } }
+    fun usage(file: String, text: String) { mutable.update { it.copy(sessionFile = file, usage = text) } }
+    fun publish(items: List<AskItem>, keys: List<String>) { mutable.update { it.copy(items = items.toList(), keys = keys.toList()) } }
+    fun running(on: Boolean) { mutable.update { it.copy(running = on, status = if (on) it.status else "", live = if (on) it.live else "") } }
+    fun drawer(on: Boolean) { mutable.update { it.copy(drawer = on, query = if (on) it.query else "") } }
+    fun header(subtitle: String, offline: Boolean) { mutable.update { it.copy(subtitle = subtitle, offline = offline) } }
 }
 
 object AskView {
@@ -185,57 +239,62 @@ private fun RoundButton(label: String, onClick: () -> Unit, content: @Composable
     Surface(onClick = onClick, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.size(48.dp).semantics { contentDescription = label }) { Box(contentAlignment = Alignment.Center) { content() } }
 }
 
-/** Two bars, like the reference's menu button. */
 @Composable
-private fun MenuIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
-    val w = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
-    drawLine(color, Offset(2.dp.toPx(), 7.dp.toPx()), Offset(20.dp.toPx(), 7.dp.toPx()), w.width, StrokeCap.Round)
-    drawLine(color, Offset(2.dp.toPx(), 15.dp.toPx()), Offset(13.dp.toPx(), 15.dp.toPx()), w.width, StrokeCap.Round)
-}
-
-/** A square with a pen stroke: new chat. */
-@Composable
-private fun NewChatIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
-    val w = 2.2.dp.toPx()
-    drawRoundRect(color, androidx.compose.ui.geometry.Offset(2.dp.toPx(), 4.dp.toPx()), androidx.compose.ui.geometry.Size(15.dp.toPx(), 15.dp.toPx()), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()), Stroke(w))
-    drawLine(color, Offset(9.dp.toPx(), 13.dp.toPx()), Offset(19.dp.toPx(), 3.dp.toPx()), w, StrokeCap.Round)
-}
-
-@Composable
-private fun SearchIcon(color: Color) = Canvas(Modifier.size(22.dp)) {
-    val w = 2.2.dp.toPx()
-    drawCircle(color, 7.dp.toPx(), Offset(9.5.dp.toPx(), 9.5.dp.toPx()), style = Stroke(w))
-    drawLine(color, Offset(15.dp.toPx(), 15.dp.toPx()), Offset(20.dp.toPx(), 20.dp.toPx()), w, StrokeCap.Round)
-}
-
-@Composable
-private fun AskUi(s: AskState, a: AskActions, ui: Ui) {
-    val savedScroll = s.scrollPositions[s.sessionFile]
-    val list = androidx.compose.runtime.key(s.sessionFile) { rememberLazyListState(savedScroll?.first ?: 0, savedScroll?.second ?: 0) }
+private fun AskUi(store: AskState, a: AskActions, ui: Ui) {
+    val chrome = remember(store) { store.state.map { it.chrome() }.distinctUntilChanged() }
+    val initial = remember(store) { store.state.value.chrome() }
+    val s by chrome.collectAsState(initial = initial)
+    s.dialog?.let { ScoutDialog(it) { store.dialog(null) } }
+    val drawer = rememberDrawerState(if (s.drawer) DrawerValue.Open else DrawerValue.Closed)
+    LaunchedEffect(s.drawer) { if (s.drawer) drawer.open() else drawer.close() }
+    LaunchedEffect(drawer) { snapshotFlow { drawer.currentValue }.collect { a.drawer(it == DrawerValue.Open) } }
+    val savedScroll = remember(store, s.sessionFile) { store.scrollPositions.getOrPut(s.sessionFile) { ChatScrollPosition() } }
+    val list = androidx.compose.runtime.key(s.sessionFile) { rememberLazyListState(savedScroll.index, savedScroll.offset) }
     androidx.compose.runtime.DisposableEffect(s.sessionFile, list) {
-        val session = s.sessionFile
-        onDispose { s.scrollPositions[session] = Pair(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) }
+        onDispose { savedScroll.index = list.firstVisibleItemIndex; savedScroll.offset = list.firstVisibleItemScrollOffset }
     }
-    val count = s.items.size + (if (s.running) 1 else 0)
     val scope = rememberCoroutineScope()
-    val atBottom by remember { derivedStateOf { !list.canScrollForward } }
-    var follow by remember(s.sessionFile) { mutableStateOf(true) }
-    LaunchedEffect(list.isScrollInProgress) { if (list.isScrollInProgress) follow = atBottom }
-    LaunchedEffect(count, s.live.length / 200) { if (follow && count > 0) list.scrollToItem(count) }
+    val atBottom by remember(list) { derivedStateOf { !list.canScrollForward } }
+    val following by savedScroll.following.collectAsState()
+    val dragging by list.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(list, list.isScrollInProgress, dragging, atBottom) { savedScroll.scrollChanged(list.isScrollInProgress, dragging, atBottom) }
+    LaunchedEffect(list, savedScroll) {
+        var restoring = !savedScroll.followLatest && (savedScroll.index > 0 || savedScroll.offset > 0)
+        // Observe actual measurement, including late Markdown and keyboard/viewport changes.
+        snapshotFlow { list.layoutInfo to Triple(list.isScrollInProgress, following, dragging) }.collectLatest { (layout, _) ->
+            if (dragging) restoring = false
+            if (layout.totalItemsCount == 0 || list.isScrollInProgress) return@collectLatest
+            if (restoring) {
+                val target = savedScroll.index.coerceAtMost(layout.totalItemsCount - 1)
+                val measured = layout.visibleItemsInfo.firstOrNull { it.index == target }
+                if (target != savedScroll.index) { restoring = false; list.scrollToItem(target) }
+                else if (measured == null) list.scrollToItem(target)
+                else savedScroll.restoreOffset(measured.index, measured.size)?.let { offset ->
+                    restoring = false
+                    list.scrollToItem(target, offset)
+                }
+            } else if (savedScroll.shouldFollow(true, false, !list.canScrollForward))
+                list.scrollToItem(layout.totalItemsCount - 1)
+        }
+    }
     val cs = MaterialTheme.colorScheme
     val intro = s.items.singleOrNull() as? Intro
+    ModalNavigationDrawer(drawerState = drawer, drawerContent = {
+        ModalDrawerSheet(drawerState = drawer, windowInsets = WindowInsets(0, 0, 0, 0)) { ChatsDrawer(s, a) }
+    }) {
     Surface(Modifier.fillMaxSize(), color = cs.background) {
         Box(Modifier.fillMaxSize()) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RoundButton("Open chats", { a.drawer(true) }) { MenuIcon(cs.onSurface) }
+                    RoundButton("Open chats", { a.drawer(true) }) { Icon(painterResource(R.drawable.ic_menu), null, tint = cs.onSurface) }
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(s.title.ifEmpty { "Scout" }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         if (s.subtitle.isNotEmpty()) Text(s.subtitle, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1)
                     }
-                    RoundButton("New chat", { a.newChat() }) { NewChatIcon(cs.onSurface) }
+                    RoundButton("New chat", { a.newChat() }) { Icon(painterResource(R.drawable.ic_note_plus), null, tint = cs.onSurface) }
                 }
                 if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Scout needs a network connection.", false)) }
+                if (s.toolNotice.isNotEmpty()) Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { BlockUi(Banner(s.toolNotice, true)) }
                 if (intro != null) {
                     Column(Modifier.weight(1f).padding(horizontal = 24.dp), verticalArrangement = Arrangement.Center) {
                         Text("Scout", style = MaterialTheme.typography.headlineMedium)
@@ -247,11 +306,18 @@ private fun AskUi(s: AskState, a: AskActions, ui: Ui) {
                             Text(q, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 14.dp))
                         }
                     }
-                } else LazyColumn(state = list, modifier = Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                    itemsIndexed(s.items, key = { index, _ -> s.keys.getOrElse(index) { "item:$index" } }) { _, it -> Item(it, a, ui) }
-                    if (s.running) item { Running(s, a) }
-                    // Target a trailing item so tall answers scroll to their end, not their beginning.
-                    item(key = "scout-latest") { Spacer(Modifier.height(1.dp)) }
+                } else Box(Modifier.weight(1f).fillMaxWidth()) {
+                    if (s.items.isNotEmpty() || s.running) LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                        itemsIndexed(s.items, key = { index, _ -> s.keys.getOrElse(index) { "item:$index" } }, contentType = { _, item -> item.javaClass }) { _, it -> Item(it, a, ui) }
+                        if (s.running) item(key = "scout-running", contentType = "running") { Running(s.status, s.began, store) }
+                        // Target a trailing item so tall answers scroll to their end, not their beginning.
+                        item(key = "scout-latest") { Spacer(Modifier.height(1.dp)) }
+                    }
+                    if (!atBottom) FilledTonalIconButton(
+                        onClick = { scope.launch { list.animateScrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)); savedScroll.jumpToLatest() } },
+                        shape = CircleShape,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp).size(48.dp)
+                    ) { Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = "Jump to latest") }
                 }
                 if (s.sessionFile.isNotEmpty()) Row(
                     Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = androidx.compose.ui.semantics.Role.Button) { a.usage(s.sessionFile) }
@@ -264,32 +330,28 @@ private fun AskUi(s: AskState, a: AskActions, ui: Ui) {
                     Text("Note in context: " + s.context, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     TextButton(onClick = { a.clearContext() }) { Text("Remove") }
                 }
-                if (!atBottom && intro == null) TextButton(onClick = { follow = true; scope.launch { if (count > 0) list.scrollToItem(count) } }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Jump to latest") }
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (s.research) TextButton(onClick = { s.research(false); a.optionsChanged() }) { Text("Research ×") }
-                    if (s.web) TextButton(onClick = { s.web(false); a.optionsChanged() }) { Text("Vault + web ×") }
+                    if (s.research) TextButton(onClick = { store.research(false) }) { Text("Research ×") }
                 }
-                Composer(s, a)
+                Composer(s, store, a)
 
             }
-            AnimatedVisibility(s.drawer, enter = fadeIn(), exit = fadeOut()) {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)).pointerInput(Unit) { detectTapGestures { a.drawer(false) } })
-            }
-            AnimatedVisibility(s.drawer, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) { ChatsDrawer(s, a) }
         }
+    }
     }
 }
 
 @Composable
-private fun Composer(s: AskState, a: AskActions) {
+private fun Composer(s: AskUiState, store: AskState, a: AskActions) {
     val cs = MaterialTheme.colorScheme
     var menu by remember { mutableStateOf(false) }
-    val send = { if (s.input.isNotBlank() && !s.offline) a.ask(s.input.trim()) }
+    val haptic = LocalHapticFeedback.current
+    val send = { if (s.input.isNotBlank() && !s.offline) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.ask(s.input.trim()) } }
     val editor: @Composable (Boolean) -> Unit = { expanded ->
-        var field by remember(s.sessionFile, expanded) { mutableStateOf(TextFieldValue(s.input, TextRange(s.caret))) }
+        var field by rememberSaveable(s.sessionFile, expanded, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(s.input, TextRange(s.caret))) }
         LaunchedEffect(s.input) { if (field.text != s.input) field = TextFieldValue(s.input, TextRange(s.caret)) }
         OutlinedTextField(value = field, onValueChange = {
-            if (it.text.length <= 32000) { field = it; s.input(it.text); s.caret(it.selection.end); a.draft(it.text) }
+            if (it.text.length <= 32000) { field = it; store.input(it.text); store.caret(it.selection.end); a.draft(it.text) }
         }, placeholder = { Text(if (s.running) "Send direction…" else "Ask Scout") }, maxLines = if (expanded) Int.MAX_VALUE else 6,
             shape = RoundedCornerShape(24.dp), textStyle = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
             colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = cs.surfaceContainerHigh, unfocusedContainerColor = cs.surfaceContainerHigh,
@@ -303,28 +365,29 @@ private fun Composer(s: AskState, a: AskActions) {
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Add note") }, onClick = { menu = false; a.attachNote() })
                 DropdownMenuItem(text = { Text("Add quote / capture") }, onClick = { menu = false; a.attachQuote() })
-                DropdownMenuItem(text = { Text(if (s.research) "Research: on" else "Research") }, onClick = { menu = false; s.research(!s.research); a.optionsChanged() })
-                DropdownMenuItem(text = { Text(if (s.web) "Sources: vault + web" else "Sources: vault only") }, onClick = { menu = false; s.web(!s.web); a.optionsChanged() })
-                if (s.running) DropdownMenuItem(text = { Text(if (s.afterAnswer) "Delivery: after answer" else "Delivery: next turn") }, onClick = { menu = false; s.afterAnswer(!s.afterAnswer); a.optionsChanged() })
+                DropdownMenuItem(text = { Text(if (s.research) "Research: on" else "Research") }, onClick = { menu = false; store.research(!s.research) })
+                DropdownMenuItem(text = { Text(if (s.web) "Sources: vault + web" else "Sources: vault only") }, enabled = !s.running, onClick = { menu = false; store.web(!s.web) })
+                DropdownMenuItem(text = { Text("Approvals: " + if (s.fullAccess) "Full access" else "Ask for approval") }, enabled = !s.running, onClick = { menu = false; a.approvalMode() })
+                if (s.running) DropdownMenuItem(text = { Text(if (s.afterAnswer) "Delivery: after answer" else "Delivery: next turn") }, onClick = { menu = false; store.afterAnswer(!s.afterAnswer) })
                 DropdownMenuItem(text = { Text("Discover") }, onClick = { menu = false; a.discover() })
-                DropdownMenuItem(text = { Text("Expand draft") }, onClick = { menu = false; s.expanded(true); a.optionsChanged() })
+                DropdownMenuItem(text = { Text("Expand draft") }, onClick = { menu = false; store.expanded(true) })
             }
         }
         Box(Modifier.weight(1f)) { editor(false) }
-        if (s.running) TextButton(onClick = { a.cancel() }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Stop Scout" }) { Text("Stop") }
+        if (s.running) TextButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.cancel() }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Stop Scout" }) { Text("Stop") }
         if (!s.running || s.input.isNotBlank()) FilledIconButton(onClick = send, enabled = !s.offline && s.input.isNotBlank(), modifier = Modifier.size(48.dp).semantics { contentDescription = if (s.running) "Send direction" else "Send message" }) { Text("↑", fontSize = 22.sp) }
     }
-    if (s.expanded) androidx.compose.ui.window.Dialog(onDismissRequest = { s.expanded(false); a.optionsChanged() }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+    if (s.expanded) ModalBottomSheet(onDismissRequest = { store.expanded(false) }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Surface(Modifier.fillMaxSize(), color = cs.background) {
-            Column(Modifier.padding(16.dp).then(Modifier)) {
+            Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Draft", fontSize = 18.sp, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { s.expanded(false); a.optionsChanged() }) { Text("Collapse") }
+                    TextButton(onClick = { store.expanded(false) }) { Text("Collapse") }
                 }
                 Box(Modifier.weight(1f)) { editor(true) }
                 Row {
-                    if (s.running) TextButton(onClick = { a.cancel() }) { Text("Stop") }
-                    Button(onClick = { s.expanded(false); a.optionsChanged(); send() }, enabled = !s.offline && s.input.isNotBlank()) { Text(if (s.running) "Send direction" else "Send") }
+                    if (s.running) TextButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.cancel() }) { Text("Stop") }
+                    Button(onClick = { store.expanded(false); send() }, enabled = !s.offline && s.input.isNotBlank()) { Text(if (s.running) "Send direction" else "Send") }
                 }
             }
         }
@@ -332,14 +395,14 @@ private fun Composer(s: AskState, a: AskActions) {
 }
 
 @Composable
-private fun ChatsDrawer(s: AskState, a: AskActions) {
+private fun ChatsDrawer(s: AskUiState, a: AskActions) {
     val cs = MaterialTheme.colorScheme
     var searching by remember { mutableStateOf(false) }
     Surface(Modifier.fillMaxHeight().width(320.dp), color = cs.surfaceContainerLow, shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp)) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Chats", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                RoundButton("Search chats", { searching = !searching; if (!searching) a.searchChats("") }) { SearchIcon(cs.onSurface) }
+                RoundButton("Search chats", { searching = !searching; if (!searching) a.searchChats("") }) { Icon(painterResource(R.drawable.ic_search), null, tint = cs.onSurface) }
             }
             if (searching) OutlinedTextField(value = s.query, onValueChange = { a.searchChats(it) }, placeholder = { Text("Search chats") }, singleLine = true, shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
@@ -357,7 +420,7 @@ private fun ChatsDrawer(s: AskState, a: AskActions) {
                             }
                         }
                         Box {
-                            TextButton(onClick = { menu = true }) { Text("⋯", style = MaterialTheme.typography.titleLarge, color = cs.onSurfaceVariant) }
+                            TextButton(onClick = { menu = true }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics { contentDescription = "Chat options for ${c.title}" }) { Text("⋯", style = MaterialTheme.typography.titleLarge, color = cs.onSurfaceVariant) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(text = { Text("Usage") }, onClick = { menu = false; a.usage(c.file) })
                                 DropdownMenuItem(text = { Text("Export") }, onClick = { menu = false; a.exportChat(c.file) })
@@ -377,6 +440,7 @@ private fun ChatsDrawer(s: AskState, a: AskActions) {
 
 @Composable
 private fun Item(it: AskItem, a: AskActions, ui: Ui) {
+    val haptic = LocalHapticFeedback.current
     val cs = MaterialTheme.colorScheme
     when (it) {
         is QueuedItem -> Column {
@@ -406,7 +470,7 @@ private fun Item(it: AskItem, a: AskActions, ui: Ui) {
         is Work -> {
             var open by rememberSaveable { mutableStateOf(it.secs == Chat.RUNNING) } // an unfinished turn shows its steps
             Column {
-                Row(Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.clip(RoundedCornerShape(8.dp)).sizeIn(minWidth = 48.dp, minHeight = 48.dp).clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(when { it.secs >= 0 -> "Worked for " + Chat.clock(it.secs); it.secs == Chat.RUNNING -> "Working…"; else -> "Worked" }, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
                     Text(if (open) "  ⌃" else "  ⌄", style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
                 }
@@ -422,8 +486,8 @@ private fun Item(it: AskItem, a: AskActions, ui: Ui) {
                 if (it.detail.isNotEmpty()) Text(it.detail, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                     modifier = Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(cs.surfaceContainerLow).padding(10.dp))
                 Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { a.approve(it.id, true) }, enabled = !it.busy, modifier = Modifier.weight(1f)) { Text("Allow") }
-                    OutlinedButton(onClick = { a.approve(it.id, false) }, enabled = !it.busy, modifier = Modifier.weight(1f)) { Text("Decline") }
+                    Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.approve(it.id, true) }, enabled = !it.busy, modifier = Modifier.weight(1f)) { Text("Allow") }
+                    OutlinedButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); a.approve(it.id, false) }, enabled = !it.busy, modifier = Modifier.weight(1f)) { Text("Decline") }
                 }
             }
         }
@@ -441,7 +505,7 @@ private fun Item(it: AskItem, a: AskActions, ui: Ui) {
             var more by remember { mutableStateOf(false) }
             Row {
                 TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(it.raw)) }) { Text("Copy") }
-                TextButton(onClick = { it.keep.run() }) { Text("Keep") }
+                TextButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); it.keep.run() }) { Text("Keep") }
                 Box {
                     TextButton(onClick = { more = true }) { Text("More") }
                     DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
@@ -485,11 +549,11 @@ private fun Item(it: AskItem, a: AskActions, ui: Ui) {
 private fun Sources(label: String, refs: List<SourceRef>) {
     if (refs.isEmpty()) return
     var open by rememberSaveable(label, refs.size, refs.first().title) { mutableStateOf(false) }
-    Row(Modifier.padding(top = 10.dp).clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.padding(top = 10.dp).clip(RoundedCornerShape(8.dp)).sizeIn(minWidth = 48.dp, minHeight = 48.dp).clickable { open = !open }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("$label · ${refs.size}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(if (open) "  ⌃" else "  ⌄", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    if (open) androidx.compose.ui.window.Dialog(onDismissRequest = { open = false }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+    if (open) ModalBottomSheet(onDismissRequest = { open = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -515,29 +579,36 @@ private fun Sources(label: String, refs: List<SourceRef>) {
 
 /** The answer while it streams: a draft, not yet checked for citations. */
 @Composable
-private fun Running(s: AskState, a: AskActions) {
+private fun Running(status: String, began: Long, store: AskState) {
     val cs = MaterialTheme.colorScheme
     Column {
         LinearProgressIndicator(Modifier.fillMaxWidth().clip(CircleShape))
-        val elapsed by produceState(0L, s.began) { while (true) { value = if (s.began > 0) (System.currentTimeMillis() - s.began) / 1000 else 0; kotlinx.coroutines.delay(1000) } }
-        Text(s.status.ifEmpty { "Thinking…" } + (if (s.began > 0) "  ·  " + Chat.clock(elapsed) else ""), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
-        if (s.live.isNotEmpty()) Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(cs.surfaceContainerHigh).padding(14.dp)) {
-            Text("Partial answer", style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
-            Text(s.live, fontSize = 16.sp, lineHeight = 26.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-        }
+        RunningStatus(status, began)
+        LiveAnswer(store)
     }
 }
 
-private val MARK = Regex("\\[\\d+]|\\*\\*[^*]+\\*\\*")
+@Composable
+private fun LiveAnswer(store: AskState) {
+    val cs = MaterialTheme.colorScheme
+    val updates = remember(store) { store.state.map { it.live }.distinctUntilChanged() }
+    val live by updates.collectAsState(initial = store.live)
+    if (live.isNotEmpty()) Column(Modifier.padding(top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(cs.surfaceContainerHigh).padding(14.dp)) {
+            Text("Partial answer", style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
+            Text(live, fontSize = 16.sp, lineHeight = 26.sp, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp).semantics { liveRegion = LiveRegionMode.Polite })
+        }
+}
 
-/** Citation markers in the accent colour, **bold** as bold; everything else as written. */
-private fun rich(text: String, accent: androidx.compose.ui.graphics.Color) = buildAnnotatedString {
-    var at = 0
-    for (m in MARK.findAll(text)) {
-        append(text.substring(at, m.range.first))
-        if (m.value.startsWith("**")) withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(m.value.removeSurrounding("**")) }
-        else withStyle(SpanStyle(color = accent, fontWeight = FontWeight.Bold)) { append(m.value) }
-        at = m.range.last + 1
+@Composable
+private fun RunningStatus(status: String, began: Long) {
+    Row(Modifier.padding(top = 8.dp)) {
+        Text(status.ifEmpty { "Thinking…" }, style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        RunningClock(began)
     }
-    append(text.substring(at))
+}
+
+@Composable
+private fun RunningClock(began: Long) {
+    val elapsed by produceState(0L, began) { while (true) { value = if (began > 0) (System.currentTimeMillis() - began) / 1000 else 0; kotlinx.coroutines.delay(1000) } }
+    if (began > 0) Text("  ·  " + Chat.clock(elapsed), style = MaterialTheme.typography.bodySmall)
 }

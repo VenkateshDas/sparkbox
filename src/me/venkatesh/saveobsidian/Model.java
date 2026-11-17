@@ -143,8 +143,18 @@ final class Model {
     /** One float[] per input text, in order. IOException (network, key, quota) means stop for now. */
     static List<float[]> embed(String key, List<String> texts) throws Exception {
         String reply = post("embeddings", key, new JSONObject().put("model", Index.MODEL).put("dimensions", Index.DIMS).put("input", new JSONArray(texts)));
+        return embeddings(reply, texts.size());
+    }
+
+    /** Query vectors are optional: one short attempt, then the caller falls back to keyword search. */
+    static float[] queryVector(String key, String text) throws Exception {
+        JSONObject request = new JSONObject().put("model", Index.MODEL).put("dimensions", Index.DIMS).put("input", new JSONArray().put(text));
+        return embeddings(exchange("embeddings", key, request, 5000, 5000), 1).get(0);
+    }
+
+    private static List<float[]> embeddings(String reply, int count) throws Exception {
         JSONArray data = new JSONObject(reply).getJSONArray("data");
-        float[][] out = new float[texts.size()][];
+        float[][] out = new float[count][];
         for (int i = 0; i < data.length(); i++) {
             JSONObject item = data.getJSONObject(i);
             JSONArray numbers = item.getJSONArray("embedding");
@@ -318,16 +328,20 @@ final class Model {
     }
 
     private static String exchange(String path, String key, JSONObject request, int readTimeout) throws Exception {
+        return exchange(path, key, request, readTimeout, 180_000);
+    }
+
+    private static String exchange(String path, String key, JSONObject request, int readTimeout, long totalMs) throws Exception {
         byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setRequestMethod("POST");
-        connection.setConnectTimeout(10000);
+        connection.setConnectTimeout((int) Math.min(10000, totalMs));
         connection.setReadTimeout(readTimeout);
         connection.setDoOutput(true);
         connection.setRequestProperty("Authorization", "Bearer " + key);
         connection.setRequestProperty("Content-Type", "application/json");
         Cancel cancel = Cancel.current();
-        cancel.attach(connection);
+        cancel.attach(connection, totalMs);
         try {
             try (OutputStream out = connection.getOutputStream()) { out.write(payload); }
             int code = connection.getResponseCode();
