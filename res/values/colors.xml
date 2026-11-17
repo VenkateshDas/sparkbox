@@ -1,6 +1,5 @@
 <resources>
     <color name="w_bg">#F8FAFC</color>
-    <color name="w_surface">#FFFFFF</color>
     <color name="w_ink">#0F172A</color>
     <color name="w_sub">#475569</color>
     <color name="w_muted">#475569</color>

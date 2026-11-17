@@ -116,6 +116,10 @@ esac
 
 
 
+if [ -z "$JAVA_HOME" ] && [ -d "/opt/homebrew/opt/openjdk" ]; then
+    JAVA_HOME="/opt/homebrew/opt/openjdk"
+fi
+
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then

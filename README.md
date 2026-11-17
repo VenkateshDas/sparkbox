@@ -111,5 +111,5 @@ Core logic stays in Java; only the UI layer is Kotlin. See [docs/architecture.md
 
 - [docs/architecture.md](docs/architecture.md): current architecture, storage, safety and concurrency model, failure handling.
 - [docs/baseline.md](docs/baseline.md): measurements per milestone and the release gates, with screenshots in `docs/baseline/`.
-- [docs/history.md](docs/history.md): the earlier README (capture path internals, Live Alerts details, releases 1.2 to 1.8).
-- Design-era documents (`design.md`, `product-brief.md`, `implementation-spec.md`, `inbox-to-knowledge.md`, `designer-feedback-round*.md`, `stabilization-validation.md`, `storage-sync-current.html`) record decisions at the time they were written. Each starts with a note saying how far it is still current.
+- [docs/archive/history.md](docs/archive/history.md): the earlier README (capture path internals, Live Alerts details, releases 1.2 to 1.8).
+- Design-era documents archived in [docs/archive/](docs/archive/) (`product-brief.md`, `implementation-spec.md`, `inbox-to-knowledge.md`, `designer-feedback-round*.md`, `stabilization-validation.md`, `storage-sync-current.html`) record decisions at the time they were written.
