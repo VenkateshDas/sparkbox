@@ -105,7 +105,20 @@ final class PdfCapture {
             throw new IOException("The PDF renderer stopped before finishing", failed);
         } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException | android.os.RemoteException failed) {
             throw new IOException("The PDF renderer could not start", failed);
-        } finally { c.unbindService(connection); }
+        } finally { unbind(c, connection); }
+    }
+
+    static void unbind(Context context, ServiceConnection connection) {
+        try { context.unbindService(connection); }
+        catch (java.util.NoSuchElementException gone) {
+            // Android also unlinks its ServiceConnection listener when the worker has died.
+            if (!isMissingDeathLink(gone.getMessage())) throw gone;
+            android.util.Log.w("Sparkbox", "PDF worker already disconnected during unbind");
+        }
+    }
+
+    static boolean isMissingDeathLink(String message) {
+        return "Death link does not exist (NAME_NOT_FOUND)".equals(message) || "Death link does not exist".equals(message);
     }
 
     static java.io.InputStream timed(java.io.InputStream input, ParcelFileDescriptor descriptor, long timeout,

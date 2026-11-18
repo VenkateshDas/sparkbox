@@ -66,32 +66,39 @@ final class Ingest {
     }
 
     /** Captures are processed one by one until none is due, eight are done or the time budget ends. A failure is kept with its reason and tried again later (see MAX_TRIES). */
-    static void run(Context c, String key) {
+    static void run(Context c, String key) { run(c, key, false); }
+
+    static void runPdfAttachments(Context c, String key) { run(c, key, true); }
+
+    private static void run(Context c, String key, boolean pdfAttachmentsOnly) {
         SharedPreferences prefs = c.getSharedPreferences("capture", 0), prog = c.getSharedPreferences("ingest", 0);
         VaultWrite.pruneBackups(c);
         int done = 0;
         long started = System.currentTimeMillis();
         try {
+            List<InboxFile.Entry> entries = InboxFile.parse(CaptureService.readText(c));
+            if (pdfAttachmentsOnly && entries.stream().noneMatch(Ingest::pdfAttachment)) return;
             VaultStore.Snap snap = VaultStore.cached(c);
             if (snap == null) snap = VaultStore.scan(c);
             boolean repairDns = !prog.getBoolean("dnsRecoveryV1", false);
             boolean repairPdf = !prog.getBoolean("pdfRecoveryV1", false);
-            boolean repairPdfCleanup = !prog.getBoolean("pdfCleanupRecoveryV1", false);
+            boolean repairPdfCleanup = !prog.getBoolean("pdfCleanupRecoveryV2", false);
             if (repairDns || repairPdf || repairPdfCleanup) {
                 SharedPreferences.Editor repair = prog.edit();
-                for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
+                for (InboxFile.Entry e : entries) {
                     String ek = entryKey(e);
                     String error = prog.getString("err:" + ek, "");
                     if (repairDns && error.equals("Not a public web address")
                         || repairPdf && error.equals("Source could not be read: This link is a PDF")
-                        || repairPdfCleanup && error.equals("Death link does not exist (NAME_NOT_FOUND)"))
+                        || repairPdfCleanup && PdfCapture.isMissingDeathLink(error))
                         repair.remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek);
                 }
                 if (!repair.putBoolean("dnsRecoveryV1", true).putBoolean("pdfRecoveryV1", true)
-                    .putBoolean("pdfCleanupRecoveryV1", true).commit()) throw new IOException("Could not save recovery checkpoint");
+                    .putBoolean("pdfCleanupRecoveryV2", true).commit()) throw new IOException("Could not save recovery checkpoint");
             }
-            for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
+            for (InboxFile.Entry e : entries) {
                 if (done >= PER_RUN || Tagger.halt() || System.currentTimeMillis() - started > RUN_BUDGET) break;
+                if (pdfAttachmentsOnly != pdfAttachment(e)) continue;
                 String ek = entryKey(e);
                 int tries = prog.getInt("tries:" + ek, 0);
                 boolean permitted = canRequest(c, e, !key.isEmpty());
@@ -137,6 +144,19 @@ final class Ingest {
                 }
             }
         } catch (Exception unreadable) { prefs.edit().putString("ingestProblem", String.valueOf(unreadable.getMessage())).apply(); }
+    }
+
+    private static boolean pdfAttachment(InboxFile.Entry entry) {
+        return "pdf".equals(IngestText.attachmentKind(entry.file));
+    }
+
+    /** Clear the old aggregate banner even if its capture disappeared or was shared again. */
+    static void clearLegacyPdfError(Context c) {
+        SharedPreferences prefs = c.getSharedPreferences("capture", 0);
+        String error = prefs.getString("ingestProblem", "");
+        int separator = error.lastIndexOf(": ");
+        if (PdfCapture.isMissingDeathLink(error.substring(separator < 0 ? 0 : separator + 2)))
+            prefs.edit().remove("ingestProblem").apply();
     }
 
     /** The steps a capture goes through, shown live on its Feed card. Step 0 is already done when processing starts. */

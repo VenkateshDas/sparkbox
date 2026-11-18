@@ -45,6 +45,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         Reminder.schedule(this);
         if (PdfCapture.supported()) PdfModel.status(this);
         ScoutJob.reschedule(this);
+        Ingest.clearLegacyPdfError(this);
         BackgroundJob.schedule(this); // a force-stop or crash drops scheduled jobs: opening the app picks up unfinished captures
         if (state == null) handleIntent(getIntent());
         else if (state.containsKey("editor")) push(new NoteEditorScreen(state.getString("editor")));

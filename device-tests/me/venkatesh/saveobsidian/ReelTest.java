@@ -30,9 +30,25 @@ public class ReelTest extends Instrumentation {
                 } finally { context.unbindService(connection); }
                 if (!died.await(10, java.util.concurrent.TimeUnit.SECONDS))
                     throw new AssertionError("PDF worker did not exit after unbinding");
-                result.putString("isolation", "Worker stopped and the caller survived");
+                var staleConnection = new android.content.ContextWrapper(context) {
+                    @Override public void unbindService(android.content.ServiceConnection ignored) {
+                        throw new java.util.NoSuchElementException("Death link does not exist (NAME_NOT_FOUND)");
+                    }
+                };
+                PdfCapture.unbind(staleConnection, connection);
+                result.putString("isolation", "Worker stopped and the caller survived a framework unbind race");
             } else if ("pdf".equals(arguments.getString("suite"))) {
                 if (!PdfCapture.supported()) throw new IllegalStateException("Android 15 or later required");
+                if ("token-economizer".equals(arguments.getString("fixture"))) {
+                    var input = java.nio.file.Files.readAllBytes(new java.io.File(context.getCacheDir(), "pdf-fixture.pdf").toPath());
+                    String text = PdfCapture.read(context, input, null);
+                    if (!text.contains("TokenEconomizer") || !text.contains("### Page 26") || text.length() < 50_000)
+                        throw new AssertionError("Android did not extract the full TokenEconomizer paper");
+                    result.putInt("characters", text.length());
+                    result.putString("result", "PASS");
+                    finish(-1, result);
+                    return;
+                }
                 byte[] input;
                 android.graphics.pdf.PdfDocument pdf = new android.graphics.pdf.PdfDocument();
                 try (java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {

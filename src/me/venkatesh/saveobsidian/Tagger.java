@@ -32,6 +32,8 @@ final class Tagger {
         deadline.set(android.os.SystemClock.elapsedRealtime() + 7 * 60_000L);
         String problem = "";
         try {
+            if (Ingest.ready(c) && !c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty())
+                Ingest.runPdfAttachments(c, key);
             DirectCapture.run(c, key);
             if (c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
             if (key.isEmpty()) {

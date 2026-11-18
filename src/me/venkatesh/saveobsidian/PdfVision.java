@@ -115,9 +115,10 @@ final class PdfVision implements AutoCloseable {
             if (remote != null) remote.linkToDeath(death, 0);
             else exited.complete(null);
         } catch (android.os.RemoteException gone) { exited.complete(null); }
-        app.unbindService(connection);
+        ServiceConnection bound = connection;
         connection = null;
         binder = null;
+        PdfCapture.unbind(app, bound);
         // A text retry can bind straight away. Give the old worker time to release native state.
         try { exited.get(2, TimeUnit.SECONDS); }
         catch (InterruptedException stop) { Thread.currentThread().interrupt(); }

@@ -183,6 +183,10 @@ final class SettingsScreen extends Screen {
 
         java.util.List<SettingRow> more = group("More");
         more.add(row("Browse vault", "", () -> host.startActivity(new Intent(host, VaultActivity.class))));
+        try {
+            var build = ui.c.getPackageManager().getPackageInfo(ui.c.getPackageName(), 0);
+            more.add(row("Sparkbox version", build.versionName + " (" + build.versionCode + ")", null));
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) { }
         shown.publish(groups);
     }
 
