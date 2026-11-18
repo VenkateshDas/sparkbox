@@ -82,7 +82,7 @@ final class Ingest {
             if (snap == null) snap = VaultStore.scan(c);
             boolean repairDns = !prog.getBoolean("dnsRecoveryV1", false);
             boolean repairPdf = !prog.getBoolean("pdfRecoveryV1", false);
-            boolean repairPdfCleanup = !prog.getBoolean("pdfCleanupRecoveryV2", false);
+            boolean repairPdfCleanup = !prog.getBoolean("pdfCleanupRecoveryV3", false);
             if (repairDns || repairPdf || repairPdfCleanup) {
                 SharedPreferences.Editor repair = prog.edit();
                 for (InboxFile.Entry e : entries) {
@@ -90,11 +90,12 @@ final class Ingest {
                     String error = prog.getString("err:" + ek, "");
                     if (repairDns && error.equals("Not a public web address")
                         || repairPdf && error.equals("Source could not be read: This link is a PDF")
-                        || repairPdfCleanup && PdfCapture.isMissingDeathLink(error))
+                        || repairPdfCleanup && (PdfCapture.isMissingDeathLink(error)
+                            || error.startsWith("The local PDF model process stopped unexpectedly.")))
                         repair.remove("tries:" + ek).remove("next:" + ek).remove("err:" + ek);
                 }
                 if (!repair.putBoolean("dnsRecoveryV1", true).putBoolean("pdfRecoveryV1", true)
-                    .putBoolean("pdfCleanupRecoveryV2", true).commit()) throw new IOException("Could not save recovery checkpoint");
+                    .putBoolean("pdfCleanupRecoveryV3", true).commit()) throw new IOException("Could not save recovery checkpoint");
             }
             for (InboxFile.Entry e : entries) {
                 if (done >= PER_RUN || Tagger.halt() || System.currentTimeMillis() - started > RUN_BUDGET) break;

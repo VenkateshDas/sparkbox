@@ -15,8 +15,8 @@ android {
         applicationId = "me.venkatesh.saveobsidian"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.10.1"
+        versionCode = 17
+        versionName = "1.10.2"
         testInstrumentationRunner = "me.venkatesh.saveobsidian.ReelTest"
     }
     sourceSets["main"].apply {
