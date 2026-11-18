@@ -28,10 +28,18 @@ final class Model {
     private static final String ALIAS = "sparkbox-ai-key";
 
     /** {type, tags, tldr, title}, or null when the reply is unusable. IOException (network, key, quota) means stop for now. */
-    static String[] enrich(String key, String model, String title, String url, String why, String ideas, java.util.function.Consumer<String> pageSink) throws Exception {
+    static String[] enrich(Context context, String key, String model, String title, String url, String why, String ideas, java.util.function.Consumer<String> pageSink) throws Exception {
         try (Metrics.Scope metricStage = Metrics.stage("enrichment")) {
             String full = "";
-            try { full = Fetch.content(url, "", false); } catch (Exception ignored) { } // title and URL still classify; a video is tagged from its captions and description, never transcribed here
+            Fetch.Result source = null;
+            try (PdfVision vision = new PdfVision(context)) {
+                try { source = Fetch.page(context, url, key, false, vision); } catch (IOException unreadable) { /* title and URL can still classify */ }
+                if (source != null && source.pdf && vision.available()) {
+                    if (pageSink != null) pageSink.accept(source.text);
+                    return IngestText.pdfTags(vision.plan(source.text, title, why, ideas, ""));
+                }
+            }
+            if (source != null) full = source.text;
             String page = full.length() > Enrich.PROMPT_CHARS ? full.substring(0, Enrich.PROMPT_CHARS) : full;
             boolean thin = full.replaceAll("(?m)^(Channel|Length):.*$", "").trim().length() < 80; // a video with no description or captions has nothing to summarise
             if (pageSink != null && !full.isEmpty()) pageSink.accept(full); // the whole page, so Ask and later processing need no refetch
@@ -54,20 +62,23 @@ final class Model {
         }
     }
 
-    /** Photo or PDF description. PDFs are read by OpenRouter's free parser first, so any model can summarise them. */
-    static String[] describe(String key, String name, boolean pdf, byte[] data) throws Exception {
+    static String[] describe(String key, String name, byte[] data) throws Exception {
         try (Metrics.Scope metricStage = Metrics.stage("vision")) {
-            String base64 = Base64.encodeToString(data, Base64.NO_WRAP);
-            JSONObject part = pdf
-                ? new JSONObject().put("type", "file").put("file", new JSONObject().put("filename", name).put("file_data", "data:application/pdf;base64," + base64))
-                : new JSONObject().put("type", "image_url").put("image_url", new JSONObject().put("url", "data:image/jpeg;base64," + base64));
+            JSONObject image = new JSONObject().put("type", "image_url")
+                .put("image_url", new JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(data, Base64.NO_WRAP)));
             JSONObject request = new JSONObject().put("model", VISION).put("max_tokens", 300).put("messages", new JSONArray()
                 .put(new JSONObject().put("role", "system").put("content", Enrich.PICTURE))
                 .put(new JSONObject().put("role", "user").put("content", new JSONArray()
-                    .put(new JSONObject().put("type", "text").put("text", "File name: " + name)).put(part))));
-            if (pdf) request.put("plugins", new JSONArray().put(new JSONObject().put("id", "file-parser").put("pdf", new JSONObject().put("engine", "cloudflare-ai"))));
+                    .put(new JSONObject().put("type", "text").put("text", "File name: " + name)).put(image))));
             return parse(post("chat/completions", key, request));
         }
+    }
+
+    static String[] describePdfText(String key, String text) throws Exception {
+        return parse(post("chat/completions", key, new JSONObject().put("model", VISION).put("max_tokens", 300)
+            .put("messages", new JSONArray()
+                .put(new JSONObject().put("role", "system").put("content", Enrich.PICTURE))
+                .put(new JSONObject().put("role", "user").put("content", IngestText.pdfPrompt(text, 9000))))));
     }
 
     /** Read source diagrams and slide text; this evidence is supplied to the normal ingest plan. */

@@ -70,9 +70,17 @@ public final class Extract {
         out.title = trimSite(out.title, out.site);
         out.byline = out.byline.replaceAll("^(?i)by\\s+", "").trim();
 
-        String dom = article(doc, out.media);
-        String text = dom;
-        if (!ldBody.isEmpty() && (dom.length() < 300 || ldBody.length() > dom.length() * 1.3)) text = ldBody;
+        Element paper = doc.selectFirst("article.ltx_document");
+        String text;
+        if (paper != null) {
+            // LaTeXML identifies the full paper. Text-block scoring can pick a single appendix listing.
+            paper.select("script, style, noscript, nav, .ltx_ERROR.undefined, [hidden], [aria-hidden=true]").remove();
+            images(paper, out.media);
+            text = render(paper);
+        } else {
+            text = article(doc, out.media);
+            if (!ldBody.isEmpty() && (text.length() < 300 || ldBody.length() > text.length() * 1.3)) text = ldBody;
+        }
         if (text.length() < 200) {
             String all = render(doc.body());
             if (all.length() > text.length()) text = all;

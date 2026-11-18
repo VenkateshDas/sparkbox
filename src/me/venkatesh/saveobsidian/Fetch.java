@@ -1,5 +1,6 @@
 package me.venkatesh.saveobsidian;
 
+import android.content.Context;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -19,7 +20,7 @@ final class Fetch {
     static final class Result {
         String title = "", byline = "", description = "", image = "", text = "", problem = "";
         /** True when the text still lacks what the owner would expect (a video with no transcript yet, a page that asked for a human). */
-        boolean thin;
+        boolean thin, pdf;
         final java.util.List<Extract.Media> media = new java.util.ArrayList<>();
     }
 
@@ -27,12 +28,12 @@ final class Fetch {
      * The readable text of this link. Returns "" text (with a problem) when the site answered but gave nothing readable; throws IOException when the
      * network failed, so the caller can try again later instead of treating it as "empty". transcribe lets a video without captions be transcribed (slow, costs a little).
      */
-    static Result page(String url, String key, boolean transcribe) throws IOException {
+    static Result page(Context context, String url, String key, boolean transcribe, PdfVision vision) throws IOException {
         try { Limits.FETCH.acquire(); } catch (InterruptedException stop) { Thread.currentThread().interrupt(); throw new IOException("Stopped"); }
-        try { return pageNow(url, key, transcribe); } finally { Limits.FETCH.release(); }
+        try { return pageNow(context, url, key, transcribe, vision); } finally { Limits.FETCH.release(); }
     }
 
-    private static Result pageNow(String url, String key, boolean transcribe) throws IOException {
+    private static Result pageNow(Context context, String url, String key, boolean transcribe, PdfVision vision) throws IOException {
         Result r = new Result();
         String host;
         try { host = new URL(url).getHost().toLowerCase(Locale.ROOT); } catch (java.net.MalformedURLException bad) { r.problem = "Not a web link"; return r; }
@@ -51,9 +52,19 @@ final class Fetch {
         if (host.equals("github.com") || host.equals("www.github.com")) { Result g = github(url); if (g != null) return g; }
         if (host.endsWith(".wikipedia.org")) { Result w = wikipedia(url, host); if (w != null) return w; }
         if (host.equals("x.com") || host.equals("twitter.com") || host.endsWith(".twitter.com") || host.equals("www.x.com")) { Result t = tweet(url); if (t != null) return t; }
-        Web.Reply reply = Web.get(url);
+        String paper = Capture.arxivPdfUrl(url);
+        String address = paper.isEmpty() ? url : paper;
+        boolean expectedPdf = !paper.isEmpty() || new URL(address).getPath().toLowerCase(Locale.ROOT).endsWith(".pdf");
+        Web.Reply reply = expectedPdf ? Web.get(address, IngestText.PDF_BYTES) : Web.get(address);
+        if (!expectedPdf && reply.code == 200 && reply.pdf() && reply.body.length == Web.MAX_BYTES)
+            reply = Web.get(reply.url, IngestText.PDF_BYTES); // the ordinary page limit may have cut off the PDF
         if (reply.code != 200) { r.problem = "The site answered " + reply.code; return r; }
-        if (reply.type.toLowerCase(Locale.ROOT).contains("pdf")) { r.problem = "This link is a PDF"; r.thin = true; return r; }
+        if (reply.pdf()) {
+            r.text = PdfCapture.read(context, reply.body, vision);
+            r.pdf = true;
+            return r;
+        }
+        if (!paper.isEmpty()) { r.problem = "arXiv did not return the paper PDF"; return r; }
         if (reply.type.toLowerCase(Locale.ROOT).startsWith("image/")) {
             r.media.add(new Extract.Media(reply.url, "", false));
             return r;
@@ -73,7 +84,7 @@ final class Fetch {
     }
 
     /** What to keep as the link's content: the text, or "" when none. */
-    static String content(String url, String key, boolean transcribe) throws IOException { return page(url, key, transcribe).text; }
+    static String content(Context context, String url, String key, boolean transcribe) throws IOException { return page(context, url, key, transcribe, null).text; }
 
     private static Result instagram(String shortcode) throws IOException {
         // Full browser identities receive Instagram's login app instead of the public embed data.

@@ -53,6 +53,7 @@ android {
 
 dependencies {
     implementation(libs.jsoup)
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)

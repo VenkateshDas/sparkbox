@@ -50,9 +50,9 @@ final class Content {
     /** Drops text of captures that are no longer in the inbox. */
     static void retain(Context c, List<InboxFile.Entry> entries) {
         Set<String> keep = new HashSet<>();
-        for (InboxFile.Entry e : entries) if (!e.url.isEmpty()) {
-            keep.add(name(e.url) + ".txt");
-            keep.add(name(e.url) + ".media.json");
+        for (InboxFile.Entry e : entries) if (!e.sourceId().isEmpty()) {
+            keep.add(name(e.sourceId()) + ".txt");
+            keep.add(name(e.sourceId()) + ".media.json");
         }
         File[] saved = new File(c.getFilesDir(), "content").listFiles();
         if (saved != null) for (File f : saved) if (!keep.contains(f.getName())) f.delete();

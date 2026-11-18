@@ -524,6 +524,24 @@ public class CaptureTest {
         check(e.file.equals("20261105 1432 IMG-ab12.jpg") && !e.text && e.url.isEmpty() && e.title.equals("Whiteboard"));
         check(InboxFile.parse(Capture.fileEntry("T", "", "a.pdf", false)).get(0).title.equals("a.pdf"));
         check(Capture.fileEntry("T", "Doc", "a.pdf", false).startsWith("- 📎 Doc"));
+        String pdf = Capture.fileEntry("2026-11-05 14:32", "Paper", "a.PDF", false);
+        InboxFile.Entry described = InboxFile.parse(InboxFile.setEnrich(pdf, pdf.trim(), "document", "paper", "A summary.", "Paper")).get(0);
+        check(IngestText.eligible(described) && IngestText.eligible(e));
+        check(!IngestText.eligible(InboxFile.parse(Capture.fileEntry("T", "Archive", "a.zip", false)).get(0)));
+        check(!IngestText.eligible(InboxFile.parse(voice).get(0)));
+        check(Capture.arxivPdfUrl("https://arxiv.org/abs/2507.18115v1#abstract").equals("https://arxiv.org/pdf/2507.18115v1"));
+        check(Capture.arxivPdfUrl("https://www.arxiv.org/pdf/hep-ex/0107015v2.pdf").equals("https://arxiv.org/pdf/hep-ex/0107015v2"));
+        check(Capture.arxivPdfUrl("https://arxiv.org.example/abs/2507.18115").isEmpty());
+        check(Capture.arxivPdfUrl("https://arxiv.org/html/2507.18115v1").equals("https://arxiv.org/pdf/2507.18115v1"));
+        String figureNotes = "\n\n### Figure and scan notes (on-device AI)\n- Page 4: Dose vs time.";
+        String longPdf = "Main paper text. ".repeat(300) + figureNotes;
+        String prompt = IngestText.pdfPrompt(longPdf, 220);
+        check(prompt.length() <= 220 && prompt.startsWith("Main paper text.") && prompt.endsWith("Dose vs time."));
+        check(IngestText.pdfPrompt("Short paper text.", 220).equals("Short paper text."));
+        String sampled = IngestText.pdfSummaryPrompt("Opening. ".repeat(200) + "Middle. ".repeat(200)
+            + "Conclusion. ".repeat(200) + figureNotes, 480);
+        check(sampled.length() <= 480 && sampled.contains("Opening.") && sampled.contains("Middle.")
+            && sampled.contains("Conclusion.") && sampled.endsWith("Dose vs time."));
         // enrichment lines go on a file entry and the embed survives
         String tagged = InboxFile.setEnrich(photo, photo.trim(), "image", "whiteboard, plan", "A whiteboard sketch.");
         InboxFile.Entry t = InboxFile.parse(tagged).get(0);
@@ -625,6 +643,13 @@ String note = Enrich.sourceNote("T", "https://e.org/a", "2026-11-10 19:31", "ai,
         check(page.text.contains("### Why it works"));
         check(!page.text.contains("Popular two") && !page.text.contains("Copyright") && !page.text.contains("About"));
         check(!page.blocked);
+        // LaTeXML papers use the document container even when a long appendix has the highest score.
+        String paperHtml = "<article class='ltx_document'><h1>Research paper</h1><div><h2>Introduction</h2><p>Brief opening.</p></div>"
+            + "<div><h2>Results</h2><p>Brief conclusion.</p><figure><img src='/chart.png'><figcaption>Measured results</figcaption></figure></div>"
+            + "<div><div><div><p>" + (para + ", ").repeat(12) + "</p></div></div></div></article>";
+        Extract.Page paper = Extract.parse(paperHtml, "https://arxiv.org/html/2611.18856v1");
+        check(paper.text.startsWith("### Research paper") && paper.text.contains("Brief opening.") && paper.text.contains("Brief conclusion."));
+        check(paper.media.size() == 1 && paper.media.get(0).caption.equals("Measured results"));
         // structured data wins when the visible page is a thin app shell
         String shell = "<html><head><title>Post</title><script type='application/ld+json'>{\"@context\":\"https://schema.org\",\"@graph\":[{\"@type\":\"BlogPosting\",\"headline\":\"From JSON\",\"author\":{\"name\":\"Grace\"},\"articleBody\":\"" + para.repeat(4).trim() + "\"}]}</script></head><body><div id='root'></div></body></html>";
         Extract.Page ld = Extract.parse(shell, "https://x.example/p");

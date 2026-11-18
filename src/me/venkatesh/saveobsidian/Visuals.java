@@ -6,7 +6,10 @@ import org.json.JSONObject;
 
 /** Source-scoped visual checkpoints. Each paid result survives a later network or job interruption. */
 final class Visuals {
-    static boolean complete(Context c, String source) { return Content.media(c, source).optBoolean("complete"); }
+    static boolean complete(Context c, String source) {
+        JSONObject saved = Content.media(c, source);
+        return saved.optBoolean("complete") && (Capture.arxivPdfUrl(source).isEmpty() || saved.optBoolean("pdf"));
+    }
 
     static String read(Context c, String key, String source, Fetch.Result page) throws Exception {
         JSONObject saved = Content.media(c, source);
@@ -48,15 +51,17 @@ final class Visuals {
         String combined = visual.length() == 0 ? page.text
             : "### Visual content (AI interpretation of source media)" + visual + "\n\n### Page text\n" + page.text;
         Content.save(c, source, combined);
-        saved.put("order", order).put("page", page.text).put("complete", true);
+        saved.put("order", order).put("page", page.text).put("pdf", page.pdf).put("complete", true);
         Content.saveMedia(c, source, saved);
         return combined;
     }
     /** Give every inspected slide space in the plan, even when a carousel exceeds the text budget. */
     static String prompt(Context c, String source, int max) {
         JSONObject saved = Content.media(c, source);
+
         org.json.JSONArray order = saved.optJSONArray("order");
         String page = saved.optString("page");
+        if (saved.optBoolean("pdf")) return IngestText.pdfPrompt(page, Ingest.PDF_FOR_MODEL);
         if (order == null || order.length() == 0) return page.length() > max ? page.substring(0, max) : page;
         StringBuilder out = new StringBuilder("Visual evidence (AI interpretation; excerpts from every inspected item):\n");
         int each = Math.max(1, (max / 2 - order.length() * 20) / order.length());

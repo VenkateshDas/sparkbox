@@ -15,6 +15,8 @@ public final class InboxFile {
             this.why = why; this.ideas = ideas; this.body = body; this.sharedText = sharedText; this.text = text;
             this.type = type; this.tags = tags; this.tldr = tldr; this.file = file; this.heading = heading;
         }
+        /** Stable across enrichment and edits, including files shared in the same minute. */
+        String sourceId() { return file.isEmpty() ? url : "attachment:" + file; }
         /** The model-written title when there is one, else the saved title. */
         public String shownTitle() { return heading.isEmpty() ? title : heading; }
         public boolean hasTag(String tag) { return (", " + tags + ", ").contains(", " + tag + ", "); }

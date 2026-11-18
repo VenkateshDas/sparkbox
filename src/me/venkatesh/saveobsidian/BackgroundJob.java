@@ -22,7 +22,7 @@ public class BackgroundJob extends JobService {
     }
 
     static void schedule(Context c) {
-        if (Model.key(c).isEmpty() && CaptureService.pending(c).length == 0) return;
+        if (Model.key(c).isEmpty() && CaptureService.pending(c).length == 0 && !Ingest.ready(c)) return;
         synchronized (LOCK) {
             if (active != null) { requested = true; return; }
             JobScheduler scheduler = c.getSystemService(JobScheduler.class);
@@ -40,7 +40,7 @@ public class BackgroundJob extends JobService {
         JobInfo.Builder job = new JobInfo.Builder(id, new ComponentName(c, BackgroundJob.class))
             .setPersisted(true);
         // Local destination writes must run offline; network calls retain their own bounded retries.
-        boolean local = false;
+        boolean local = Model.key(c).isEmpty() && Ingest.ready(c);
         for (java.io.File f : CaptureService.pending(c)) try { org.json.JSONObject j = CaptureService.readJob(f); local |= DirectCapture.direct(j) && !j.has("error"); } catch (Exception ignored) { }
         if (!local) job.setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY);
         if (delayMs > 0) job.setMinimumLatency(delayMs);
