@@ -17,6 +17,7 @@ final class Usage {
     private static SharedPreferences prefs(Context c) { return c.getSharedPreferences("usage", 0); }
 
     static void hit(Context c, String feature) {
+        if (!feature.equals("ask")) Metrics.event(feature, null);
         SharedPreferences p = prefs(c);
         p.edit().putInt(feature, p.getInt(feature, 0) + 1).putLong(feature + ".last", System.currentTimeMillis()).apply();
     }

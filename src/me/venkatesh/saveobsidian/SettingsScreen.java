@@ -48,6 +48,8 @@ final class SettingsScreen extends Screen {
         vault.add(row("Vault folder", VaultStore.ready(ui.c) ? VaultStore.label(ui.c) : "Not chosen", () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
         vault.add(row("Notes", snap == null ? "" : String.format(java.util.Locale.US, "%,d", snap.graph.notes.size()), null));
 
+        vault.add(row("Dashboard", "Vault, habits, recall, Scout and AI costs", () -> host.push(new DashboardScreen())));
+
         java.util.List<SettingRow> capture = group("Capture");
         boolean inboxOk = !ui.c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty();
         capture.add(row("Inbox", inboxOk ? "Knowledge/Sources/Inbox.md" : "Choose the vault folder with write access", null));

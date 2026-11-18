@@ -4,7 +4,7 @@ A personal Android app that catches links, thoughts, voice notes and files, and 
 
 Repository: https://github.com/VenkateshDas/sparkbox. The package ID keeps its original name (`me.venkatesh.saveobsidian`) so updates install in place.
 
-Version `1.9.2` (version code `14`). Min API 26, target API 35, compiled against API 37.
+Version `1.10.0` (version code `15`). Min API 26, target API 35, compiled against API 37.
 
 ## What it does
 
@@ -28,13 +28,21 @@ Version `1.9.2` (version code `14`). Min API 26, target API 35, compiled against
 
 **Use**
 - **Feed**: captures and notes as cards, with each capture's processing steps shown live on its card. Filter by Craft, Life, Sources, Topics or People. The visible **⋮** menu opens **Edit note** (full Markdown), **Cards**, and **Keep**; Sources also offer lane changes and trash. **Kept** collects bookmarked notes, including older Topics and People without recall cards. Keep never changes Feed or Spark order. Pull down to rescan the vault.
-- **Spark**: a daily spaced-repetition review of the cards (a small SM-2 scheduler, a daily cap, park and flag).
+- **Spark**: a daily spaced-repetition review of the cards (the FSRS-4.5 scheduler, a daily cap, park and flag).
 - **Search** (top of the Feed, with the same filters): word match first, meaning-based matches merged in.
 - **Ask**: a chat over your notes. Answers cite the notes they come from, and say "Not in your knowledge base" instead of guessing.
 - **Source** and **Topic** pages mark each section as *from the source*, *AI* or *yours*. Your own words are edited in place. The full Markdown editor retains drafts, checks for concurrent edits, and keeps recovery copies when a save cannot be verified.
 - **Cards** supports creating, editing and deleting user or AI cards. Topics group their own cards with linked notes; changes affect the owning note. Parked and flagged cards remain manageable.
 - **Vault browser** (menu → Browse vault): folders, notes, Read / Links / Similar.
 - **Settings**: vault and inbox, processing switches, models, key, Spark, theme (System, Dark, Light), recovery. Model roles use a searchable OpenRouter catalog, with offline cache, Refresh and Custom ID.
+
+### Dashboard and local tracking
+
+Open **Feed → menu → Dashboard**, or **Settings → Dashboard**. Seven native views cover the current vault, habits, recall, Scout, costs and health. Costs has date/model/workflow filters, input/output and cache/reasoning breakdowns, daily history, retries/failures, completed-operation averages, card economics and request/operation receipts. Export the filtered numerical data locally.
+
+New requests are measured across streaming and non-streaming calls, including embeddings, vision and transcription. Capture processing, standalone cards, direct notes, search, Ask, recall feedback and Scout interactions get operation attribution. Initial cards supplied by an ingest plan share that request's cost; their isolated drafting cost is unavailable. Background indexing is a shared batch and is shown separately. Retained Scout request journals are merged by existing request ID, so the shared ledger does not add them twice. Missing charges/tokens stay unavailable; independently billed tools and credit fees are excluded.
+
+Tracking is private, enabled locally by default, and can be paused or cleared in Dashboard Options. Detailed app metadata retains 90 days; existing Scout conversations retain their own history and can still supply usage after dashboard history is cleared. Deleting a Scout conversation removes its mirrored dashboard statistics. No new copies of prompts, notes, source URLs, recordings, API keys or error bodies are stored. The dashboard never invokes a model, reprocesses a capture or changes vault content on open. New daily activity cannot reconstruct earlier lifetime usage.
 
 ### Scout session usage
 

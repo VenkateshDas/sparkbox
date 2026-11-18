@@ -45,6 +45,7 @@ public final class ScoutChanges {
             .put("after", after).put("beforeHash", hash(before)).put("afterHash", hash(after)).put("dependencies", dependencies)
             .put("sourceIds", new org.json.JSONArray(ScoutEvidence.sources(session).keySet())).put("cards", cards);
         session.appendCustom("proposal", p);
+        Metrics.proposal(p.optString("proposalId"), session.id());
         return p;
     }
 
@@ -145,6 +146,7 @@ public final class ScoutChanges {
                 String current = notes.read(tree, path);
                 if (event(session, "write_intent", id) && Objects.equals(current, after)) {
                     session.appendCustom("write_receipt", new JSONObject().put("proposalId", id).put("tree", tree).put("recovered", true));
+                    Metrics.proposalSaved(id, path, before, after);
                     resolve(session, p, "Verified saved " + path, false); return;
                 }
                 if (!yes) { resolve(session, p, "Continuation declined. A prior write intent exists; inspect the note for partial changes.", true); return; }
@@ -159,6 +161,7 @@ public final class ScoutChanges {
                 notes.write(tree, path, before, after);
                 if (!Objects.equals(notes.read(tree, path), after)) throw new IOException("Saved note failed read-back verification");
                 session.appendCustom("write_receipt", new JSONObject().put("proposalId", id).put("tree", tree).put("afterHash", hash(after)));
+                Metrics.proposalSaved(id, path, before, after);
                 resolve(session, p, "Verified saved " + path, false);
             } finally { VaultLock.L.unlock(); }
         }

@@ -82,6 +82,7 @@ final class FeedScreen extends Screen {
         @Override public void menu(int which) {
             if (which == 0) host.push(new ProfileScreen());
             else if (which == 1) host.push(new SettingsScreen());
+            else if (which == 3) host.push(new DashboardScreen());
             else host.startActivity(new Intent(host, VaultActivity.class));
         }
         @Override public void capture() { captureMenu(); }
@@ -153,7 +154,7 @@ final class FeedScreen extends Screen {
         new Thread(() -> {
             List<Vault.Note> hits;
             Limits.interactive(true);
-            try { hits = VaultStore.semantic(ui.c, snap, q, 30); } catch (Exception offline) { hits = null; } // no key or no network: the word results stay, silently
+            try (Metrics.Operation metrics = Metrics.operation("Semantic search", java.util.UUID.randomUUID().toString(), "query embedding")) { Metrics.event("search", null); hits = VaultStore.semantic(ui.c, snap, q, 30); metrics.done(); } catch (Exception offline) { hits = null; } // no key or no network: the word results stay, silently
             final List<Vault.Note> done = hits;
             main.post(() -> { if (q.equals(query) && done != null && !done.isEmpty()) { meaning = done; drawRows(); } });
         }).start();

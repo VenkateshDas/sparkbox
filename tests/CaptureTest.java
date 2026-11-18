@@ -42,6 +42,8 @@ public class CaptureTest {
         limits();
         AgentTest.run();
         SessionUsageTest.run();
+        MetricsTest.run();
+        DashboardUiTest.run();
         VaultToolsTest.run();
         McpTest.run();
         ScoutTest.run();

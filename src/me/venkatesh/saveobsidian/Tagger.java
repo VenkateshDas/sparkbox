@@ -48,7 +48,7 @@ final class Tagger {
                         case "file": if (Ingest.ready(c)) Ingest.run(c, key); else fileNotes(c); break; // ingest files each capture into Knowledge; the Captures folder is the lighter option
                         case "cards": if (CardGen.on(c)) CardGen.run(c); break; // a batch of cards for existing notes, when the owner started it
                         case "describe": describe(c, key); break;
-                        default: embed(c, key); VaultStore.embed(c, key);
+                        default: try (Metrics.Operation metrics = Metrics.operation("Background indexing", java.util.UUID.randomUUID().toString(), "embeddings")) { embed(c, key); VaultStore.embed(c, key); metrics.done(); }
                     }
                     android.util.Log.i("Sparkbox", "stage " + stage + " " + (System.currentTimeMillis() - stageBegan) + " ms");
                 } catch (Exception stop) {
@@ -79,7 +79,10 @@ final class Tagger {
             if (next == null) return;
             String pageUrl = next.url;
             String[] result;
-            try { result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page)); }
+            try (Metrics.Operation metrics = Tracking.capture(c, next, "enrichment")) {
+                result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
+                metrics.outcome("enriched");
+            }
             catch (Exception failed) {
                 if (String.valueOf(failed.getMessage()).startsWith("Smart tags paused: OpenRouter answered 40") || Net.offline(failed)) throw failed; // bad key or no credit: every call would fail
                 result = null; // a dropped connection or a refusal for this one capture: the others still get their turn
@@ -157,12 +160,15 @@ final class Tagger {
             File audio = new File(job.optString("audio"));
             if (job.optString("entry").isEmpty()) {
                 String text;
-                try { text = Model.transcribe(key, Files.readAllBytes(audio.toPath()), job.optString("format", "m4a")); }
+                try (Metrics.Operation metrics = Metrics.operation("Capture processing", Tracking.scope(c, job.optString("captureId")), "transcription")) {
+                    text = Model.transcribe(key, Files.readAllBytes(audio.toPath()), job.optString("format", "m4a")); metrics.outcome("transcribed");
+                }
                 catch (Model.Rejected refused) { CaptureService.writeJob(file, job.put("error", refused.getMessage() + ". The recording is kept.")); continue; }
                 catch (java.nio.file.NoSuchFileException gone) { new AtomicFile(file).delete(); continue; }
                 if (text.isEmpty()) { audio.delete(); new AtomicFile(file).delete(); continue; } // nothing was said
                 CaptureService.writeJob(file, job.put("entry", Capture.textEntry(job.getString("time"), text, "Sparkbox voice")).put("label", Capture.clean(text)));
             }
+            Tracking.linked(c, job, job.getString("entry"));
             String entry = job.getString("entry"), destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             // containsEntry makes a repeat after a crash harmless: the same entry is never appended twice.
             CaptureService.edit(c, destination, CaptureService.readText(c), text -> InboxFile.containsEntry(text, entry) ? text
@@ -203,7 +209,7 @@ final class Tagger {
             try {
                 byte[] data = video ? Attach.read(c, uri, 24 * 1024 * 1024) : pdf ? Attach.read(c, uri, 10 * 1024 * 1024) : Attach.jpeg(c, uri, 1024);
                 if (data == null) continue;
-                result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, pdf, data);
+                try (Metrics.Operation metrics = Tracking.capture(c, next, "vision")) { result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, pdf, data); metrics.outcome("described"); }
                 calls++;
             } catch (Model.Rejected | java.io.FileNotFoundException | SecurityException refused) { continue; } // this file only; the rest still run
             if (result == null) continue;

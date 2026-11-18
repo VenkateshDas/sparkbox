@@ -102,9 +102,10 @@ final class ScoutUsage {
                 u.put("cost", d.get("total_cost"));
                 for (String[] pair : new String[][]{{"native_tokens_prompt", "prompt_tokens"}, {"native_tokens_completion", "completion_tokens"}})
                     if (!d.isNull(pair[0])) u.put(pair[1], d.get(pair[0]));
-                session.append(new JSONObject().put("type", "request_update").put("requestId", row.optString("requestId")).put("usage", u)
+                JSONObject recovered = new JSONObject().put("type", "request_update").put("requestId", row.optString("requestId")).put("usage", u)
                     .put("recovered", true).put("provider", d.optString("provider_name")).put("actualModel", d.optString("model", row.optString("model")))
-                    .put("finish_reason", d.optString("finish_reason")).put("status", d.optBoolean("cancelled") ? "cancelled" : "reconciled"));
+                    .put("finish_reason", d.optString("finish_reason")).put("chargeStatus", "reconciled");
+                session.append(recovered); Metrics.scout(recovered, session.id());
             } catch (Exception unavailable) { /* leave the original missing value visible */ }
         }
         changed.run();

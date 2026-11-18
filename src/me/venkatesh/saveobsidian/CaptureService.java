@@ -42,6 +42,7 @@ public class CaptureService extends Service {
         if (job.optString("text").getBytes(StandardCharsets.UTF_8).length > 1024 * 1024) throw new IOException("Capture exceeds 1 MiB; nothing was shortened.");
         writeJob(new File(directory, job.getString("captureId") + ".json"), job
             .put("created", System.currentTimeMillis()).put("writeAttempted", false).put("phase", "queued"));
+        Tracking.accepted(context, job);
     }
     /** Chosen inbox file name; older installs did not store it, so fall back to the document id. */
     static String inboxName(Context context) {
@@ -327,7 +328,7 @@ public class CaptureService extends Service {
             sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
             if (!duplicate) BackgroundJob.now(this);
             openEntry = duplicate ? null : entry;
-            if (!duplicate) Usage.hit(this, "capture");
+            if (!duplicate) { Tracking.linked(this, job, entry); Usage.hit(this, "capture"); }
             if (duplicate) stage("Already in inbox", label.isEmpty() ? "This is already in " + name : label, "Seen", 100);
             else stage("Source added", label.isEmpty() ? "Saved to " + name : label + " → " + name, "Added", 100);
         } catch (Exception e) {

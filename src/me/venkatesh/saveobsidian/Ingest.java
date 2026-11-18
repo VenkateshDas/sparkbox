@@ -236,6 +236,13 @@ final class Ingest {
     }
 
     private static void process(Context c, String key, InboxFile.Entry e, String ek, VaultStore.Snap snap, int tries) throws Exception {
+        try (Metrics.Operation metrics = Tracking.capture(c, e, "ingest planning")) {
+            processMeasured(c, key, e, ek, snap, tries);
+            metrics.done();
+        }
+    }
+
+    private static void processMeasured(Context c, String key, InboxFile.Entry e, String ek, VaultStore.Snap snap, int tries) throws Exception {
         SharedPreferences prog = c.getSharedPreferences("ingest", 0);
         Set<String> done = new HashSet<>(prog.getStringSet(ek, new HashSet<String>()));
         Map<String, String> topicNames = stems(snap, "Knowledge/Topics/"), peopleNames = stems(snap, "Knowledge/People/"), entityNames = stems(snap, "Knowledge/Entities/");
@@ -256,7 +263,7 @@ final class Ingest {
             // the Craft/Life decision needs only the page, so it runs at the same time as the main answer instead of after it
             final String[][] laneBox = new String[1][];
             final String pageForLane = page;
-            Thread laneThread = new Thread(() -> laneBox[0] = Classify.of(c, key, e.shownTitle(), e.url, e.tldr, e.why, e.ideas, pageForLane, ""));
+            Thread laneThread = new Thread(() -> { try (Metrics.Scope metricStage = Metrics.stage("classification")) { laneBox[0] = Classify.of(c, key, e.shownTitle(), e.url, e.tldr, e.why, e.ideas, pageForLane, ""); } });
             laneThread.start();
             try { plan = Model.completeJson(key, use, SYSTEM, user, 4500, "ingest_plan", Schemas.plan(), FALLBACK_MODEL); }
             catch (Exception failed) { laneThread.interrupt(); throw failed; }
@@ -411,6 +418,7 @@ final class Ingest {
                 after = madePeople(after, people, done);
                 after = madeEntities(after, entities, done);
                 if (!after.equals(before)) VaultWrite.write(c, sourcePath, before, after);
+                Metrics.cards(proposed.size(), Cards.parse(sourcePath, after).size());
             }
             step(prog, ek, done, "cards");
         }

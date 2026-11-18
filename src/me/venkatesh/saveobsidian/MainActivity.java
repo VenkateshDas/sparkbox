@@ -262,6 +262,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
     /** Opens a note in the right screen: a Source in its Unit, a Topic on its page, anything else in the note reader. */
     void openNote(String path) {
+        Metrics.event("note_open", null);
         if (Layout.inSources(path)) push(new UnitScreen(path));
         else if (path.startsWith("Knowledge/Topics/")) push(new TopicScreen(path));
         else startActivity(new android.content.Intent(this, VaultActivity.class).putExtra(VaultActivity.OPEN, path));

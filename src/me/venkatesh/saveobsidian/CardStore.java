@@ -247,6 +247,7 @@ final class CardStore {
         for (Map.Entry<String, List<JSONObject>> e : byPath.entrySet()) {
             String path = e.getKey();
             boolean saved = false;
+            boolean persisted = false;
             VaultLock.L.lock(); // read, transform and write as one step against other in-app writers
             try {
             for (int attempt = 0; attempt < 3 && !saved; attempt++) {
@@ -257,17 +258,25 @@ final class CardStore {
                     if (!create) { saved = true; break; } // the note is gone: its cards go with it
                     before = "---\ntype: source\ndescription: My own cards\nvia: Sparkbox\n---\n\n# My cards\n";
                     String after = transform(before, e.getValue());
-                    try { VaultWrite.writePinned(c, tree, path, null, after); saved = true; } catch (java.io.IOException exists) { /* appeared meanwhile: retry from its text */ }
+                    try { VaultWrite.writePinned(c, tree, path, null, after); saved = true; persisted = true; } catch (java.io.IOException exists) { /* appeared meanwhile: retry from its text */ }
                     continue;
                 }
                 String after = transform(before, e.getValue());
-                if (after.equals(before)) { saved = true; break; }
+                if (after.equals(before)) { saved = true; persisted = true; break; }
                 try {
                     VaultWrite.writePinned(c, tree, path, before, after);
-                    saved = true;
+                    saved = true; persisted = true;
                 } catch (VaultWrite.Stale changed) { /* the file changed under us: read it again and re-apply */ }
             }
             } finally { VaultLock.L.unlock(); }
+            if (saved && persisted) for (JSONObject operation : e.getValue()) {
+                JSONObject kv = operation.optJSONObject("kv");
+                if (kv != null && kv.has("Log")) {
+                    String[] log = kv.optString("Log").split(";", 2)[0].trim().split("\\s+");
+                    long at = log.length > 0 ? Cards.parseTime(log[0]) : 0;
+                    if (at > 0) Metrics.reviewSaved(operation.optString("operationId"), at);
+                }
+            }
             if (saved) done.addAll(e.getValue());
         }
         synchronized (LOCK) {

@@ -148,6 +148,14 @@ final class CardGen {
     }
 
     private static void process(Context c, String key, Vault.Note n) throws Exception {
+        try (Metrics.Operation metrics = Metrics.operation("Card creation", Tracking.scope(c, n.path + ":" + n.mtime), "card drafting")) {
+            metrics.note(n.path);
+            processMeasured(c, key, n);
+            metrics.done();
+        }
+    }
+
+    private static void processMeasured(Context c, String key, Vault.Note n) throws Exception {
         String before = VaultWrite.read(c, n.path);
         if (before == null) return;
         String quality = CardPrompt.quality(before), input = CardPrompt.input(before);
@@ -173,6 +181,7 @@ final class CardGen {
         String after = CardPrompt.apply(before, curiosity, quality, cards);
         if (after.equals(before)) after = NoteEdit.setKey(before, "quality", quality);
         VaultWrite.write(c, n.path, before, after);
+        Metrics.cards(cards.size(), cards.size());
         // throws Stale when the note changed meanwhile: it stays undone and is tried again
     }
 

@@ -105,10 +105,11 @@ final class SparkScreen extends Screen {
         view.showFeedback("Checking...");
         new Thread(() -> {
             String out;
-            try {
+            try (Metrics.Operation metrics = Metrics.operation("Recall feedback", java.util.UUID.randomUUID().toString(), "answer feedback")) {
                 String text = n == null ? null : VaultWrite.read(ui.c, n.path);
                 String in = "Card question: " + k.q + "\nKey answer: " + k.a + "\nNote:\n" + (text == null ? "" : CardPrompt.input(text)) + "\nOwner's answer: " + typed;
                 out = Model.complete(key, CardGen.model(ui.c), SYSTEM, in, 300, true).trim();
+                metrics.done(); Metrics.event("recall_feedback", null);
             } catch (Exception e) { out = "Could not check: " + e.getMessage(); }
             final String shown = out;
             new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> view.showFeedback(shown));

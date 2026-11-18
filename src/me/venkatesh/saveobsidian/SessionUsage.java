@@ -29,7 +29,7 @@ public final class SessionUsage {
         String id = UUID.randomUUID().toString();
         long began = System.nanoTime();
         JSONObject start = describe(request, window);
-        start.put("type", "request").put("requestId", id).put("run", run).put("purpose", purpose).put("status", "pending").put("attempt", attempt).put("continuation", continuation);
+        start.put("operationId", Metrics.context().optString("operationId")).put("type", "request").put("requestId", id).put("run", run).put("purpose", purpose).put("status", "pending").put("attempt", attempt).put("continuation", continuation);
         if (attempt > 0 || continuation) {
             List<JSONObject> earlier = requests(session);
             for (int i = earlier.size() - 1; i >= 0; i--) if (earlier.get(i).optString("run").equals(run) && earlier.get(i).optString("purpose").equals(purpose)) {
@@ -37,6 +37,7 @@ public final class SessionUsage {
             }
         }
         session.append(start);
+        Metrics.scout(start, session.id());
         changed.accept(start);
         JSONObject observed = new JSONObject();
         Consumer<JSONObject> metadata = m -> {
@@ -50,12 +51,14 @@ public final class SessionUsage {
                 if (dirty) {
                     JSONObject update = new JSONObject(observed.toString()).put("type", "request_update").put("requestId", id);
                     session.append(update); // capture the generation ID before a possible process kill
+                    Metrics.scout(update, session.id());
                 }
             } catch (Exception ignored) { /* metrics must not interrupt a response already in flight */ }
         };
         String status = "error";
         try {
-            JSONObject reply = call.run(metadata);
+            JSONObject reply;
+            try (AutoCloseable meter = Metrics.suppress()) { reply = call.run(metadata); }
             metadata.accept(reply);
             status = reply.optString("finish_reason").equals("cancelled") ? "cancelled" : "completed";
             reply.put("_requestId", id);
@@ -65,7 +68,7 @@ public final class SessionUsage {
         } finally {
             JSONObject end = new JSONObject(observed.toString()).put("type", "request_update").put("requestId", id)
                 .put("status", status).put("durationMs", (System.nanoTime() - began) / 1_000_000);
-            try { session.append(end); changed.accept(end); } catch (Exception ignored) { }
+            try { session.append(end); Metrics.scout(end, session.id()); changed.accept(end); } catch (Exception ignored) { }
         }
     }
 

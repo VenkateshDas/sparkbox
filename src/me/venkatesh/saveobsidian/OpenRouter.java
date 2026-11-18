@@ -37,6 +37,14 @@ public final class OpenRouter {
     /** Metadata is delivered independently of text, including before an interrupted stream. */
     public static JSONObject stream(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel,
                                     java.util.function.Consumer<JSONObject> metadata) throws Exception {
+        return Metrics.measure(request, "conversation", 0, observed -> streamRaw(key, request, live, cancel, update -> {
+            metadata.accept(update);
+            observed.accept(update);
+        }));
+    }
+
+    private static JSONObject streamRaw(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel,
+                                       java.util.function.Consumer<JSONObject> metadata) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
         cancel.attach(connection);
         connection.setRequestMethod("POST");

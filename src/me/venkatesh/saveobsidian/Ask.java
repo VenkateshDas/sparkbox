@@ -32,9 +32,17 @@ final class Ask {
 
     /** Messages is the conversation so far ending in the user's question. Returns the answer; tool traffic stays inside this call. */
     static String run(Context c, VaultStore.Snap snap, String key, JSONArray messages, Status status, Live live, Cancel cancel) throws Exception {
+        try (Metrics.Operation metrics = Metrics.operation("Ask", java.util.UUID.randomUUID().toString(), "answer")) {
+            String answer = runMeasured(c, snap, key, messages, status, live, cancel);
+            if (!cancel.stopped()) metrics.done(); else metrics.outcome("cancelled");
+            return answer;
+        }
+    }
+
+    private static String runMeasured(Context c, VaultStore.Snap snap, String key, JSONArray messages, Status status, Live live, Cancel cancel) throws Exception {
         JSONArray work = new JSONArray().put(new JSONObject().put("role", "system").put("content", SYSTEM));
         for (int i = 0; i < messages.length(); i++) work.put(messages.get(i));
-        Usage.hit(c, "ask");
+        Usage.hit(c, "ask"); Metrics.event("ask", null);
         String model = model(c);
         for (int step = 0; step < STEPS; step++) {
             if (cancel.stopped()) return "";

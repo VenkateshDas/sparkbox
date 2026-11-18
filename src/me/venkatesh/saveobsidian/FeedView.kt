@@ -249,7 +249,7 @@ private fun Header(subtitle: String, a: FeedActions) {
         Box {
             IconButton(onClick = { open = true }) { Text("☰", style = MaterialTheme.typography.titleLarge) }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                listOf("Profile", "Settings", "Browse vault").forEachIndexed { i, s -> DropdownMenuItem(text = { Text(s) }, onClick = { open = false; a.menu(i) }) }
+                listOf("Profile", "Settings", "Browse vault", "Dashboard").forEachIndexed { i, s -> DropdownMenuItem(text = { Text(s) }, onClick = { open = false; a.menu(i) }) }
             }
         }
     }

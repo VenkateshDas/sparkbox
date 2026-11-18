@@ -112,12 +112,23 @@ public final class Agent {
         if (session != null) try { session.appendModelChange(m); } catch (java.io.IOException e) { emit("session_error", wrap("error", String.valueOf(e.getMessage()))); }
     }
 
+    private Metrics.Operation metricInteraction;
+    private void metricUser(JSONObject m) {
+        if (session == null || !m.optString("role").equals("user")) return;
+        if (metricInteraction != null) { metricInteraction.outcome("superseded_or_batched"); metricInteraction.close(); }
+        String accepted = m.optString("queueId");
+        if (accepted.isEmpty()) accepted = m.optString("entryId", java.util.UUID.randomUUID().toString());
+        metricInteraction = Metrics.operation("Scout interaction", session.id() + ":" + accepted, "conversation");
+        metricInteraction.session(session.id());
+    }
+
     private void add(JSONObject m) {
         if (session != null) try { session.appendMessage(m); } catch (java.io.IOException e) {
             cancel.stop();
             emit("session_error", wrap("error", String.valueOf(e.getMessage())));
             throw new IllegalStateException("Session could not be saved; execution stopped", e);
         }
+        metricUser(m);
         messages.add(m);
     }
 
@@ -245,6 +256,7 @@ public final class Agent {
                 if (next.isEmpty()) throw new IllegalStateException("Cannot continue after a finished answer; queue a message first");
                 for (JSONObject item : next) add(item);
             }
+            if (metricInteraction == null) for (int i = messages.size() - 1; i >= 0; i--) if (messages.get(i).optString("role").equals("user")) { metricUser(messages.get(i)); break; }
             last = loop();
             return last;
         } finally { finish(last); }
@@ -263,6 +275,11 @@ public final class Agent {
     }
 
     private void finish(JSONObject last) {
+        if (metricInteraction != null) {
+            String stop = last == null ? "interrupted" : last.optString("stopReason");
+            metricInteraction.outcome(suspended ? "awaiting_approval" : stop.equals("stop") ? "completed" : stop.equals("aborted") ? "cancelled" : "error");
+            metricInteraction.close(); metricInteraction = null;
+        }
         synchronized (lock) { running = false; lock.notifyAll(); }
         try { emit("agent_settled", new JSONObject().put("aborted", last != null && last.optString("stopReason").equals("aborted"))); } catch (Exception ignore) { }
     }

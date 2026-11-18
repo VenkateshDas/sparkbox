@@ -11,3 +11,6 @@ local.properties
 __pycache__/
 .gradle/
 .kotlin/
+# Generated from the owner's private vault; regenerate locally.
+docs/dashboard/snapshot.json
+docs/dashboard/snapshot.js

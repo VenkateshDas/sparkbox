@@ -33,6 +33,13 @@ final class DirectCapture {
         }
     }
     private static void process(Context c, File f, JSONObject j, String key) throws Exception {
+        try (Metrics.Operation metrics = Metrics.operation("Direct capture", Tracking.scope(c, j.optString("captureId")), "note title")) {
+            processMeasured(c, f, j, key);
+            metrics.done(); Metrics.event("direct_note_saved", j.optString("captureId"));
+        }
+    }
+
+    private static void processMeasured(Context c, File f, JSONObject j, String key) throws Exception {
         String tree = j.getString("vault"), id = j.getString("captureId");
         if (tree.isEmpty() || !tree.equals(VaultStore.tree(c))) throw new java.io.IOException("Selected vault changed. Capture kept; restore that vault or choose another destination.");
         String text = j.optString("text");

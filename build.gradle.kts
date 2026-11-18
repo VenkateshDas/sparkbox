@@ -15,8 +15,8 @@ android {
         applicationId = "me.venkatesh.saveobsidian"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.9.2"
+        versionCode = 15
+        versionName = "1.10.0"
         testInstrumentationRunner = "me.venkatesh.saveobsidian.ReelTest"
     }
     sourceSets["main"].apply {
@@ -62,11 +62,11 @@ dependencies {
 // The JVM checks (tests/CaptureTest.java): plain classes only, no Android, same list as build.py.
 val jvmCheck by configurations.creating
 dependencies { jvmCheck(libs.jsoup); jvmCheck(libs.json) }
-val pure = listOf("ModelCatalog", "DirectText", "Extract", "Instagram", "Transcript", "JsonFix", "Net", "Capture", "AppendCheck", "InboxFile", "VerifiedEdit", "VaultLock", "Cancel", "RunGate", "Limits", "Failures",
+val pure = listOf("Metrics", "Dashboard", "ModelCatalog", "DirectText", "Extract", "Instagram", "Transcript", "JsonFix", "Net", "Capture", "AppendCheck", "InboxFile", "VerifiedEdit", "VaultLock", "Cancel", "RunGate", "Limits", "Failures",
     "Enrich", "Index", "QueryVectors", "Vault", "Layout", "Lane", "Feed", "NoteEdit", "Cites", "Cards", "Sched", "Spark", "Study", "CardPrompt", "IngestText",
     "Truncate", "Validate", "Tool", "Agent", "ScoutState", "ScoutChanges", "ScoutEvidence", "ScoutMarkdown", "Session", "SessionUsage", "Compact", "OpenRouter", "Sse", "VaultTools", "Skills", "Mcp", "Chat")
 val compileCaptureTest by tasks.registering(JavaCompile::class) {
-    source = files(pure.map { "src/me/venkatesh/saveobsidian/$it.java" } + "tests/CaptureTest.java" + "tests/AgentTest.java" + "tests/SessionUsageTest.java" + "tests/VaultToolsTest.java" + "tests/McpTest.java" + "tests/ScoutTest.java" + "tests/RetrievalTest.java").asFileTree
+    source = files(pure.map { "src/me/venkatesh/saveobsidian/$it.java" } + "tests/CaptureTest.java" + "tests/AgentTest.java" + "tests/SessionUsageTest.java" + "tests/MetricsTest.java" + "tests/DashboardUiTest.java" + "tests/VaultToolsTest.java" + "tests/McpTest.java" + "tests/ScoutTest.java" + "tests/RetrievalTest.java").asFileTree
     classpath = jvmCheck
     destinationDirectory = layout.buildDirectory.dir("captureTest")
     options.encoding = "UTF-8"

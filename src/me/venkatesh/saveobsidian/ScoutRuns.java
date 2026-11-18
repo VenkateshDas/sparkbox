@@ -164,6 +164,13 @@ final class ScoutRuns {
     }
 
     private static void execute(Context c, Run run, String text, boolean again, boolean research) {
+        JSONObject context = new JSONObject();
+        try { context.put("sessionId", run.session.id()).put("workflow", "Scout interaction")
+            .put("operationId", Metrics.id("Scout interaction:" + run.session.id() + ":" + run.initialId)); } catch (Exception ignored) { }
+        try (Metrics.Scope metrics = Metrics.bind(context)) { executeMeasured(c, run, text, again, research); }
+    }
+
+    private static void executeMeasured(Context c, Run run, String text, boolean again, boolean research) {
         String failure = null;
         boolean loggedByAgent = false;
         Limits.interactive(true);
@@ -179,6 +186,7 @@ final class ScoutRuns {
             ScoutUsage.model(c, a.model(), () -> changed(run.file));
             a.subscribe((type, data) -> events(c, run, type, data));
             Usage.hit(c, "ask");
+            Metrics.event("scout", run.initialId.isEmpty() ? run.id : run.initialId);
             JSONObject last;
             if (again) last = a.resume();
             else last = a.promptAccepted(run.initialId, Scout.expand(c, snap, text));
@@ -250,7 +258,8 @@ final class ScoutRuns {
         if (r != null) { r.cancel.stop(); r.done = true; }
         runs.remove(file);
         Session s = sessions.remove(file);
-        if (s != null) s.close();
+        if (s == null) try { s = Session.open(new File(dir(c), file)); } catch (Exception ignored) { }
+        if (s != null) { Metrics.forgetSession(s.id()); s.close(); }
         new File(dir(c), file).delete();
         clearNotification(c, file);
     }
@@ -435,7 +444,8 @@ final class ScoutRuns {
         String tree = VaultStore.tree(c);
         runs.put(file, run); ScoutService.sync(c); changed(file);
         new Thread(() -> {
-            try {
+            try (Metrics.Operation metrics = Metrics.operation("Scout interaction", run.session.id() + ":manual_" + run.id, "cards")) {
+                metrics.session(run.session.id());
                 if (!path.startsWith("Knowledge/Sources/") || !path.endsWith(".md") || path.endsWith("/My cards.md")) throw new Exception("Choose a source note path");
                 String before = VaultWrite.readPinned(c, tree, path);
                 if (before == null) throw new Exception("Source note not found");
@@ -450,6 +460,7 @@ final class ScoutRuns {
                 if (cards.isEmpty()) throw new Exception("No valid cards generated for review");
                 ScoutChanges.CALL.set(new JSONObject().put("id", "manual_" + run.id).put("name", "make_cards"));
                 ScoutChanges.prepareNote(run.session, tree, path, before, Cards.add(before, cards), new org.json.JSONArray(), true);
+                metrics.cards(cards.size(), 0); metrics.outcome("awaiting_approval");
             } catch (Exception failed) {
                 try { run.session.appendCustom("cards_error", new JSONObject().put("message", failed.getMessage())); } catch (Exception ignored) { }
             } finally { ScoutChanges.CALL.remove(); run.done = true; changed(file); ScoutService.sync(c); }
