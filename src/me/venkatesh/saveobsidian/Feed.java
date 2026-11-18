@@ -162,10 +162,10 @@ public final class Feed {
             it.entry = e;
             it.title = e.shownTitle();
             it.url = e.url;
-            it.sourceName = e.url.isEmpty() ? "Note" : host(e.url);
+            it.sourceName = !e.file.isEmpty() ? "File" : e.url.isEmpty() ? "Note" : host(e.url);
             it.why = e.why;
             it.tldr = e.tldr.isEmpty() && e.text ? e.body : e.tldr;
-            it.waiting = "Saved on this phone. Not in your notes yet.";
+            it.waiting = e.file.isEmpty() ? "Saved on this phone. Not in your notes yet." : "Saved in your attachments folder.";
             boolean[] time = new boolean[1];
             LocalDateTime at = when(e.time, time);
             if (at == null) { at = now; time[0] = false; }

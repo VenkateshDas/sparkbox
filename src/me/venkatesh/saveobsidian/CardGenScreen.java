@@ -45,7 +45,7 @@ final class CardGenScreen extends Screen {
         b.add(new Body("Each note gets a curiosity question and two to four recall cards, written by an AI model from the note's own text. Cards are written into the note, under a Cards heading. Nothing else in the note changes.", true, false));
         b.add(new Heading(on || p[0] > 0 ? "Making cards: " + num(p[0]) + " of " + num(p[1]) + " notes" : num(est[0]) + " notes have no cards yet"));
         b.add(new Meter(p[0], Math.max(1, p[1])));
-        b.add(new Body(est[0] > 0 ? "Left to do: about " + num(est[1]) + " characters of text, roughly " + num(est[2]) + " input tokens, with " + CardGen.model(ui.c) + ". Read your key's usage on openrouter.ai for the exact cost." : "Every note in your vault has been looked at.", true, false));
+        b.add(new Body(est[0] > 0 ? "Left to do: about " + num(est[1]) + " characters of text, roughly " + num(est[2]) + " input tokens, with " + (CardGen.model(ui.c) + ". Read your key's usage on openrouter.ai for the exact cost.") : "Every note in your vault has been looked at.", true, false));
         String problem = CardGen.problem(ui.c);
         if (!problem.isEmpty()) b.add(new Banner(problem, true));
         if (est[0] > 0) {

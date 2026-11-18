@@ -9,10 +9,47 @@ public class ReelTest extends Instrumentation {
     @Override public void onCreate(Bundle args) { arguments = args; start(); }
     @Override public void onStart() {
         Bundle result = new Bundle();
+        android.content.Context context = getTargetContext();
         try {
-            android.content.Context context = getTargetContext();
             if ("scout".equals(arguments.getString("suite"))) {
                 ScoutDeviceTest.run(this, arguments, result);
+            } else if ("pdf".equals(arguments.getString("suite"))) {
+                if (!PdfCapture.supported()) throw new IllegalStateException("Android 15 or later required");
+                if ("token-economizer".equals(arguments.getString("fixture"))) {
+                    var input = java.nio.file.Files.readAllBytes(new java.io.File(context.getCacheDir(), "pdf-fixture.pdf").toPath());
+                    String text = PdfCapture.read(context, input);
+                    if (!text.contains("TokenEconomizer") || !text.contains("### Page 26") || text.length() < 50_000)
+                        throw new AssertionError("Android did not extract the full TokenEconomizer paper");
+                    result.putInt("characters", text.length());
+                    result.putString("result", "PASS");
+                    finish(-1, result);
+                    return;
+                }
+                byte[] input;
+                android.graphics.pdf.PdfDocument pdf = new android.graphics.pdf.PdfDocument();
+                try (java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+                    for (int i = 1; i <= 6; i++) {
+                        var page = pdf.startPage(new android.graphics.pdf.PdfDocument.PageInfo.Builder(500, 700, i).create());
+                        var ink = new android.graphics.Paint();
+                        ink.setTextSize(24);
+                        if (i > 2) {
+                            var bitmap = android.graphics.Bitmap.createBitmap(500, 100, android.graphics.Bitmap.Config.ARGB_8888);
+                            bitmap.eraseColor(android.graphics.Color.WHITE);
+                            new android.graphics.Canvas(bitmap).drawText("Scanned orchard number " + i, 30, 55, ink);
+                            page.getCanvas().drawBitmap(bitmap, 0, 0, null);
+                        } else page.getCanvas().drawText("Page " + i + " text extraction check", 30, 55, ink);
+                        pdf.finishPage(page);
+                    }
+                    pdf.writeTo(out);
+                    input = out.toByteArray();
+                } finally { pdf.close(); }
+                String text = PdfCapture.read(context, input);
+                if (!text.contains("Page 1 text extraction check") || !text.contains("Page 2 text extraction check"))
+                    throw new AssertionError("The isolated PDF renderer did not return both pages");
+                for (int i = 3; i <= 6; i++) {
+                    if (!text.contains("### Page " + i + " (OCR)") || !text.contains("Scanned orchard number " + i))
+                        throw new AssertionError("Missing scanned page " + i + ": " + text);
+                }
             } else if ("true".equals(arguments.getString("recover"))) {
                 int count = Ingest.retryAll(context);
                 long deadline = System.currentTimeMillis() + 15 * 60000L;
@@ -43,7 +80,7 @@ public class ReelTest extends Instrumentation {
                 String url = arguments.getString("url", "");
                 if (Instagram.shortcode(url).isEmpty()) throw new IllegalArgumentException("Supply -e url with a public Instagram post");
                 boolean watch = "true".equals(arguments.getString("watch"));
-                Fetch.Result page = Fetch.page(url, Model.key(context), watch);
+                Fetch.Result page = Fetch.page(context, url, Model.key(context), watch);
                 if (watch) page.text = Visuals.read(context, Model.key(context), url, page);
                 result.putString("title", page.title);
                 result.putString("problem", page.problem);

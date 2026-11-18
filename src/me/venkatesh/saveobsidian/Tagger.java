@@ -32,10 +32,16 @@ final class Tagger {
         deadline.set(android.os.SystemClock.elapsedRealtime() + 7 * 60_000L);
         String problem = "";
         try {
+            if (Ingest.ready(c) && !c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty())
+                Ingest.runPdfAttachments(c, key);
             DirectCapture.run(c, key);
-            if (key.isEmpty() || c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
-            // Each stage stands alone: a tagging failure must not stop ingest, and a dead network in one must not hide what another could still do.
-            String[] stages = {"sweep", "tag", "file", "transcribe", "describe", "cards", "backfill", "embed"};
+            if (c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
+            String[] stages;
+            if (!key.isEmpty()) stages = new String[]{"sweep", "tag", "file", "transcribe", "describe", "cards", "backfill", "embed"};
+            else {
+                if (Ingest.ready(c)) Ingest.run(c, key);
+                return;
+            }
             for (String stage : stages) {
                 if (halt()) break;
                 long stageBegan = System.currentTimeMillis();
@@ -73,14 +79,14 @@ final class Tagger {
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
             for (int i = all.size() - 1; i >= 0 && next == null; i--) {
                 InboxFile.Entry e = all.get(i);
-                boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty() && !Ingest.ready(c); // a three-word note needs no summary; with processing on, links are tagged by the ingest call itself
+                boolean worth = (e.text ? e.body.length() >= IngestText.MIN_NOTE : !e.url.isEmpty()) && !Ingest.ready(c); // a three-word note needs no summary; with processing on, links are tagged by the ingest call itself
                 if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title) || stale(c, e)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
             }
             if (next == null) return;
             String pageUrl = next.url;
             String[] result;
             try (Metrics.Operation metrics = Tracking.capture(c, next, "enrichment")) {
-                result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
+                result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(c, key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
                 metrics.outcome("enriched");
             }
             catch (Exception failed) {
@@ -109,7 +115,7 @@ final class Tagger {
         }
     }
 
-    static String notesKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.url + "|" + (e.text ? e.body : ""))); }
+    static String notesKey(InboxFile.Entry e) { return Long.toHexString(Index.key(e.time + "|" + e.sourceId() + "|" + (e.text ? e.body : ""))); }
     private static String guessType(String url) {
         String host = Feed.host(url);
         if (!Transcript.videoId(url).isEmpty() || host.equals("vimeo.com")) return "video";
@@ -143,7 +149,7 @@ final class Tagger {
             if (e.text || e.url.isEmpty() || e.type.isEmpty() || Content.has(c, e.url) || tried.getBoolean(mark, false)) continue;
             fetched++;
             try {
-                String page = Fetch.content(e.url, "", false);
+                String page = Fetch.content(c, e.url, "", false);
                 if (!page.isEmpty()) Content.save(c, e.url, page);
                 tried.edit().putBoolean(mark, true).apply(); // answered (even with nothing usable): do not ask again. A network error is retried next run.
             } catch (Exception offline) { }
@@ -191,11 +197,13 @@ final class Tagger {
     /** Opt-in: photos and PDFs in the vault get a type, tags and summary so they can be found. */
     private static void describe(Context c, String key) throws Exception {
         if (!c.getSharedPreferences("capture", 0).getBoolean("describe", false) || !Attach.ready(c)) return;
+        boolean ingesting = Ingest.ready(c);
         Set<String> skipped = new HashSet<>();
         for (int calls = 0; calls < 20 && !halt(); ) {
             String destination = c.getSharedPreferences("capture", 0).getString("inbox", "");
             InboxFile.Entry next = null;
             for (InboxFile.Entry e : InboxFile.parse(CaptureService.readText(c))) {
+                if (ingesting && IngestText.eligible(e)) continue;
                 String ext = Attach.extension(e.file);
                 if (!e.file.isEmpty() && e.type.isEmpty() && !skipped.contains(e.raw) && (ext.equals("pdf") || Enrich.IMAGES.contains(ext) || Enrich.VIDEOS.contains(ext))) next = e;
             }
@@ -207,9 +215,19 @@ final class Tagger {
             boolean video = Enrich.VIDEOS.contains(Attach.extension(next.file));
             String[] result;
             try {
-                byte[] data = video ? Attach.read(c, uri, 24 * 1024 * 1024) : pdf ? Attach.read(c, uri, 10 * 1024 * 1024) : Attach.jpeg(c, uri, 1024);
-                if (data == null) continue;
-                try (Metrics.Operation metrics = Tracking.capture(c, next, "vision")) { result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, pdf, data); metrics.outcome("described"); }
+                try (Metrics.Operation metrics = Tracking.capture(c, next, "vision")) {
+                    if (pdf) {
+                        String text;
+                        try { text = PdfCapture.read(c, uri); }
+                        catch (java.io.IOException unreadable) { continue; }
+                        result = Model.describePdfText(key, text);
+                    } else {
+                        byte[] data = video ? Attach.read(c, uri, 24 * 1024 * 1024) : Attach.jpeg(c, uri, 1024);
+                        if (data == null) continue;
+                        result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, data);
+                    }
+                    metrics.outcome("described");
+                }
                 calls++;
             } catch (Model.Rejected | java.io.FileNotFoundException | SecurityException refused) { continue; } // this file only; the rest still run
             if (result == null) continue;

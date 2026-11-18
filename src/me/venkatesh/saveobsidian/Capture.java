@@ -38,6 +38,20 @@ public final class Capture {
         return value;
     }
 
+    private static final Pattern ARXIV_PAPER = Pattern.compile(
+        "^/(?:abs|pdf|html)/((?:\\d{4}\\.\\d{4,5}|[a-zA-Z.-]+/\\d{7})(?:v\\d+)?)(?:\\.pdf)?/?$");
+
+    /** Full-text URL for an arXiv paper link, preserving the requested paper version. */
+    public static String arxivPdfUrl(String url) {
+        URI uri;
+        try { uri = URI.create(url); } catch (IllegalArgumentException bad) { return ""; }
+        String host = uri.getHost(), scheme = uri.getScheme();
+        if (!("arxiv.org".equalsIgnoreCase(host) || "www.arxiv.org".equalsIgnoreCase(host) || "export.arxiv.org".equalsIgnoreCase(host))
+            || uri.getUserInfo() != null || !("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))) return "";
+        Matcher paper = ARXIV_PAPER.matcher(uri.getPath());
+        return paper.matches() ? "https://arxiv.org/pdf/" + paper.group(1) : "";
+    }
+
     /** Drops tracking parameters, keeps everything else. */
     /** What makes a link the same link: tracking parameters and the #fragment dropped, the rest of the query kept (a YouTube video is /watch?v=ID, and nothing else tells two videos apart). */
     public static String identity(String url) {

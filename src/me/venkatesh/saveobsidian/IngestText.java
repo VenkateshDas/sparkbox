@@ -18,6 +18,68 @@ public final class IngestText {
         return CATEGORIES[0];
     }
 
+    /** A typed or spoken note shorter than this has nothing worth a Source note. */
+    static final int MIN_NOTE = 40;
+
+    public static boolean eligible(InboxFile.Entry entry) {
+        return entry.text ? entry.body.trim().length() >= MIN_NOTE : entry.file.isEmpty() ? !entry.url.isEmpty() : !attachmentKind(entry.file).isEmpty();
+    }
+
+    static String attachmentKind(String name) {
+        int dot = name.lastIndexOf('.');
+        String ext = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        if (Enrich.IMAGES.contains(ext)) return "image";
+        if (Enrich.VIDEOS.contains(ext)) return "video";
+        switch (ext) {
+            case "pdf": return "pdf";
+            case "txt": case "md": case "csv": case "tsv": case "json": case "log": return "text";
+            default: return "";
+        }
+    }
+
+    static boolean knownPdf(InboxFile.Entry entry) {
+        if (!entry.file.isEmpty()) return "pdf".equals(attachmentKind(entry.file));
+        return !Capture.arxivPdfUrl(entry.url).isEmpty() || Capture.identity(entry.url).split("\\?", 2)[0].toLowerCase(java.util.Locale.ROOT).endsWith(".pdf");
+    }
+
+    static final int PDF_BYTES = 40 * 1024 * 1024;
+    static final String PDF_VISUAL_HEADING = "\n\n### Figure and scan notes (on-device AI)\n";
+
+    /** Keep room for figure evidence even when the paper text exceeds the model's prompt budget. */
+    public static String pdfPrompt(String text, int max) {
+        if (text.length() <= max) return text;
+        int visualAt = text.lastIndexOf(PDF_VISUAL_HEADING);
+        if (visualAt < 0) return text.substring(0, max);
+        String visual = text.substring(visualAt, Math.min(text.length(), visualAt + max / 3));
+        return text.substring(0, Math.min(visualAt, max - visual.length())) + visual;
+    }
+
+    /** Sample the beginning, middle and end for a local summary, with a separate budget for visual evidence. */
+    public static String pdfSummaryPrompt(String text, int max) {
+        if (text.length() <= max) return text;
+        int start = text.lastIndexOf(PDF_VISUAL_HEADING);
+        String visual = start < 0 ? "" : text.substring(start, Math.min(text.length(), start + max / 4));
+        String pages = start < 0 ? text : text.substring(0, start);
+        String gap = "\n\n[Later excerpt]\n";
+        int budget = max - visual.length() - 2 * gap.length();
+        if (budget < 100 || pages.length() <= budget) return pdfPrompt(text, max);
+        int middle = budget / 4, tail = budget / 4, head = budget - middle - tail;
+        int halfway = (pages.length() - middle) / 2;
+        return pages.substring(0, head) + gap + pages.substring(halfway, halfway + middle)
+            + gap + pages.substring(pages.length() - tail) + visual;
+    }
+
+    static String[] pdfTags(org.json.JSONObject plan) { return mediaTags("document", plan); }
+
+    static String[] mediaTags(String kind, org.json.JSONObject plan) {
+        if (plan == null) return null;
+        java.util.List<String> tags = new java.util.ArrayList<>();
+        org.json.JSONArray values = plan.optJSONArray("tags");
+        for (int i = 0; values != null && i < values.length(); i++) tags.add(values.optString(i));
+        String[] clean = Enrich.clean(kind, tags, plan.optString("tldr"));
+        return new String[]{clean[0], clean[1], clean[2], Capture.clean(plan.optString("title"))};
+    }
+
     /** A title usable as a file name and as a [[link]]: none of \ / : * ? " < > | # [ ] ^. */
     public static String safe(String s) {
         String t = s == null ? "" : s.replaceAll("[\\\\/:*?\"<>|#\\[\\]^]", " ").replaceAll("\\s+", " ").trim();

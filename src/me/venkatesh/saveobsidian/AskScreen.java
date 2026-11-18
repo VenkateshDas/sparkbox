@@ -182,7 +182,7 @@ final class AskScreen extends Screen {
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         int n = 0;
         if (snap != null) for (Vault.Note note : snap.graph.notes) if (!note.catalog && !note.path.endsWith("/My cards.md")) n++;
-        view.header(n == 0 ? "Your vault is not loaded yet" : String.format(java.util.Locale.US, "%,d notes in your vault", n), !online());
+        view.header(n == 0 ? "Your vault is not loaded yet" : String.format(java.util.Locale.US, n == 1 ? "%,d note in your vault" : "%,d notes in your vault", n), !online());
         refresh();
         if (pendingQuestion != null) { String q = pendingQuestion; pendingQuestion = null; ask(q); }
     }
@@ -367,7 +367,7 @@ final class AskScreen extends Screen {
             hubs.sort((a, b) -> snap.graph.in(b).size() - snap.graph.in(a).size());
             List<String> tries = new ArrayList<>();
             for (Vault.Note n : hubs.subList(0, Math.min(3, hubs.size()))) tries.add("What do my notes say about " + n.title + "?");
-            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. Every chat keeps working when you leave the app. Choose action approvals in the + menu; Full access runs without approval prompts. Start a message with /research for a thorough, multi-source investigation. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
+            items.add(new Intro("Ask a question to find answers with sources. OpenRouter receives your question and the notes Scout reads.", tries));
         }
     }
 

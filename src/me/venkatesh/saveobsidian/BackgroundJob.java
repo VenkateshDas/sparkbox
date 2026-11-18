@@ -22,7 +22,7 @@ public class BackgroundJob extends JobService {
     }
 
     static void schedule(Context c) {
-        if (Model.key(c).isEmpty() && CaptureService.pending(c).length == 0) return;
+        if (Model.key(c).isEmpty() && CaptureService.pending(c).length == 0 && !Ingest.ready(c)) return;
         synchronized (LOCK) {
             if (active != null) { requested = true; return; }
             JobScheduler scheduler = c.getSystemService(JobScheduler.class);

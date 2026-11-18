@@ -6,7 +6,7 @@ import org.json.JSONObject;
 /** Correlates private capture UUIDs with Markdown entries without storing their contents. */
 final class Tracking {
     private Tracking() { }
-    private static String entryKey(InboxFile.Entry e) { return Metrics.id(e.time + "|" + e.url + "|" + (e.text ? e.body : "")); }
+    private static String entryKey(InboxFile.Entry e) { return Metrics.id(e.time + "|" + e.sourceId() + "|" + (e.text ? e.body : "")); }
     static String capture(Context c, InboxFile.Entry e) {
         return c.getSharedPreferences("metrics_capture_ids", 0).getString(entryKey(e), "legacy-" + entryKey(e));
     }

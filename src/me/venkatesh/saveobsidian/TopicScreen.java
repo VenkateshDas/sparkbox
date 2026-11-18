@@ -126,7 +126,7 @@ final class TopicScreen extends Screen {
         b.add(new Primary("Edit Markdown", () -> host.push(new NoteEditorScreen(n.path))));
         final Study.Scope study = Study.topicOf(g, n.path, n.title);
         int k = study == null ? 0 : Study.filter(CardStore.all(ui.c), study, System.currentTimeMillis()).size();
-        if (k > 0) b.add(new Primary("Study " + k + (k == 1 ? " card" : " cards") + " in Spark", () -> host.study(study)));
+        if (k > 0) b.add(new Primary("Review " + k + (k == 1 ? " card" : " cards"), () -> host.study(study)));
         b.add(new Primary("Ask about this", () -> host.askAbout(n.path, n.title)));
         page.publish(b);
     }

@@ -78,7 +78,7 @@ final class UnitScreen extends Screen {
             if (summary.isEmpty()) summary = n.description;
             if (!summary.isEmpty()) b.add(new Panel("Summary", Vault.plain(summary), Origin.AI));
             if (!claims.isEmpty()) {
-                b.add(new Heading("Key notes", Origin.AI, null));
+                b.add(new Heading("Key claims", Origin.AI, null));
                 for (String c : claims) b.add(new Bullet(Vault.plain(c).replaceAll("\\s*\\((high|medium|low)\\)\\s*$", ""), c.toLowerCase(java.util.Locale.ROOT).endsWith("(low)")));
             }
         } else if (!n.description.isEmpty()) b.add(new Panel("Description", n.description, Origin.SOURCE));
@@ -99,13 +99,14 @@ final class UnitScreen extends Screen {
         int cardCount = 0;
         for (Cards.Card k : CardStore.all(ui.c)) if (k.path.equals(n.path)) cardCount++;
         List<Nav> more = new ArrayList<>();
+        more.add(new Nav("Edit Markdown", "", "", false, () -> host.push(new NoteEditorScreen(n.path))));
         more.add(new Nav("Cards", "", cardCount == 0 ? "None yet" : cardCount + (cardCount == 1 ? " card" : " cards"), false, () -> host.push(new CardsScreen(n.path))));
         more.add(new Nav(n.words > 0 ? "Full text" : "Open note", n.words > 0 ? "From the source" : "", n.words > 0 ? n.words + " words" : "", false,
             () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.OPEN, n.path))));
         b.add(new Group(more));
-        if (cardCount > 0) b.add(new Primary("Study " + cardCount + (cardCount == 1 ? " card" : " cards") + " in Spark", () -> host.study(Study.Scope.note(n.path, n.title))));
+        if (cardCount > 0) b.add(new Primary("Review " + cardCount + (cardCount == 1 ? " card" : " cards"), () -> host.study(Study.Scope.note(n.path, n.title))));
         b.add(new Primary("Ask about this", () -> host.askAbout(n.path, n.title)));
-        b.add(new Danger("Move to trash", () -> Edits.confirmDelete(host, n.path, n.title, () -> host.onBackPressed())));
+        b.add(new Danger("Move to trash", () -> Edits.confirmDelete(host, n.path, n.title, () -> host.finishDetail(this))));
         page.publish(b);
     }
 

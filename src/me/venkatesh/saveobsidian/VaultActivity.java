@@ -40,7 +40,7 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
     private Ui ui;
     private final PageState page = new PageState();
     private List<Block> b;
-    private VaultStore.Snap snap;
+    private VaultStore.Snap snap, listed;
     private String problem = "";
     private boolean scanning;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -61,7 +61,10 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
         ui = new Ui(this);
         android.widget.FrameLayout frame = new android.widget.FrameLayout(this); // system bar padding goes on a plain View; a ComposeView ignores it
         frame.setBackgroundColor(ui.bg);
-        frame.addView(PageView.create(this, ui, "Knowledge", page, this::back));
+        frame.addView(PageView.vault(this, ui, page, this::back, path -> {
+            if (stack.get(stack.size() - 1)[0].equals("note")) stack.remove(stack.size() - 1);
+            go("note", path);
+        }));
         setContentView(frame);
         Ui.insets(frame);
         getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) { @Override public void handleOnBackPressed() { back(); } });
@@ -155,8 +158,18 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
             case "folder": folder(at[1]); break;
             case "note": note(at[1]); break;
             case "orphans": orphans(); break;
+            case "inventory": inventory(); break;
             default: home();
         }
+        if (snap != listed) {
+            List<Vault.Note> notes = new ArrayList<>();
+            if (snap != null) for (Vault.Note n : snap.graph.notes) if (!n.catalog) notes.add(n);
+            notes.sort((x, y) -> x.title.compareToIgnoreCase(y.title));
+            page.setAvailableNotes(notes);
+            listed = snap;
+        }
+        page.setRoute(android.text.TextUtils.join("/", at));
+        page.setSelectedPath(at[0].equals("note") ? at[1] : "");
         page.publish(title, b);
     }
 
@@ -193,6 +206,35 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
 
     private static String count(int n) { return String.format(Locale.US, "%,d", n); }
 
+    private void inventory() {
+        title = "Vault details";
+        int sources = 0, topics = 0, people = 0, entities = 0, cards = 0;
+        if (snap != null) for (Vault.Note n : snap.graph.notes) {
+            if (n.catalog) continue;
+            if (Layout.inSources(n.path)) sources++;
+            else if (n.path.startsWith("Knowledge/Topics/")) topics++;
+            else if (n.path.startsWith("Knowledge/People/")) people++;
+            else if (n.path.startsWith("Knowledge/Entities/")) entities++;
+            if (n.cardsText != null && !n.cardsText.isEmpty()) cards++;
+        }
+
+        b.add(new Title(VaultStore.label(this)));
+        b.add(new Heading("Knowledge base"));
+        List<Nav> base = new ArrayList<>();
+        base.add(new Nav("Notes", "", snap == null ? "—" : String.format(java.util.Locale.US, "%,d", snap.graph.notes.size())));
+        base.add(new Nav("Sources", "", String.valueOf(sources)));
+        base.add(new Nav("Topics", "", String.valueOf(topics)));
+        base.add(new Nav("People", "", String.valueOf(people)));
+        base.add(new Nav("Entities", "", String.valueOf(entities)));
+        base.add(new Nav("Notes with recall cards", "", String.valueOf(cards)));
+        b.add(new Group(base));
+        b.add(new Heading("Activity"));
+        List<Nav> use = new ArrayList<>();
+        for (String[] f : Usage.FEATURES) use.add(new Nav(f[1], "", String.valueOf(getSharedPreferences("usage", 0).getInt(f[0], 0))));
+        b.add(new Group(use));
+        b.add(new Body("Counts stay on this phone.", true, false));
+    }
+
     private void home() {
         b.add(new Body(statusLine(), true, false));
         b.add(new Field("", query, 1, new ArrayList<>(), t -> {
@@ -216,6 +258,7 @@ public class VaultActivity extends androidx.activity.ComponentActivity {
             list(hits, true);
             return;
         }
+        b.add(new Heading("Vault details", Origin.NONE, () -> go("inventory")));
         b.add(new Heading("Folders"));
         Map<String, Integer> roots = new TreeMap<>();
         for (Vault.Note n : snap.graph.notes) { String top = n.path.substring(0, n.path.indexOf('/')); Integer o = roots.get(top); roots.put(top, o == null ? 1 : o + 1); }

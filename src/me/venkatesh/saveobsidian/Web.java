@@ -26,6 +26,10 @@ final class Web {
         byte[] body = new byte[0];
         boolean html() { String t = type.toLowerCase(Locale.ROOT); return t.contains("html") || t.contains("xml") || t.isEmpty(); }
         boolean text() { return type.toLowerCase(Locale.ROOT).startsWith("text/plain"); }
+        boolean pdf() {
+            return type.split(";", 2)[0].trim().equalsIgnoreCase("application/pdf")
+                || body.length >= 5 && body[0] == '%' && body[1] == 'P' && body[2] == 'D' && body[3] == 'F' && body[4] == '-';
+        }
         String string() {
             Charset cs = StandardCharsets.UTF_8;
             try { if (!charset.isEmpty()) cs = Charset.forName(charset); } catch (RuntimeException ignored) { }
@@ -79,7 +83,7 @@ final class Web {
 
     private static Reply once(String address, String agent, int maxBytes) throws IOException {
         URL current = new URL(address);
-        long deadline = System.currentTimeMillis() + (maxBytes > MAX_BYTES ? 90000 : 30000);
+        long deadline = System.currentTimeMillis() + (maxBytes > MAX_BYTES ? 240000 : 30000);
         for (int hop = 0; hop <= 6; hop++) {
             boolean secure = "https".equalsIgnoreCase(current.getProtocol());
             if ((!secure && !"http".equalsIgnoreCase(current.getProtocol())) || current.getUserInfo() != null) throw new IOException("Not a public web address");

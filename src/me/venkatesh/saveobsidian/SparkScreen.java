@@ -56,7 +56,7 @@ final class SparkScreen extends Screen {
     private final SparkActions actions = new SparkActions() {
         @Override public void reveal(String confidence) { seconds = (int) Math.max(1, (System.currentTimeMillis() - shownAt) / 1000); conf = confidence; }
         @Override public void park() { if (card != null) { CardStore.park(ui.c, card, System.currentTimeMillis() + 24L * 3600 * 1000); next(); } }
-        @Override public void flag() { if (card != null) { CardStore.flag(ui.c, card, true); Toast.makeText(ui.c, "Flagged. It will not come back.", Toast.LENGTH_SHORT).show(); next(); } }
+        @Override public void flag() { if (card != null) { CardStore.flag(ui.c, card, true); Toast.makeText(ui.c, "Card paused. Unflag it in Cards to review it again.", Toast.LENGTH_SHORT).show(); next(); } }
         @Override public void source() { if (note != null) host.openNote(note.path); }
         @Override public void explain() { if (note != null) host.askAbout(note.path, note.title); }
         @Override public void edit() { if (card != null) CardSheet.show(host, ui, card, null, SparkScreen.this::draw); }

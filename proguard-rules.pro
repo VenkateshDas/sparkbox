@@ -2,3 +2,4 @@
 -dontwarn com.google.re2j.**
 # org.json comes from the platform
 -dontwarn org.json.**
+

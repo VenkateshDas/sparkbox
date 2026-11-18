@@ -69,6 +69,10 @@ public final class Enrich {
             if (!slug.isEmpty() && slug.length() <= 30 && !kept.contains(slug) && kept.size() < 5) kept.add(slug);
         }
         String line = Capture.clean(tldr);
-        return new String[]{TYPES.contains(kind) ? kind : "other", String.join(", ", kept), line.length() > 200 ? line.substring(0, line.lastIndexOf(' ', 199)) + "…" : line};
+        if (line.length() > 200) {
+            int space = line.lastIndexOf(' ', 199);
+            line = line.substring(0, space > 0 ? space : 199) + "…";
+        }
+        return new String[]{TYPES.contains(kind) ? kind : "other", String.join(", ", kept), line};
     }
 }

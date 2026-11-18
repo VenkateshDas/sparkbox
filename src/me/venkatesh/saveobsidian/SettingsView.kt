@@ -2,6 +2,9 @@ package me.venkatesh.saveobsidian
 
 import android.content.Context
 import android.view.View
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -56,6 +59,11 @@ object SettingsView {
 
 @Composable
 private fun Settings(state: SettingsState, back: Runnable) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val term = query.trim()
+    val groups = state.groups.filter { group ->
+        group.title.contains(term, ignoreCase = true) || group.rows.any { it.title.contains(term, ignoreCase = true) || it.value.contains(term, ignoreCase = true) }
+    }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -64,7 +72,11 @@ private fun Settings(state: SettingsState, back: Runnable) {
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.groups, key = { it.title }) { Group(it) }
+                item {
+                    OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Find a setting") }, modifier = Modifier.fillMaxWidth())
+                }
+                if (groups.isEmpty() && term.isNotEmpty()) item { Text("No matching settings") }
+                items(groups, key = { it.title }) { Group(it) }
             }
         }
     }
@@ -97,17 +109,17 @@ private fun Line(r: SettingRow) {
     val base = Modifier.fillMaxWidth().heightIn(min = 52.dp)
     val m = when {
         click == null -> base
-        r.toggle != null -> base.clickable(role = Role.Switch) { click.run() }
+        r.toggle != null -> base.toggleable(value = r.toggle, role = Role.Switch) { click.run() }
         else -> base.clickable(role = Role.Button) { click.run() }
     }
     Row(m.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        val stacked = r.value.length > 18 // a path or model id reads better under the label
+        val stacked = r.value.length > 18 || (r.value.isNotEmpty() && androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) // a path or model id reads better under the label
         Column(Modifier.weight(1f)) {
             Text(r.title, style = MaterialTheme.typography.bodyLarge)
             if (stacked) Text(r.value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         when {
-            r.toggle != null -> Switch(checked = r.toggle, onCheckedChange = { click?.run() })
+            r.toggle != null -> Switch(checked = r.toggle, onCheckedChange = null)
             !stacked && r.value.isNotEmpty() -> Text(r.value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
         }

@@ -112,6 +112,7 @@ final class ScoutUsage {
     }
 
     static JSONObject get(String path, String key) throws Exception {
+        OpenRouter.requireRemote();
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setConnectTimeout(5000); connection.setReadTimeout(5000);
         if (!key.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + key);

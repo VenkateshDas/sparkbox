@@ -80,8 +80,7 @@ final class FeedScreen extends Screen {
             view.toTop();
         }
         @Override public void menu(int which) {
-            if (which == 0) host.push(new ProfileScreen());
-            else if (which == 1) host.push(new SettingsScreen());
+            if (which == 1) host.push(new SettingsScreen());
             else if (which == 3) host.push(new DashboardScreen());
             else host.startActivity(new Intent(host, VaultActivity.class));
         }
@@ -141,7 +140,7 @@ final class FeedScreen extends Screen {
             });
         }
         @Override public void emptyAction(boolean vaultReady) {
-            if (vaultReady) scan(); else host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true));
+            if (vaultReady) captureMenu(); else host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true));
         }
         @Override public View thumb(Feed.Item it) { return Thumb.view(ui.c, ui, it.title, it.url, 0, 160); }
     };
@@ -334,13 +333,13 @@ final class FeedScreen extends Screen {
         boolean key = Model.key(ui.c).length() > 0;
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (Feed.Item it : shown) {
-            String k = it.entry != null ? "c:" + it.entry.time + "|" + it.entry.url + "|" + it.entry.title : it.kind + ":" + it.path + ":" + it.title;
+            String k = it.entry != null ? "c:" + it.entry.time + "|" + it.entry.sourceId() + "|" + it.entry.title : it.kind + ":" + it.path + ":" + it.title;
             if (!seen.add(k)) continue; // keys must be unique
             int stage = it.entry == null ? -1 : Ingest.stage(ui.c, it.entry);
             boolean queued = it.entry != null && stage < 0 && Ingest.queued(ui.c, it.entry);
             out.add(new ItemRow(k, it, stage, queued, stage >= 0 ? Ingest.stageSeconds(ui.c, it.entry) : 0,
                 it.entry == null ? "" : Ingest.problem(ui.c, it.entry), it.kept,
-                it.entry != null && !it.entry.url.isEmpty() && it.entry.file.isEmpty() && key,
+                it.entry != null && Ingest.canRequest(ui.c, it.entry, key),
                 it.entry == null && !it.path.isEmpty()));
         }
         if (shown.isEmpty() && (need.isEmpty() || !all)) out.add(new EmptyRow(VaultStore.ready(ui.c)));

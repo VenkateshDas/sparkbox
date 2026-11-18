@@ -25,6 +25,7 @@
             <action android:name="android.intent.action.BOOT_COMPLETED" />
             <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
         </intent-filter></receiver>
+        <service android:name=".PdfRenderService" android:isolatedProcess="true" android:exported="false" />
         <service android:name=".CaptureService" android:exported="false" android:foregroundServiceType="shortService" />
         <activity android:name=".ShareActivity" android:taskAffinity="" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:exported="true" android:excludeFromRecents="true">
             <intent-filter>

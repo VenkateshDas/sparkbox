@@ -47,6 +47,7 @@ public class ShareActivity extends Activity {
         for (android.net.Uri uri : uris.subList(0, Math.min(uris.size(), 10))) {
             try {
                 String original = Attach.displayName(this, uri), ext = Attach.extension(original), id = java.util.UUID.randomUUID().toString().substring(0, 4);
+                if (!"pdf".equals(ext) && "application/pdf".equalsIgnoreCase(getContentResolver().getType(uri))) { original += ".pdf"; ext = "pdf"; }
                 String mime = Attach.mime(original), time = Capture.timestamp();
                 java.io.File copy = Attach.stash(this, uri);
                 try {

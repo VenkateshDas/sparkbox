@@ -10,6 +10,9 @@ import org.json.JSONObject;
 
 /** The streamed OpenRouter chat completion (SSE), pure Java so the JVM checks and scripts/live-agent.sh can use it. Model.stream delegates here. */
 public final class OpenRouter {
+    static void requireRemote() throws IOException {
+    }
+
     private OpenRouter() { }
 
     /** Complete response boundary, but invalid arguments: no call has been admitted or executed. */
@@ -45,6 +48,7 @@ public final class OpenRouter {
 
     private static JSONObject streamRaw(String key, JSONObject request, java.util.function.Consumer<String> live, Cancel cancel,
                                        java.util.function.Consumer<JSONObject> metadata) throws Exception {
+        requireRemote();
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/chat/completions").openConnection();
         cancel.attach(connection);
         connection.setRequestMethod("POST");

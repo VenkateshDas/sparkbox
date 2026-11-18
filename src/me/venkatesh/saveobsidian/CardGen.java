@@ -171,7 +171,7 @@ final class CardGen {
                     reply = call(c, key, input, false);
                 }
             }
-            catch (java.io.IOException e) { if (String.valueOf(e.getMessage()).startsWith("Smart tags paused")) throw new Provider(e.getMessage().replace("Smart tags paused: ", "")); throw e; }
+            catch (java.io.IOException e) { if (e instanceof Net.Deferred) throw new Provider(e.getMessage()); if (String.valueOf(e.getMessage()).startsWith("Smart tags paused")) throw new Provider(e.getMessage().replace("Smart tags paused: ", "")); throw e; }
             int from = reply.indexOf('{'), to = reply.lastIndexOf('}');
             if (from < 0 || to <= from) throw new java.io.IOException("The model did not return JSON: " + (reply.length() > 160 ? reply.substring(0, 160) : reply));
             JSONObject o = new JSONObject(reply.substring(from, to + 1));

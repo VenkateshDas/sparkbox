@@ -1,5 +1,6 @@
 package me.venkatesh.saveobsidian;
 
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.view.Gravity;
@@ -30,6 +31,7 @@ final class SettingsScreen extends Screen {
 
     @Override void onShow() { visible = true; draw(); }
     @Override void onHide() { visible = false; }
+
 
     private java.util.List<SettingRow> group(String title) {
         rows = new java.util.ArrayList<>();
@@ -62,11 +64,11 @@ final class SettingsScreen extends Screen {
         android.appwidget.AppWidgetManager widgets = android.appwidget.AppWidgetManager.getInstance(ui.c);
         if (widgets.isRequestPinAppWidgetSupported()) capture.add(row("Home screen widget", "", () -> widgets.requestPinAppWidget(new android.content.ComponentName(ui.c, InboxWidget.class), null, null)));
 
-        java.util.List<SettingRow> ingest = group("Ingest");
+        java.util.List<SettingRow> ingest = group("Processing");
         boolean canWrite = VaultWrite.writable(ui.c);
         ingest.add(toggle("Process captures into notes", Ingest.on(ui.c), () -> {
             if (!Ingest.on(ui.c) && !canWrite) { android.widget.Toast.makeText(ui.c, "Allow write access to the vault first", android.widget.Toast.LENGTH_SHORT).show(); return; }
-            if (!Ingest.on(ui.c) && Model.key(ui.c).isEmpty()) { android.widget.Toast.makeText(ui.c, "Add your OpenRouter key first", android.widget.Toast.LENGTH_SHORT).show(); return; }
+            if (!Ingest.on(ui.c) && Model.key(ui.c).isEmpty()) { android.widget.Toast.makeText(ui.c, "Add an OpenRouter key first", android.widget.Toast.LENGTH_SHORT).show(); return; }
             prefs().edit().putBoolean("ingest", !Ingest.on(ui.c)).apply(); BackgroundJob.schedule(ui.c); draw();
         }));
         ingest.add(row("Vault write access", canWrite ? "Granted" : "Not granted", canWrite ? null : () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
@@ -94,7 +96,7 @@ final class SettingsScreen extends Screen {
         if (keySaved) {
             boolean describe = prefs().getBoolean("describe", false);
             ai.add(toggle("Describe photos, PDFs and videos", describe, () -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
-            ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
+            if (keySaved) ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
         }
 
         java.util.List<SettingRow> tools = group("Scout tools (MCP servers)");
@@ -106,7 +108,7 @@ final class SettingsScreen extends Screen {
         }
         tools.add(row("Add a server", "Remote MCP over HTTPS. Save and test the connection.", () -> addServerDialog()));
 
-        java.util.List<SettingRow> spark = group("Spark");
+        java.util.List<SettingRow> spark = group("Review");
         int[] p = snap == null ? new int[]{0, 0} : CardGen.progress(snap);
         String state = CardGen.on(ui.c) ? (CardGen.running() ? "Making cards " + p[0] + " of " + p[1] : "Paused at " + p[0] + " of " + p[1]) : p[0] > 0 && p[0] >= p[1] ? "All notes done" : "Not started";
         spark.add(row("Make cards for existing notes", state, () -> host.push(new CardGenScreen())));
@@ -143,6 +145,10 @@ final class SettingsScreen extends Screen {
 
         java.util.List<SettingRow> more = group("More");
         more.add(row("Browse vault", "", () -> host.startActivity(new Intent(host, VaultActivity.class))));
+        try {
+            var build = ui.c.getPackageManager().getPackageInfo(ui.c.getPackageName(), 0);
+            more.add(row("Sparkbox version", build.versionName + " (" + build.versionCode + ")", null));
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) { }
         shown.publish(groups);
     }
 

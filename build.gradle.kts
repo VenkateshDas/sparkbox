@@ -15,8 +15,8 @@ android {
         applicationId = "me.venkatesh.saveobsidian"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.10.0"
+        versionCode = 18
+        versionName = "1.11.0"
         testInstrumentationRunner = "me.venkatesh.saveobsidian.ReelTest"
     }
     sourceSets["main"].apply {
@@ -52,6 +52,7 @@ android {
 }
 
 dependencies {
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation(libs.jsoup)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

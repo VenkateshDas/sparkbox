@@ -36,23 +36,27 @@ final class CaptureScreen extends Screen {
 
     private void draw() {
         java.util.List<Block> b = new java.util.ArrayList<>();
-        if (!entry.text) b.add(new Picture(180, () -> Thumb.view(ui.c, ui, entry, 0, 180)));
+
         b.add(new Tags(java.util.Collections.singletonList(new Tag(Feed.CAPTURED, 0)), entry.url.isEmpty() ? (entry.text ? "Note" : "File") : Ui.host(entry.url)));
         b.add(new Title(entry.shownTitle()));
-        String summary = entry.tldr.isEmpty() && entry.text ? entry.body : entry.tldr;
-        if (!summary.isEmpty()) b.add(new Panel(entry.text ? "Your note" : "Summary", summary, entry.text ? Origin.YOU : Origin.AI));
-        if (!entry.tags.isEmpty()) b.add(new Body("#" + entry.tags.replace(", ", "  #"), true, false));
-        b.add(new Body("Saved on this phone. When ingest runs it becomes a note, then it is processed into topics and cards.", true, false));
+        String waiting = entry.file.isEmpty() ? "Saved on this phone. When ingest runs it becomes a note, then it is processed into topics and cards."
+            : IngestText.eligible(entry) ? "Saved in your attachments folder. Processing creates a source note, topics and cards."
+            : "Saved in your attachments folder. This file format is saved as an attachment.";
+        b.add(new Body(waiting, true, false));
         String problem = Ingest.problem(ui.c, entry);
         if (!problem.isEmpty()) b.add(new Banner(problem, false));
         if (!Instagram.shortcode(entry.url).isEmpty() && Failures.kind(problem).equals(Failures.ACCESS))
             b.add(new Primary("Instagram access", () -> InstagramActivity.open(ui.c, entry.url)));
-        if (!entry.url.isEmpty() && entry.file.isEmpty() && !Model.key(ui.c).isEmpty())
+        if (Ingest.eligible(ui.c, entry))
             b.add(new Primary(problem.isEmpty() ? "Process now" : "Retry now", () -> {
                 Ingest.retry(ui.c, entry);
                 Toast.makeText(ui.c, "Processing in the background", Toast.LENGTH_SHORT).show();
                 host.onBackPressed();
             }));
+        if (!entry.text) b.add(new Picture(180, () -> Thumb.view(ui.c, ui, entry, 0, 180)));
+        String summary = entry.tldr.isEmpty() && entry.text ? entry.body : entry.tldr;
+        if (!summary.isEmpty()) b.add(new Panel(entry.text ? "Your note" : "Summary", summary, entry.text ? Origin.YOU : Origin.AI));
+        if (!entry.tags.isEmpty()) b.add(new Body("#" + entry.tags.replace(", ", "  #"), true, false));
         if (!entry.url.isEmpty()) {
             java.util.List<Act> acts = new java.util.ArrayList<>();
             acts.add(new Act("Open source", this::open));
@@ -108,7 +112,7 @@ final class CaptureScreen extends Screen {
                     if (!String.valueOf(stale.getMessage()).startsWith("Inbox changed. Refresh")) throw stale;
                     String fresh = CaptureService.readText(c);
                     InboxFile.Entry same = null;
-                    for (InboxFile.Entry e : InboxFile.parse(fresh)) if (e.time.equals(entry.time) && e.url.equals(entry.url) && (!e.url.isEmpty() || e.body.equals(entry.body))) {
+                    for (InboxFile.Entry e : InboxFile.parse(fresh)) if (e.time.equals(entry.time) && e.sourceId().equals(entry.sourceId()) && (!e.sourceId().isEmpty() || e.body.equals(entry.body))) {
                         if (same != null) throw stale;
                         same = e;
                     }
@@ -122,7 +126,7 @@ final class CaptureScreen extends Screen {
             final String message = problem;
             main.post(() -> {
                 busy(false);
-                if (message.isEmpty()) { Toast.makeText(c, done, Toast.LENGTH_SHORT).show(); host.onBackPressed(); }
+                if (message.isEmpty()) { Toast.makeText(c, done, Toast.LENGTH_SHORT).show(); host.finishDetail(this); }
                 else new AlertDialog.Builder(host).setTitle("Not saved").setMessage(message).setPositiveButton("OK", null).show();
             });
         }).start();
