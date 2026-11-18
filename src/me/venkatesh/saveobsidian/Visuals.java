@@ -12,6 +12,10 @@ final class Visuals {
     }
 
     static String read(Context c, String key, String source, Fetch.Result page) throws Exception {
+        try (PdfVision vision = new PdfVision(c)) { return read(c, key, source, page, vision); }
+    }
+
+    static String read(Context c, String key, String source, Fetch.Result page, PdfVision vision) throws Exception {
         JSONObject saved = Content.media(c, source);
         StringBuilder visual = new StringBuilder();
         org.json.JSONArray order = new org.json.JSONArray();
@@ -33,13 +37,19 @@ final class Visuals {
                 if (reply.code != 200) throw new IOException("Source media could not be read (HTTP " + reply.code + "). Retry or share the media file.");
                 if (media.video) {
                     if (!mime.startsWith("video/")) throw new IOException("Source did not provide the video. Share the media file.");
-                    text = Model.watch(key, reply.body, mime);
+                    if (PdfModel.local(c)) {
+                        java.io.File clip = java.io.File.createTempFile("scene-", ".mp4", c.getCacheDir());
+                        try {
+                            java.nio.file.Files.write(clip.toPath(), reply.body);
+                            text = vision.video(android.net.Uri.fromFile(clip));
+                        } finally { clip.delete(); }
+                    } else text = Model.watch(key, reply.body, mime);
                 } else {
                     if (!mime.startsWith("image/")) throw new IOException("Source did not provide an image. Share the media file.");
                     byte[] jpeg = Attach.jpeg(reply.body, 2048);
                     if (jpeg == null) throw new IOException("Source image could not be decoded. Share the image file.");
                     String context = page.title + "\n" + media.caption;
-                    text = Model.readImage(key, jpeg, context.length() > 1500 ? context.substring(0, 1500) : context);
+                    text = PdfModel.local(c) ? vision.describe(jpeg, true) : Model.readImage(key, jpeg, context.length() > 1500 ? context.substring(0, 1500) : context);
                 }
                 saved.put(id, text);
                 Content.saveMedia(c, source, saved);

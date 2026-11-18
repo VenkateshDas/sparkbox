@@ -577,6 +577,7 @@ public class CaptureTest {
         check(e.hasTag("db") && !e.hasTag("d") && e.contains("") && e.contains("SQLITE stores") && !e.contains("postgres"));
         String[] c = Enrich.clean(" ARTICLE ", Arrays.asList("#SQL Lite!", "sql-lite", "", "a", "b", "c", "d", "e"), "line one\nline two");
         check(c[0].equals("article") && c[1].equals("sql-lite, a, b, c, d") && c[2].equals("line one line two"));
+        check(Enrich.clean("note", Arrays.asList(), "測".repeat(240))[2].length() == 200);
         String longLine = Enrich.clean("article", Arrays.asList(), "word ".repeat(60))[2];
         check(longLine.length() <= 200 && longLine.endsWith("word…"));
         check(Enrich.clean("hack\n- 🔗 x", Arrays.asList(), "x")[0].equals("other"));

@@ -24,41 +24,61 @@ final class PdfCapture {
 
     static boolean supported() { return android.os.Build.VERSION.SDK_INT >= 35; }
 
-    static boolean modelReady(Context c) { return supported() && PdfModel.enabled(c) && PdfModel.file(c).isFile(); }
+    static boolean modelReady(Context c) { return supported() && PdfModel.mode(c) != PdfModel.Mode.REMOTE && PdfModel.enabled(c) && PdfModel.file(c).isFile(); }
 
     static String read(Context context, byte[] bytes, PdfVision vision) throws IOException {
-        if (!supported()) throw new IOException("Local PDF reading requires Android 15 or later");
+        return read(context, new java.io.ByteArrayInputStream(bytes), vision);
+    }
+
+    static String read(Context context, android.net.Uri uri, PdfVision vision) throws IOException {
+        try (var input = context.getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IOException("PDF unavailable");
+            return read(context, input, vision);
+        }
+    }
+
+    private static String read(Context context, java.io.InputStream input, PdfVision vision) throws IOException {
         Context app = context.getApplicationContext();
         File temp = File.createTempFile("capture-", ".pdf", app.getCacheDir());
         Document pdf;
         try {
-            Files.write(temp.toPath(), bytes);
+            try (var out = Files.newOutputStream(temp.toPath())) {
+                byte[] buffer = new byte[64 * 1024];
+                int total = 0;
+                for (int n; (n = input.read(buffer)) != -1;) {
+                    if (Tagger.halt()) throw new IOException("PDF reading paused");
+                    total += n;
+                    if (total > IngestText.PDF_BYTES) throw new IOException("PDF exceeds the 10 MiB processing limit.");
+                    out.write(buffer, 0, n);
+                }
+            }
             try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_READ_ONLY)) {
-                pdf = extract(app, fd, vision != null && vision.available());
+                pdf = extract(app, fd, vision != null && vision.available() && PdfModel.figures(app));
             }
         } finally { temp.delete(); }
         if (Tagger.halt()) throw new IOException("Processing paused");
-        if (pdf.text().isBlank() && pdf.images().isEmpty())
-            throw new IOException("PDF has no text layer. Install the local PDF vision model to read scanned pages.");
+        if (pdf.text().isEmpty() && pdf.images().isEmpty())
+            throw new IOException("No readable text found in the PDF text layer or Latin-script OCR.");
         StringBuilder notes = new StringBuilder();
         if (!pdf.images().isEmpty()) {
             try {
                 for (Image image : pdf.images()) {
                     if (Tagger.halt()) throw new IOException("Processing paused");
                     String description = vision.describe(image.jpeg(), image.scan()).replaceAll("\\s+", " ").trim();
-                    if (!description.isBlank()) notes.append("\n- Page ").append(image.page()).append(": ").append(description);
+                    if (!description.isEmpty()) notes.append("\n- Page ").append(image.page()).append(": ").append(description);
                 }
-            } catch (Exception | LinkageError visionFailure) {
+            } catch (Net.Deferred paused) { throw paused; }
+            catch (Exception | LinkageError visionFailure) {
                 if (Tagger.halt()) throw new IOException("Processing paused", visionFailure);
-                if (pdf.text().isBlank()) throw new IOException("The local vision model could not read this scan. Check the PDF vision model in Settings.", visionFailure);
+                if (pdf.text().isEmpty()) throw new IOException("The local vision model could not read this scan. Check the PDF vision model in Settings.", visionFailure);
                 notes.append("\n- The local vision model could not finish. Extracted text is available.");
             }
         }
-        if (pdf.text().isBlank() && notes.length() == 0) throw new IOException("The local vision model found no readable scan content");
-        if (!notes.isEmpty() && pdf.candidates() > pdf.images().size())
+        if (pdf.text().isEmpty() && notes.length() == 0) throw new IOException("The local vision model found no readable scan content");
+        if (notes.length() > 0 && pdf.candidates() > pdf.images().size())
             notes.append("\n- Visual analysis sampled ").append(pdf.images().size()).append(" of ").append(pdf.candidates()).append(" candidate pages.");
-        if (pdf.scans() > 0 && pdf.images().isEmpty()) notes.append("\n- ").append(pdf.scans()).append(" page(s) had no extractable text.");
-        return pdf.text() + (notes.isEmpty() ? "" : IngestText.PDF_VISUAL_HEADING + notes);
+        if (pdf.scans() > 0) notes.append("\n- ").append(pdf.scans()).append(" page(s) had no readable text after OCR.");
+        return pdf.text() + (notes.length() == 0 ? "" : IngestText.PDF_VISUAL_HEADING + notes);
     }
 
     private static Document extract(Context c, ParcelFileDescriptor pdf, boolean figures) throws IOException {
@@ -74,7 +94,7 @@ final class PdfCapture {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
             try (ParcelFileDescriptor writer = pipe[1];
                  var input = new ParcelFileDescriptor.AutoCloseInputStream(pipe[0]);
-                 DataInputStream in = new DataInputStream(new java.io.BufferedInputStream(timed(input, pipe[0], 45_000, Tagger::halt, "PDF rendering")))) {
+                 DataInputStream in = new DataInputStream(new java.io.BufferedInputStream(timed(input, pipe[0], 240_000, Tagger::halt, "PDF rendering")))) {
                 Parcel args = Parcel.obtain();
                 try {
                     pdf.writeToParcel(args, 0);
@@ -84,10 +104,34 @@ final class PdfCapture {
                         throw new IOException("PDF renderer unavailable");
                 } finally { args.recycle(); }
                 writer.close();
-                int length = in.readInt();
-                if (length == -1) throw new IOException(in.readUTF());
-                String text = new String(read(in, length, 4 * PdfRenderService.MAX_TEXT + 512), StandardCharsets.UTF_8);
-                int scans = in.readInt(), candidates = in.readInt(), count = in.readInt();
+                int pages = in.readInt();
+                if (pages == -1) throw new IOException(in.readUTF());
+                if (pages < 0) throw new IOException("Invalid PDF page count");
+                StringBuilder text = new StringBuilder();
+                int scans = 0;
+                com.google.mlkit.vision.text.TextRecognizer ocr = null;
+                try {
+                    for (int i = 0; i < Math.min(pages, PdfRenderService.MAX_PAGES); i++) {
+                        int length = in.readInt();
+                        boolean scan = length == -2;
+                        String body;
+                        if (scan) {
+                            byte[] jpeg = read(in, in.readInt(), PdfRenderService.MAX_JPEG);
+                            if (text.length() >= PdfRenderService.MAX_TEXT) continue;
+                            if (ocr == null) ocr = com.google.mlkit.vision.text.TextRecognition.getClient(
+                                com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS);
+                            body = recognize(ocr, jpeg);
+                            if (body.trim().isEmpty()) scans++;
+                        } else body = new String(read(in, length, 4 * PdfRenderService.MAX_TEXT), StandardCharsets.UTF_8);
+                        if (body.trim().isEmpty() || text.length() >= PdfRenderService.MAX_TEXT) continue;
+                        text.append("### Page ").append(i + 1).append(scan ? " (OCR)\n" : "\n");
+                        String clean = body.replaceAll("(?m)^(\\h*)##(?=\\h|$)", "$1###");
+                        text.append(clean, 0, Math.min(clean.length(), Math.max(0, PdfRenderService.MAX_TEXT - text.length()))).append('\n');
+                    }
+                } finally { if (ocr != null) ocr.close(); }
+                if (text.length() > 0 && (pages > PdfRenderService.MAX_PAGES || text.length() >= PdfRenderService.MAX_TEXT))
+                    text.append("\n[PDF text limited to 150 pages or 400,000 characters.]\n");
+                int candidates = in.readInt(), count = in.readInt();
                 if (count < 0 || count > PdfRenderService.MAX_IMAGES) throw new IOException("Invalid rendered page count");
                 List<Image> images = new ArrayList<>(count);
                 for (int i = 0; i < count; i++) {
@@ -96,7 +140,7 @@ final class PdfCapture {
                     byte[] jpeg = read(in, in.readInt(), PdfRenderService.MAX_JPEG);
                     if (jpeg.length > 0) images.add(new Image(page, scan, jpeg));
                 }
-                return new Document(text, scans, candidates, images);
+                return new Document(text.toString().trim(), scans, candidates, images);
             }
         } catch (InterruptedException stop) {
             Thread.currentThread().interrupt();
@@ -106,6 +150,23 @@ final class PdfCapture {
         } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException | android.os.RemoteException failed) {
             throw new IOException("The PDF renderer could not start", failed);
         } finally { unbind(c, connection); }
+    }
+
+    private static String recognize(com.google.mlkit.vision.text.TextRecognizer ocr, byte[] jpeg)
+            throws InterruptedException, IOException {
+        if (jpeg.length == 0) throw new IOException("Could not render a scanned PDF page");
+        var bounds = new android.graphics.BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, bounds);
+        if (bounds.outWidth < 1 || bounds.outHeight < 1 || Math.max(bounds.outWidth, bounds.outHeight) > 1600)
+            throw new IOException("Invalid PDF scan dimensions");
+        android.graphics.Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length);
+        if (bitmap == null) throw new IOException("Could not decode a scanned PDF page");
+        var task = ocr.process(com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0));
+        task.addOnCompleteListener(Runnable::run, ignored -> bitmap.recycle());
+        try { return com.google.android.gms.tasks.Tasks.await(task, 30, TimeUnit.SECONDS).getText(); }
+        catch (java.util.concurrent.TimeoutException timeout) { throw new IOException("PDF scan recognition timed out", timeout); }
+        catch (java.util.concurrent.ExecutionException failed) { throw new IOException("PDF scan recognition failed", failed); }
     }
 
     static void unbind(Context context, ServiceConnection connection) {

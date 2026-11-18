@@ -53,7 +53,7 @@ final class SettingsScreen extends Screen {
                         draw();
                     }).show());
         } else {
-            dialog.setMessage("Download Gemma 4 E2B (2.59 GB) for local PDF figures and summaries. It will be ready automatically after downloading.")
+            dialog.setMessage("Download Gemma 4 E2B (2.59 GB) on an unmetered connection for local text and vision. Choose AI processing to set its scope.")
                 .setPositiveButton("Download & load", (d, w) -> {
                     try { PdfModel.download(ui.c); }
                     catch (java.io.IOException | RuntimeException failed) {
@@ -105,8 +105,16 @@ final class SettingsScreen extends Screen {
         }));
         ingest.add(row("Vault write access", canWrite ? "Granted" : "Not granted", canWrite ? null : () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
         if (PdfCapture.supported()) {
+            String[] modes = {"Existing behavior (local PDFs when loaded)", "Local models only", "Remote models"};
+            ingest.add(row("AI processing", modes[PdfModel.mode(ui.c).ordinal()], () -> new AlertDialog.Builder(host)
+                .setTitle("AI processing").setSingleChoiceItems(modes, PdfModel.mode(ui.c).ordinal(), (dialog, which) -> {
+                    PdfModel.mode(ui.c, PdfModel.Mode.values()[which]); dialog.dismiss(); draw();
+                }).show()));
+            if (PdfModel.local(ui.c)) ingest.add(note("Gemma handles text, images and recall. Search uses keywords. Voice uses installed offline speech. Videos use sampled frames. Scout answers from local note excerpts. Web tools and editing require remote mode. Shared links still contact the source website.", false));
             PdfModel.Status model = PdfModel.status(ui.c);
-            ingest.add(row("PDF vision model", model.label(), this::pdfModelDialog));
+            ingest.add(row("Gemma 4 E2B", model.label(), this::pdfModelDialog));
+            if (PdfModel.mode(ui.c) != PdfModel.Mode.REMOTE)
+                ingest.add(toggle("Interpret PDF figures", PdfModel.figures(ui.c), () -> { PdfModel.figures(ui.c, !PdfModel.figures(ui.c)); draw(); }));
             main.removeCallbacks(refreshPdfModel);
             if (visible && model.downloading()) main.postDelayed(refreshPdfModel, 1500);
         }
@@ -126,15 +134,15 @@ final class SettingsScreen extends Screen {
 
         java.util.List<SettingRow> ai = group("AI key");
         boolean keySaved = !Model.key(ui.c).isEmpty();
-        ai.add(row("OpenRouter key", keySaved ? "Saved" : "Not set", () -> keyDialog()));
+        ai.add(row("OpenRouter key", PdfModel.local(ui.c) ? "Disabled in local mode" : keySaved ? "Saved" : "Not set", () -> keyDialog()));
         ai.add(row("Tagging model", prefs().getString("aiModel", Model.DEFAULT), () -> modelDialog("Model for tags", "An OpenRouter model id.", "aiModel", prefs().getString("aiModel", Model.DEFAULT), Model.DEFAULT)));
         ai.add(row("Scout model", Ask.model(ui.c), () -> modelDialog("Model for Scout", "It must support tool calls.", "askModel", Ask.model(ui.c), Ask.DEFAULT)));
         ai.add(row("Scout thinking", Scout.thinking(ui.c), () -> { String now = Scout.thinking(ui.c); int next = (java.util.Arrays.asList(Scout.LEVELS).indexOf(now) + 1) % Scout.LEVELS.length; prefs().edit().putString("scoutThinking", Scout.LEVELS[next]).apply(); draw(); }));
         ai.add(row("Card model", CardGen.model(ui.c), () -> modelDialog("Model for cards", "An OpenRouter model id.", "cardModel", CardGen.model(ui.c), CardGen.DEFAULT_MODEL)));
-        if (keySaved) {
+        if (keySaved || PdfModel.localReady(ui.c)) {
             boolean describe = prefs().getBoolean("describe", false);
             ai.add(toggle("Describe photos, PDFs and videos", describe, () -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
-            ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
+            if (keySaved) ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
         }
 
         java.util.List<SettingRow> tools = group("Scout tools (MCP servers)");

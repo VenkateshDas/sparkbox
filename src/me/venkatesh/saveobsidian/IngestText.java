@@ -66,12 +66,14 @@ public final class IngestText {
             + gap + pages.substring(pages.length() - tail) + visual;
     }
 
-    static String[] pdfTags(org.json.JSONObject plan) {
+    static String[] pdfTags(org.json.JSONObject plan) { return mediaTags("document", plan); }
+
+    static String[] mediaTags(String kind, org.json.JSONObject plan) {
         if (plan == null) return null;
         java.util.List<String> tags = new java.util.ArrayList<>();
         org.json.JSONArray values = plan.optJSONArray("tags");
         for (int i = 0; values != null && i < values.length(); i++) tags.add(values.optString(i));
-        String[] clean = Enrich.clean("document", tags, plan.optString("tldr"));
+        String[] clean = Enrich.clean(kind, tags, plan.optString("tldr"));
         return new String[]{clean[0], clean[1], clean[2], Capture.clean(plan.optString("title"))};
     }
 

@@ -360,6 +360,7 @@ final class AskScreen extends Screen {
     private void intro() {
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         if (!VaultStore.ready(ui.c) || snap == null) items.add(new Intro("Choose your vault folder first.", new ArrayList<>()));
+        else if (PdfModel.local(ui.c)) items.add(new Intro(PdfModel.localReady(ui.c) ? "Local Scout answers from matching vault notes." : "Load Gemma in Settings for local answers.", new ArrayList<>()));
         else if (Model.key(ui.c).isEmpty()) items.add(new Intro("Scout needs an OpenRouter key. Add one in Settings.", new ArrayList<>()));
         else {
             List<Vault.Note> hubs = new ArrayList<>();
@@ -389,7 +390,7 @@ final class AskScreen extends Screen {
             return;
         } // delivered after the current tools finish, before the next model call
         VaultStore.Snap snap = VaultStore.cached(ui.c);
-        if (snap == null || Model.key(ui.c).isEmpty()) { refresh(); return; }
+        if (snap == null || Model.key(ui.c).isEmpty() && !PdfModel.localReady(ui.c)) { refresh(); return; }
         if (!online()) { view.header("", true); Toast.makeText(ui.c, "You are offline", Toast.LENGTH_SHORT).show(); return; }
         flushDraft();
         String previousFile = file;

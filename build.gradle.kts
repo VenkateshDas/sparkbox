@@ -15,8 +15,8 @@ android {
         applicationId = "me.venkatesh.saveobsidian"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "1.10.2"
+        versionCode = 18
+        versionName = "1.11.0"
         testInstrumentationRunner = "me.venkatesh.saveobsidian.ReelTest"
     }
     sourceSets["main"].apply {
@@ -52,6 +52,8 @@ android {
 }
 
 dependencies {
+    implementation("com.google.mlkit:genai-speech-recognition:1.0.0-alpha2")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation(libs.jsoup)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     implementation(platform(libs.compose.bom))

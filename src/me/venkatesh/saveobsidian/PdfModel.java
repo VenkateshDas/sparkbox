@@ -33,6 +33,17 @@ public final class PdfModel extends BroadcastReceiver {
         return added == null || old.isFile() ? old : added;
     }
 
+    enum Mode { COMPATIBLE, LOCAL, REMOTE }
+    static Mode mode(Context c) { return Mode.valueOf(prefs(c).getString("mode", Mode.COMPATIBLE.name())); }
+    static void mode(Context c, Mode mode) {
+        prefs(c).edit().putString("mode", mode.name()).apply();
+        BackgroundJob.schedule(c);
+    }
+    static boolean figures(Context c) { return prefs(c).getBoolean("figures", mode(c) == Mode.COMPATIBLE); }
+    static void figures(Context c, boolean enabled) { prefs(c).edit().putBoolean("figures", enabled).apply(); }
+    static boolean local(Context c) { return mode(c) == Mode.LOCAL; }
+    static boolean localReady(Context c) { return local(c) && PdfCapture.modelReady(c); }
+
     static boolean enabled(Context c) { return prefs(c).getBoolean("enabled", true); }
 
     static void enable(Context c, boolean enabled) {
@@ -48,7 +59,9 @@ public final class PdfModel extends BroadcastReceiver {
         if (part.getParentFile().getUsableSpace() < BYTES) throw new IOException("Free at least 2.59 GB on this phone.");
         Files.deleteIfExists(part.toPath());
         long id = manager(c).enqueue(new DownloadManager.Request(Uri.parse(URL))
-            .setTitle("Sparkbox PDF vision model")
+            .setAllowedOverMetered(false)
+            .setAllowedOverRoaming(false)
+            .setTitle("Sparkbox on-device model")
             .setDestinationInExternalFilesDir(c, null, PART)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE));
         prefs(c).edit().putLong("download", id).remove("error").commit();
@@ -64,6 +77,8 @@ public final class PdfModel extends BroadcastReceiver {
         cancel(c);
         enable(c, false);
         Files.deleteIfExists(legacy(c).toPath());
+        File[] caches = c.getCacheDir().listFiles((dir, name) -> name.startsWith(MODEL + "_") && name.endsWith(".xnnpack_cache"));
+        if (caches != null) for (File cache : caches) Files.deleteIfExists(cache.toPath());
         File added = external(c, MODEL);
         if (added != null) Files.deleteIfExists(added.toPath());
     }

@@ -62,7 +62,7 @@ final class Ingest {
     }
 
     static boolean canRequest(Context c, InboxFile.Entry e, boolean key) {
-        return IngestText.eligible(e) && (key || PdfCapture.modelReady(c) && IngestText.knownPdf(e));
+        return IngestText.eligible(e) && (key || PdfCapture.modelReady(c) && (IngestText.knownPdf(e) || PdfModel.local(c)));
     }
 
     /** Captures are processed one by one until none is due, eight are done or the time budget ends. A failure is kept with its reason and tried again later (see MAX_TRIES). */
@@ -291,7 +291,7 @@ final class Ingest {
             String page = attachment ? attachmentText(c, key, e, vision) : pageText(c, key, e, tries, vision);
             boolean pdf = attachment ? "pdf".equals(IngestText.attachmentKind(e.file)) : Content.media(c, e.url).optBoolean("pdf");
             stage(prog, ek, 2);
-            if (pdf && vision.available()) {
+            if ((pdf || PdfModel.local(c)) && vision.available()) {
                 String sourceLower = page.toLowerCase(Locale.ROOT);
                 String preferredTopics = String.join(", ", topicNames.values().stream()
                     .filter(t -> sourceLower.contains(t.toLowerCase(Locale.ROOT))).limit(12).toArray(String[]::new));
@@ -300,7 +300,7 @@ final class Ingest {
                     throw new IOException("Local PDF model returned no usable key points. Check the PDF vision model in Settings.");
                 String[] lane = Lane.pick(plan.optString("lane"), plan.optString("category"));
                 if (lane != null) plan.put("category", lane[1]).put("lane", lane[0]);
-                plan.put("localPdf", true);
+                plan.put("localPlan", true);
             } else {
                 if (key.isEmpty()) throw new IOException("This link did not return a PDF");
                 String user = "Existing topics: " + String.join("; ", topicNames.values()) + "\nExisting people: " + String.join("; ", peopleNames.values()) + "\nExisting entities: " + String.join("; ", entityNames.values())
@@ -323,7 +323,7 @@ final class Ingest {
             if (!prog.edit().putString("plan:" + ek, plan.toString()).putString("planHash:" + ek, Tagger.notesHash(e)).commit())
                 throw new IOException("Could not save the processing checkpoint");
         } else plan = new JSONObject(saved);
-        if (plan.optBoolean("localPdf")) vision.close();
+        if ((plan.optBoolean("localPlan") || plan.optBoolean("localPdf"))) vision.close();
 
         // 1b. the same answer tags the capture, so it shows its type, tags and title in the inbox at once
         List<String> planTags = new ArrayList<>();
@@ -425,8 +425,8 @@ final class Ingest {
                 raw = "![[" + e.file + "]]\n\n" + raw;
             }
             String note = IngestText.sourceNote(title, e.url, plan.optString("author"), captured, topicTitles, personNames, e.why, e.ideas, raw, claims, flags, plan.optString("lane"));
-            if (plan.optBoolean("localPdf") && !tg[2].isEmpty())
-                note = NoteEdit.setSection(note, "Summary", tg[2]);
+            if ((plan.optBoolean("localPlan") || plan.optBoolean("localPdf")) && !tg[2].isEmpty())
+                note = NoteEdit.setSection(note, "Summary", Capture.clean(plan.optString("tldr")));
             try { VaultWrite.write(c, sourcePath, null, note); }
             catch (IOException exists) {
                 String previous = VaultWrite.read(c, sourcePath);
@@ -600,7 +600,7 @@ final class Ingest {
             throw new IOException("Source could not be read: " + fetched.problem);
         }
         if (fetched.text.isEmpty() && fetched.media.isEmpty()) throw new IOException("Source did not provide readable content. Retry or share the text or media.");
-        Visuals.read(c, key, e.url, fetched);
+        Visuals.read(c, key, e.url, fetched, vision);
         return Visuals.prompt(c, e.url, PAGE_FOR_MODEL);
     }
 

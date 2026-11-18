@@ -43,6 +43,37 @@ final class PdfVision implements AutoCloseable {
         } finally { image.delete(); }
     }
 
+    /** Bounded visual evidence. Never imply we watched the whole clip or heard its soundtrack. */
+    String video(android.net.Uri uri) throws IOException {
+        if (android.os.Build.VERSION.SDK_INT < 27) throw new IOException("Scaled video frames unavailable");
+        android.media.MediaMetadataRetriever media = new android.media.MediaMetadataRetriever();
+        try {
+            media.setDataSource(app, uri);
+            long ms = Long.parseLong(media.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION));
+            StringBuilder result = new StringBuilder("Sampled video frames (visual only; audio not transcribed):");
+            for (int i = 0; i < (ms > 3000 ? 3 : 1); i++) {
+                long at = ms > 3000 ? ms * (2 * i + 1) / 6 : ms / 2;
+                var frame = media.getScaledFrameAtTime(at * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST, 768, 768);
+                if (frame == null) continue;
+                var bytes = new java.io.ByteArrayOutputStream();
+                try { if (!frame.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, bytes)) continue; }
+                finally { frame.recycle(); }
+                result.append("\n").append(at).append(" ms: ").append(describe(bytes.toByteArray(), true));
+            }
+            if (result.indexOf("\n") < 0) throw new IOException("No video frames could be read");
+            return result.toString();
+        } finally { media.release(); }
+    }
+
+    static String text(Context context, String system, String input, int tokens) throws IOException {
+        try (PdfVision worker = new PdfVision(context)) {
+            return worker.call(PdfVisionService.TEXT, 100_000, request -> {
+                request.writeString(cap(system, 4000) + "\n\n" + IngestText.pdfSummaryPrompt(input, 5600));
+                request.writeInt(tokens);
+            });
+        }
+    }
+
     JSONObject plan(String evidence, String title, String why, String ideas, String topics) throws IOException {
         String result = call(PdfVisionService.PLAN, 100_000, request -> {
             request.writeString(IngestText.pdfSummaryPrompt(evidence, 6200));
@@ -76,13 +107,16 @@ final class PdfVision implements AutoCloseable {
 
     private String call(int code, long timeout, Consumer<Parcel> input) throws IOException {
         if (!available()) throw new IOException("The PDF model is unloaded.");
+        android.os.PowerManager power = app.getSystemService(android.os.PowerManager.class);
+        if (power.isPowerSaveMode() || android.os.Build.VERSION.SDK_INT >= 29 && power.getCurrentThermalStatus() >= android.os.PowerManager.THERMAL_STATUS_SEVERE)
+            throw new Net.Deferred("Local inference paused for battery or temperature.");
         try {
             IBinder worker = connect();
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
             try (ParcelFileDescriptor writer = pipe[1];
                  var reader = new ParcelFileDescriptor.AutoCloseInputStream(pipe[0]);
                  DataInputStream reply = new DataInputStream(new java.io.BufferedInputStream(PdfCapture.timed(
-                     reader, pipe[0], timeout, () -> Tagger.halt() || !PdfModel.enabled(app), "Local PDF inference")))) {
+                     reader, pipe[0], timeout, () -> Tagger.halt() || !available(), "Local PDF inference")))) {
                 Parcel request = Parcel.obtain();
                 try {
                     writer.writeToParcel(request, 0);

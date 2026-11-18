@@ -9,7 +9,6 @@ import android.os.Binder;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
-import androidx.annotation.RequiresApi;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,7 +25,7 @@ public final class PdfRenderService extends Service {
 
     private final Binder renderer = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
-            if (code != RENDER || android.os.Build.VERSION.SDK_INT < 35) return false;
+            if (code != RENDER) return false;
             try (ParcelFileDescriptor pdf = ParcelFileDescriptor.CREATOR.createFromParcel(data);
                  ParcelFileDescriptor output = ParcelFileDescriptor.CREATOR.createFromParcel(data);
                  DataOutputStream sink = new DataOutputStream(new ParcelFileDescriptor.AutoCloseOutputStream(output.dup()))) {
@@ -42,7 +41,6 @@ public final class PdfRenderService extends Service {
 
     private record Page(int index, int priority, boolean scan) { }
 
-    @RequiresApi(35)
     private static void render(ParcelFileDescriptor input, DataOutputStream sink, boolean figures) throws IOException {
         PdfRenderer pdf;
         try {
@@ -54,45 +52,47 @@ public final class PdfRenderService extends Service {
             return;
         }
         try (pdf) {
-            StringBuilder text = new StringBuilder();
+            sink.writeInt(pdf.getPageCount());
+            int emitted = 0;
             List<Page> candidates = new ArrayList<>();
-            int count = Math.min(pdf.getPageCount(), MAX_PAGES), scans = 0;
+            int count = Math.min(pdf.getPageCount(), MAX_PAGES);
             for (int i = 0; i < count; i++) {
                 try (PdfRenderer.Page page = pdf.openPage(i)) {
                     StringBuilder body = new StringBuilder();
-                    for (var block : page.getTextContents()) {
-                        if (!block.getText().isBlank()) body.append(block.getText()).append('\n');
+                    if (android.os.Build.VERSION.SDK_INT >= 35) for (var block : page.getTextContents()) {
+                        String value = block.getText();
+                        if (!value.isBlank()) body.append(value, 0, Math.min(value.length(), MAX_TEXT - body.length())).append('\n');
                         if (body.length() >= MAX_TEXT) break;
                     }
-                    boolean scan = body.toString().isBlank();
-                    if (scan) scans++;
-                    else if (text.length() < MAX_TEXT) {
-                        text.append("### Page ").append(i + 1).append('\n');
-                        // Source headings belong inside Raw Content, never alongside its sections.
-                        String pageText = body.toString().replaceAll("(?m)^(\\h*)##(?=\\h|$)", "$1###");
-                        text.append(pageText, 0, Math.min(pageText.length(), MAX_TEXT - Math.min(text.length(), MAX_TEXT))).append('\n');
+                    boolean scan = body.length() == 0;
+                    if (scan && emitted < MAX_TEXT) {
+                        sink.writeInt(-2);
+                        byte[] jpeg = pageImage(page, 1600);
+                        sink.writeInt(jpeg.length);
+                        sink.write(jpeg);
+                    } else {
+                        String excerpt = body.substring(0, Math.min(body.length(), MAX_TEXT - emitted));
+                        emitted += excerpt.length();
+                        byte[] bytes = excerpt.getBytes(StandardCharsets.UTF_8);
+                        sink.writeInt(bytes.length);
+                        sink.write(bytes);
                     }
-                    if (figures) {
-                        int priority = scan ? 3 : !page.getImageContents().isEmpty() ? 2
+                    if (figures && !scan && android.os.Build.VERSION.SDK_INT >= 35) {
+                        int priority = !page.getImageContents().isEmpty() ? 2
                             : CAPTION.matcher(body).find() ? 1 : 0;
                         if (priority > 0) candidates.add(new Page(i, priority, scan));
                     }
                 }
             }
 
-            if (count < pdf.getPageCount() || text.length() >= MAX_TEXT)
-                text.append("\n[PDF text limited to 150 pages or 400,000 characters.]\n");
-            byte[] bytes = text.toString().trim().getBytes(StandardCharsets.UTF_8);
-            sink.writeInt(bytes.length);
-            sink.write(bytes);
-            sink.writeInt(scans);
             sink.writeInt(candidates.size());
             candidates.sort(Comparator.comparingInt(Page::priority).reversed());
             List<Page> selected = new ArrayList<>(candidates.subList(0, Math.min(MAX_IMAGES, candidates.size())));
             selected.sort(Comparator.comparingInt(Page::index));
             sink.writeInt(selected.size());
             for (Page item : selected) {
-                byte[] jpeg = pageImage(pdf, item.index());
+                byte[] jpeg;
+                try (PdfRenderer.Page page = pdf.openPage(item.index())) { jpeg = pageImage(page, 960); }
                 sink.writeInt(item.index() + 1);
                 sink.writeBoolean(item.scan());
                 sink.writeInt(jpeg.length);
@@ -100,10 +100,9 @@ public final class PdfRenderService extends Service {
             }
         }
     }
-    @RequiresApi(35)
-    private static byte[] pageImage(PdfRenderer renderer, int index) {
-        try (PdfRenderer.Page page = renderer.openPage(index)) {
-            float scale = Math.min(2f, 960f / Math.max(1, Math.max(page.getWidth(), page.getHeight())));
+    private static byte[] pageImage(PdfRenderer.Page page, int edge) {
+        try {
+            float scale = Math.min(2f, (float) edge / Math.max(1, Math.max(page.getWidth(), page.getHeight())));
             Bitmap image = Bitmap.createBitmap(Math.max(1, Math.round(page.getWidth() * scale)),
                 Math.max(1, Math.round(page.getHeight() * scale)), Bitmap.Config.ARGB_8888);
             try {
@@ -113,7 +112,7 @@ public final class PdfRenderService extends Service {
                 if (image.compress(Bitmap.CompressFormat.JPEG, 85, jpeg) && jpeg.size() <= MAX_JPEG) return jpeg.toByteArray();
             } finally { image.recycle(); }
         } catch (RuntimeException failure) {
-            android.util.Log.w("Sparkbox", "Could not render PDF figure page " + (index + 1), failure);
+            android.util.Log.w("Sparkbox", "Could not render PDF figure page " + (page.getIndex() + 1), failure);
         }
         return new byte[0];
     }

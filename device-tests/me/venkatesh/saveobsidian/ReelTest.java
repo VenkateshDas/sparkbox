@@ -11,8 +11,52 @@ public class ReelTest extends Instrumentation {
         Bundle result = new Bundle();
         try {
             android.content.Context context = getTargetContext();
-            if ("scout".equals(arguments.getString("suite"))) {
+            if ("release-worker".equals(arguments.getString("suite"))) {
+                // The service and wire protocol remain accessible when R8 renames internal Java helpers.
+                var bound = new java.util.concurrent.CompletableFuture<android.os.IBinder>();
+                var connection = new android.content.ServiceConnection() {
+                    public void onServiceConnected(android.content.ComponentName n, android.os.IBinder b) { bound.complete(b); }
+                    public void onServiceDisconnected(android.content.ComponentName n) {}
+                };
+                var intent = new android.content.Intent().setClassName(context, "me.venkatesh.saveobsidian.PdfVisionService");
+                if (!context.bindService(intent, connection, android.content.Context.BIND_AUTO_CREATE)) throw new AssertionError("Bind failed");
+                try {
+                    var pipe = android.os.ParcelFileDescriptor.createPipe();
+                    try (var input = new java.io.DataInputStream(new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe[0]));
+                         var writer = pipe[1]) {
+                        var request = android.os.Parcel.obtain();
+                        try {
+                            writer.writeToParcel(request, 0);
+                            request.writeString("Reply with only the fruit named here: mango.");
+                            request.writeInt(32);
+                            if (!bound.get(10, java.util.concurrent.TimeUnit.SECONDS).transact(android.os.IBinder.FIRST_CALL_TRANSACTION + 2,
+                                request, null, android.os.IBinder.FLAG_ONEWAY)) throw new AssertionError("Request refused");
+                        } finally { request.recycle(); }
+                        writer.close();
+                        if (!input.readBoolean()) throw new AssertionError(input.readUTF());
+                        String answer = input.readUTF();
+                        if (!answer.toLowerCase(java.util.Locale.ROOT).contains("mango")) throw new AssertionError(answer);
+                        result.putString("answer", answer);
+                    }
+                } finally { context.unbindService(connection); }
+            } else if ("scout".equals(arguments.getString("suite"))) {
                 ScoutDeviceTest.run(this, arguments, result);
+            } else if ("local-text".equals(arguments.getString("suite"))) {
+                String answer = PdfVision.text(context, "Reply with only the fruit named in the text.", "The fruit in the basket is mango.", 32);
+                if (!answer.toLowerCase(java.util.Locale.ROOT).contains("mango")) throw new AssertionError("Unexpected local answer: " + answer);
+                result.putString("answer", answer);
+            } else if ("local-speech".equals(arguments.getString("suite"))) {
+                var clip = new java.io.File(context.getCacheDir(), "sparkbox-speech-check.m4a");
+                String transcript = LocalSpeech.read(clip);
+                if (!transcript.toLowerCase(java.util.Locale.ROOT).contains("mango")) throw new AssertionError(transcript);
+                result.putString("transcript", transcript);
+            } else if ("local-plan".equals(arguments.getString("suite"))) {
+                try (PdfVision worker = new PdfVision(context)) {
+                    var plan = worker.plan("The orchard tested drip irrigation on 12 mango trees. Water use fell by 25 percent over four weeks.", "Orchard field trial", "", "", "");
+                    if (plan.optJSONArray("topics") == null || plan.getJSONArray("topics").length() == 0 ||
+                        !plan.toString().contains("25")) throw new AssertionError("Local plan missing topic or measured result");
+                    result.putString("summary", plan.optString("tldr"));
+                }
             } else if ("pdf-worker".equals(arguments.getString("suite"))) {
                 var ready = new java.util.concurrent.CompletableFuture<android.os.IBinder>();
                 var connection = new android.content.ServiceConnection() {
@@ -52,11 +96,16 @@ public class ReelTest extends Instrumentation {
                 byte[] input;
                 android.graphics.pdf.PdfDocument pdf = new android.graphics.pdf.PdfDocument();
                 try (java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
-                    for (int i = 1; i <= 2; i++) {
+                    for (int i = 1; i <= 6; i++) {
                         var page = pdf.startPage(new android.graphics.pdf.PdfDocument.PageInfo.Builder(500, 700, i).create());
                         var ink = new android.graphics.Paint();
                         ink.setTextSize(24);
-                        page.getCanvas().drawText("Page " + i + " text extraction check", 30, 55, ink);
+                        if (i > 2) {
+                            var bitmap = android.graphics.Bitmap.createBitmap(500, 100, android.graphics.Bitmap.Config.ARGB_8888);
+                            bitmap.eraseColor(android.graphics.Color.WHITE);
+                            new android.graphics.Canvas(bitmap).drawText("Scanned orchard number " + i, 30, 55, ink);
+                            page.getCanvas().drawBitmap(bitmap, 0, 0, null);
+                        } else page.getCanvas().drawText("Page " + i + " text extraction check", 30, 55, ink);
                         pdf.finishPage(page);
                     }
                     pdf.writeTo(out);
@@ -65,6 +114,21 @@ public class ReelTest extends Instrumentation {
                 String text = PdfCapture.read(context, input, null);
                 if (!text.contains("Page 1 text extraction check") || !text.contains("Page 2 text extraction check"))
                     throw new AssertionError("The isolated PDF renderer did not return both pages");
+                for (int i = 3; i <= 6; i++) {
+                    if (!text.contains("### Page " + i + " (OCR)") || !text.contains("Scanned orchard number " + i))
+                        throw new AssertionError("Missing scanned page " + i + ": " + text);
+                }
+                var modes = context.getSharedPreferences("pdf-model", 0);
+                String old = modes.getString("mode", null);
+                try {
+                    modes.edit().putString("mode", "LOCAL").commit();
+                    try {
+                        ScoutUsage.get("models", "stale-key");
+                        throw new AssertionError("Local mode allowed provider traffic");
+                    } catch (java.io.IOException expected) {
+                        if (!expected.getMessage().contains("disabled in local mode")) throw expected;
+                    }
+                } finally { modes.edit().putString("mode", old).commit(); }
             } else if ("true".equals(arguments.getString("recover"))) {
                 int count = Ingest.retryAll(context);
                 long deadline = System.currentTimeMillis() + 15 * 60000L;

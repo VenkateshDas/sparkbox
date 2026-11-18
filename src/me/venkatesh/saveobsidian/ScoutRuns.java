@@ -177,13 +177,13 @@ final class ScoutRuns {
         try {
             VaultStore.Snap snap = VaultStore.cached(c);
             String key = Model.key(c);
-            if (snap == null || key.isEmpty()) throw new Exception("The vault or the OpenRouter key is not set up.");
+            if (snap == null || key.isEmpty() && !PdfModel.localReady(c)) throw new Exception("The vault or the OpenRouter key is not set up.");
             if (text != null && text.startsWith("/research ")) { research = true; text = text.substring(10).trim(); }
             Session session = run.session;
             if (run.done || run.cancel.stopped()) throw new Exception("Stopped");
             if (!run.config.optBoolean("discovery") && session.name() == null && text != null) nameChat(c, session, text, key, run.id, () -> changed(run.file));
             Agent a = agent(c, run, snap, key, research);
-            ScoutUsage.model(c, a.model(), () -> changed(run.file));
+            if (!PdfModel.local(c)) ScoutUsage.model(c, a.model(), () -> changed(run.file));
             a.subscribe((type, data) -> events(c, run, type, data));
             Usage.hit(c, "ask");
             Metrics.event("scout", run.initialId.isEmpty() ? run.id : run.initialId);
@@ -236,6 +236,7 @@ final class ScoutRuns {
     private static void nameChat(Context c, Session session, String text, String key, String run, Runnable changed) throws java.io.IOException {
         final String first = text.length() > 40 ? text.substring(0, 40) : text;
         session.setName(first);
+        if (PdfModel.local(c)) return;
         new Thread(() -> {
             try {
                 String model = c.getSharedPreferences("capture", 0).getString("aiModel", Model.DEFAULT);

@@ -115,13 +115,13 @@ final class Attach {
         Uri uri = find(c, name);
         if (uri == null) throw new IOException("Attachment unavailable. Check the attachments folder in Settings.");
         switch (IngestText.attachmentKind(name)) {
-            case "pdf": return PdfCapture.read(c, read(c, uri, IngestText.PDF_BYTES), vision);
+            case "pdf": return PdfCapture.read(c, uri, vision);
             case "image":
                 byte[] image = jpeg(c, uri, 1024);
                 if (image == null) throw new IOException("Image could not be decoded");
-                return "### Image (AI interpretation)\n" + Model.readImage(key, image, name);
+                return "### Image (AI interpretation)\n" + (PdfModel.local(c) ? vision.describe(image, true) : Model.readImage(key, image, name));
             case "video":
-                return "### Video (AI interpretation)\n" + Model.watch(key, read(c, uri, 24 * 1024 * 1024), mime(name));
+                return "### Video (AI interpretation)\n" + (PdfModel.local(c) ? vision.video(uri) : Model.watch(key, read(c, uri, 24 * 1024 * 1024), mime(name)));
             case "text":
                 return java.nio.charset.StandardCharsets.UTF_8.newDecoder()
                     .decode(java.nio.ByteBuffer.wrap(read(c, uri, 400000))).toString();

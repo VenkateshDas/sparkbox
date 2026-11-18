@@ -4,7 +4,7 @@ A personal Android app that catches links, thoughts, voice notes and files, and 
 
 Repository: https://github.com/VenkateshDas/sparkbox. The package ID keeps its original name (`me.venkatesh.saveobsidian`) so updates install in place.
 
-Version `1.10.0` (version code `15`). Min API 26, target API 35, compiled against API 37.
+Version `1.11.0` (version code `18`). Min API 26, target API 35, compiled against API 37.
 
 ## What it does
 
@@ -24,7 +24,8 @@ Version `1.10.0` (version code `15`). Min API 26, target API 35, compiled agains
 - **Make cards** writes recall cards into existing notes; voice notes are transcribed; photos and PDFs can be described.
 - **Instagram reels** are read from their public embed data, downloaded and watched by GLM 5.3 Flash through OpenRouter. Whisper supplies the speech transcript separately. The caption, video description and transcript are cached for ingest and included in the Source note. Private, unavailable or blocked posts stay queued with a readable error. Video downloads are capped at 24 MB.
 - When a reel cannot be read publicly, Sparkbox falls back to Instagram's current metadata format. Use **Settings → Instagram access** to sign in for reels your account can access. That session is separate from the Instagram app's login. Access failures pause automatic retries and offer an Instagram access action on the capture. Session cookies stay on the phone and are sent only to Instagram, never OpenRouter.
-- **PDFs on Android 15+** are read by Android on the phone. For figure explanations, scanned pages and local key points, choose **Download & load** under **Settings → PDF vision model**. Sparkbox downloads [Gemma 4 E2B for LiteRT-LM](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm) (2.59 GB) and enables it automatically. The same setting can unload or delete the model. The original PDF and page images stay on the device. With the local model installed, PDF notes can be generated without an OpenRouter key. With an OpenRouter key, background search indexing can send a note digest containing up to 2,000 characters, including an excerpt of the extracted text. Scout still uses the configured provider. See the [OnePlus PDF validation](docs/2026-11-18-pdf-phone-validation.md) for output quality and battery estimates.
+- **PDFs** use Android's text layer on Android 15+ and bundled Latin-script OCR for image-only pages. Older Android versions use OCR for each page. The reader accepts PDFs up to 10 MiB and reads up to 150 pages or 400,000 characters. Scanned text appears under its page number.
+- **Settings → Ingest → AI processing** on Android 15+ offers Existing behavior, Local models only, and Remote models. Existing behavior preserves the previous PDF routing. Local mode blocks new OpenRouter calls, including background embeddings. Link captures still contact their source websites. Download Gemma 4 E2B (2.59 GB, unmetered) under **Gemma 4 E2B**. **Interpret PDF figures** is optional and defaults off in Local mode. See the [model choices and validation plan](docs/local-processing.md) and the [original OnePlus audit](docs/2026-11-18-pdf-phone-validation.md).
 - Shared video files can be summarized and tagged through **Settings → Describe photos, PDFs and videos**, using the same video and transcription path. The original file stays in the attachments folder.
 
 **Use**

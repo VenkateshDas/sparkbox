@@ -11,12 +11,12 @@ import java.io.IOException;
 
 /** One worker process and engine per PDF. Binder serializes the one-way calls for this worker. */
 public final class PdfVisionService extends Service {
-    static final int DESCRIBE = IBinder.FIRST_CALL_TRANSACTION, PLAN = DESCRIBE + 1;
+    static final int DESCRIBE = IBinder.FIRST_CALL_TRANSACTION, PLAN = DESCRIBE + 1, TEXT = PLAN + 1;
     private PdfVisionEngine engine;
 
     private final Binder worker = new Binder() {
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
-            if (android.os.Build.VERSION.SDK_INT < 35 || code != DESCRIBE && code != PLAN) return false;
+            if (android.os.Build.VERSION.SDK_INT < 35 || code != DESCRIBE && code != PLAN && code != TEXT) return false;
             try (var output = new ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.CREATOR.createFromParcel(data));
                  var sink = new DataOutputStream(output)) {
                 String result;
@@ -29,6 +29,8 @@ public final class PdfVisionService extends Service {
                             if (bytes.length > PdfRenderService.MAX_JPEG) throw new IOException("PDF figure exceeds the size limit");
                             result = engine.describe(bytes, data.readInt() != 0);
                         }
+                    } else if (code == TEXT) {
+                        result = engine.text(data.readString(), data.readInt());
                     } else {
                         var plan = engine.plan(data.readString(), data.readString(), data.readString(), data.readString(), data.readString());
                         if (plan == null) throw new IOException("Local PDF model returned no usable notes.");

@@ -47,7 +47,8 @@ final class Model {
                 .put("messages", new JSONArray()
                     .put(new JSONObject().put("role", "system").put("content", Enrich.SYSTEM + Enrich.INSTRUCTIONS))
                     .put(new JSONObject().put("role", "user").put("content", "Title: " + title + "\nURL: " + Capture.identity(url) + "\nPage text:\n" + (thin ? "(nothing could be read from the page: judge only from the title and URL, and leave tldr empty)" : page) + Enrich.notes(why, ideas)))); // query strings often carry tokens
-            String[] r = parse(post("chat/completions", key, request));
+            String[] r = PdfModel.local(context) ? parseContent(PdfVision.text(context, Enrich.SYSTEM + Enrich.INSTRUCTIONS,
+                title + "\n" + Capture.identity(url) + "\n" + page + Enrich.notes(why, ideas), 300)) : parse(post("chat/completions", key, request));
             if (r != null && thin) { r[1] = ""; r[2] = ""; } // with no text to read, tags and a summary would be guesses
             return r;
         }
@@ -169,6 +170,12 @@ final class Model {
     private static String[] parse(String reply) {
         try {
             String content = new JSONObject(reply).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
+            return parseContent(content);
+        } catch (Exception unusable) { return null; }
+    }
+
+    static String[] parseContent(String content) {
+        try {
             JSONObject out = JsonFix.object(content);
             if (out == null) return null;
             List<String> tags = new ArrayList<>();
@@ -394,6 +401,7 @@ final class Model {
 
     private static String exchangeRaw(String path, String key, JSONObject request, int readTimeout, long totalMs) throws Exception {
         byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
+        OpenRouter.requireRemote();
         HttpURLConnection connection = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/" + path).openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout((int) Math.min(10000, totalMs));
@@ -448,7 +456,7 @@ final class Model {
     }
 
     /** The saved key, or "" when none (or when it can no longer be decrypted). */
-    static String key(Context c) { return unseal(c, "aiKey"); }
+    static String key(Context c) { return PdfModel.local(c) ? "" : unseal(c, "aiKey"); }
 
     static String unseal(Context c, String pref) {
         String[] sealed = prefs(c).getString(pref, "").split(":");
