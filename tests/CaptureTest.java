@@ -77,6 +77,8 @@ public class CaptureTest {
 
         check(Capture.textEntry("T", "Just a thought").equals("- 📝 Just a thought\n  Captured: T · via Sparkbox\n"));
         check(InboxFile.parse(Capture.textEntry("T", "One\n\nTwo\r\nThree")).get(0).body.equals("One\n\nTwo\nThree"));
+        check(me.venkatesh.saveobsidian.IngestText.eligible(InboxFile.parse(Capture.textEntry("T", "x".repeat(40))).get(0)));
+        check(!me.venkatesh.saveobsidian.IngestText.eligible(InboxFile.parse(Capture.textEntry("T", "Just a thought")).get(0)));
         String longLine = "x".repeat(100);
         check(InboxFile.parse(Capture.textEntry("T", longLine)).get(0).body.equals(longLine));
         check(InboxFile.parse(Capture.textEntry("T", "y".repeat(2500))).get(0).body.equals("y".repeat(2500)));

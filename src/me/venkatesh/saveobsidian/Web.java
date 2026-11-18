@@ -83,7 +83,7 @@ final class Web {
 
     private static Reply once(String address, String agent, int maxBytes) throws IOException {
         URL current = new URL(address);
-        long deadline = System.currentTimeMillis() + (maxBytes > MAX_BYTES ? 90000 : 30000);
+        long deadline = System.currentTimeMillis() + (maxBytes > MAX_BYTES ? 240000 : 30000);
         for (int hop = 0; hop <= 6; hop++) {
             boolean secure = "https".equalsIgnoreCase(current.getProtocol());
             if ((!secure && !"http".equalsIgnoreCase(current.getProtocol())) || current.getUserInfo() != null) throw new IOException("Not a public web address");

@@ -39,11 +39,11 @@ public class Reminder extends BroadcastReceiver {
                 Spark.clampCap(c.getSharedPreferences("capture", 0).getInt("cardsPerDay", Spark.CAP_DEFAULT)), CardStore.newestFirst());
             if (plan.queue.isEmpty()) return; // nothing due: no notification
             NotificationManager nm = c.getSystemService(NotificationManager.class);
-            nm.createNotificationChannel(new NotificationChannel(CHANNEL, "Daily Spark reminder", NotificationManager.IMPORTANCE_LOW));
+            nm.createNotificationChannel(new NotificationChannel(CHANNEL, "Daily review reminder", NotificationManager.IMPORTANCE_LOW));
             int n = plan.queue.size();
             PendingIntent open = PendingIntent.getActivity(c, 8, new Intent(c, MainActivity.class).putExtra(MainActivity.TAB, 1).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
             nm.notify(7, new android.app.Notification.Builder(c, CHANNEL).setSmallIcon(R.drawable.notification_icon)
-                .setContentTitle("Spark").setContentText(n + (n == 1 ? " card" : " cards") + " due, about " + plan.minutes() + " min").setContentIntent(open).setAutoCancel(true).build());
+                .setContentTitle("Review your cards").setContentText(n + (n == 1 ? " card" : " cards") + " due, about " + plan.minutes() + " min").setContentIntent(open).setAutoCancel(true).build());
         } catch (RuntimeException ignored) { }
     }
 }

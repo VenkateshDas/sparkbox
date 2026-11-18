@@ -18,8 +18,11 @@ public final class IngestText {
         return CATEGORIES[0];
     }
 
+    /** A typed or spoken note shorter than this has nothing worth a Source note. */
+    static final int MIN_NOTE = 40;
+
     public static boolean eligible(InboxFile.Entry entry) {
-        return !entry.text && (entry.file.isEmpty() ? !entry.url.isEmpty() : !attachmentKind(entry.file).isEmpty());
+        return entry.text ? entry.body.trim().length() >= MIN_NOTE : entry.file.isEmpty() ? !entry.url.isEmpty() : !attachmentKind(entry.file).isEmpty();
     }
 
     static String attachmentKind(String name) {
@@ -39,7 +42,7 @@ public final class IngestText {
         return !Capture.arxivPdfUrl(entry.url).isEmpty() || Capture.identity(entry.url).split("\\?", 2)[0].toLowerCase(java.util.Locale.ROOT).endsWith(".pdf");
     }
 
-    static final int PDF_BYTES = 10 * 1024 * 1024;
+    static final int PDF_BYTES = 40 * 1024 * 1024;
     static final String PDF_VISUAL_HEADING = "\n\n### Figure and scan notes (on-device AI)\n";
 
     /** Keep room for figure evidence even when the paper text exceeds the model's prompt budget. */

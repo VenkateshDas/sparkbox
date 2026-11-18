@@ -28,12 +28,12 @@ final class Fetch {
      * The readable text of this link. Returns "" text (with a problem) when the site answered but gave nothing readable; throws IOException when the
      * network failed, so the caller can try again later instead of treating it as "empty". transcribe lets a video without captions be transcribed (slow, costs a little).
      */
-    static Result page(Context context, String url, String key, boolean transcribe, PdfVision vision) throws IOException {
+    static Result page(Context context, String url, String key, boolean transcribe) throws IOException {
         try { Limits.FETCH.acquire(); } catch (InterruptedException stop) { Thread.currentThread().interrupt(); throw new IOException("Stopped"); }
-        try { return pageNow(context, url, key, transcribe, vision); } finally { Limits.FETCH.release(); }
+        try { return pageNow(context, url, key, transcribe); } finally { Limits.FETCH.release(); }
     }
 
-    private static Result pageNow(Context context, String url, String key, boolean transcribe, PdfVision vision) throws IOException {
+    private static Result pageNow(Context context, String url, String key, boolean transcribe) throws IOException {
         Result r = new Result();
         String host;
         try { host = new URL(url).getHost().toLowerCase(Locale.ROOT); } catch (java.net.MalformedURLException bad) { r.problem = "Not a web link"; return r; }
@@ -60,7 +60,7 @@ final class Fetch {
             reply = Web.get(reply.url, IngestText.PDF_BYTES); // the ordinary page limit may have cut off the PDF
         if (reply.code != 200) { r.problem = "The site answered " + reply.code; return r; }
         if (reply.pdf()) {
-            r.text = PdfCapture.read(context, reply.body, vision);
+            r.text = PdfCapture.read(context, reply.body);
             r.pdf = true;
             return r;
         }
@@ -84,7 +84,7 @@ final class Fetch {
     }
 
     /** What to keep as the link's content: the text, or "" when none. */
-    static String content(Context context, String url, String key, boolean transcribe) throws IOException { return page(context, url, key, transcribe, null).text; }
+    static String content(Context context, String url, String key, boolean transcribe) throws IOException { return page(context, url, key, transcribe).text; }
 
     private static Result instagram(String shortcode) throws IOException {
         // Full browser identities receive Instagram's login app instead of the public embed data.

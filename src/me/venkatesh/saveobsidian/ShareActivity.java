@@ -72,7 +72,7 @@ public class ShareActivity extends Activity {
             if (!Attach.ready(this)) Toast.makeText(this, "Saved on this phone. Choose the attachments folder in Settings to finish.", Toast.LENGTH_LONG).show();
             else dispatch(this);
         }
-        if (voice > 0 && Model.key(this).isEmpty() && !PdfModel.local(this)) Toast.makeText(this, "Add an OpenRouter key in Settings to transcribe audio.", Toast.LENGTH_LONG).show();
+        if (voice > 0 && Model.key(this).isEmpty()) Toast.makeText(this, "Add an OpenRouter key in Settings to transcribe audio.", Toast.LENGTH_LONG).show();
     }
 
     @Override public void onCreate(Bundle state) {

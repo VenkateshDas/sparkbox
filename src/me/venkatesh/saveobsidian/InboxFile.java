@@ -16,7 +16,7 @@ public final class InboxFile {
             this.type = type; this.tags = tags; this.tldr = tldr; this.file = file; this.heading = heading;
         }
         /** Stable across enrichment and edits, including files shared in the same minute. */
-        String sourceId() { return file.isEmpty() ? url : "attachment:" + file; }
+        String sourceId() { return !file.isEmpty() ? "attachment:" + file : url.isEmpty() && text ? "text:" + Long.toHexString(Index.key(body)) : url; }
         /** The model-written title when there is one, else the saved title. */
         public String shownTitle() { return heading.isEmpty() ? title : heading; }
         public boolean hasTag(String tag) { return (", " + tags + ", ").contains(", " + tag + ", "); }

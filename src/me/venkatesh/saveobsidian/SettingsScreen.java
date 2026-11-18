@@ -30,40 +30,8 @@ final class SettingsScreen extends Screen {
     }
 
     @Override void onShow() { visible = true; draw(); }
-    @Override void onHide() { visible = false; main.removeCallbacks(refreshPdfModel); }
+    @Override void onHide() { visible = false; }
 
-    private final Runnable refreshPdfModel = () -> { if (visible) draw(); };
-
-    private void pdfModelDialog() {
-        AlertDialog.Builder dialog = new AlertDialog.Builder(host).setTitle("PDF vision model").setNegativeButton("Close", null);
-        PdfModel.Status status = PdfModel.status(ui.c);
-        if (status.downloading()) {
-            dialog.setMessage("Android is downloading Gemma 4 E2B in the background. Sparkbox loads it automatically for the next PDF.")
-                .setNeutralButton("Cancel download", (d, w) -> { PdfModel.cancel(ui.c); draw(); });
-        } else if (PdfModel.file(ui.c).isFile()) {
-            boolean loaded = PdfModel.enabled(ui.c);
-            dialog.setMessage(loaded ? "Ready for the next PDF. Unload to stop using the model and keep the file."
-                    : "The model file is saved. Load it to use it for PDFs again.")
-                .setPositiveButton(loaded ? "Unload model" : "Load model", (d, w) -> { PdfModel.enable(ui.c, !loaded); draw(); })
-                .setNeutralButton("Delete model", (d, w) -> new AlertDialog.Builder(host).setTitle("Delete PDF model?")
-                    .setMessage("This frees the model’s storage. You can download it again.")
-                    .setNegativeButton("Cancel", null).setPositiveButton("Delete", (confirm, action) -> {
-                        try { PdfModel.delete(ui.c); }
-                        catch (java.io.IOException failed) { android.widget.Toast.makeText(ui.c, "Could not delete the model.", android.widget.Toast.LENGTH_LONG).show(); }
-                        draw();
-                    }).show());
-        } else {
-            dialog.setMessage("Download Gemma 4 E2B (2.59 GB) on an unmetered connection for local text and vision. Choose AI processing to set its scope.")
-                .setPositiveButton("Download & load", (d, w) -> {
-                    try { PdfModel.download(ui.c); }
-                    catch (java.io.IOException | RuntimeException failed) {
-                        android.widget.Toast.makeText(ui.c, failed.getMessage(), android.widget.Toast.LENGTH_LONG).show();
-                    }
-                    draw();
-                });
-        }
-        dialog.show();
-    }
 
     private java.util.List<SettingRow> group(String title) {
         rows = new java.util.ArrayList<>();
@@ -96,28 +64,14 @@ final class SettingsScreen extends Screen {
         android.appwidget.AppWidgetManager widgets = android.appwidget.AppWidgetManager.getInstance(ui.c);
         if (widgets.isRequestPinAppWidgetSupported()) capture.add(row("Home screen widget", "", () -> widgets.requestPinAppWidget(new android.content.ComponentName(ui.c, InboxWidget.class), null, null)));
 
-        java.util.List<SettingRow> ingest = group("Ingest");
+        java.util.List<SettingRow> ingest = group("Processing");
         boolean canWrite = VaultWrite.writable(ui.c);
         ingest.add(toggle("Process captures into notes", Ingest.on(ui.c), () -> {
             if (!Ingest.on(ui.c) && !canWrite) { android.widget.Toast.makeText(ui.c, "Allow write access to the vault first", android.widget.Toast.LENGTH_SHORT).show(); return; }
-            if (!Ingest.on(ui.c) && Model.key(ui.c).isEmpty() && !PdfCapture.modelReady(ui.c)) { android.widget.Toast.makeText(ui.c, "Add an OpenRouter key or install the PDF model first", android.widget.Toast.LENGTH_SHORT).show(); return; }
+            if (!Ingest.on(ui.c) && Model.key(ui.c).isEmpty()) { android.widget.Toast.makeText(ui.c, "Add an OpenRouter key first", android.widget.Toast.LENGTH_SHORT).show(); return; }
             prefs().edit().putBoolean("ingest", !Ingest.on(ui.c)).apply(); BackgroundJob.schedule(ui.c); draw();
         }));
         ingest.add(row("Vault write access", canWrite ? "Granted" : "Not granted", canWrite ? null : () -> host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true))));
-        if (PdfCapture.supported()) {
-            String[] modes = {"Existing behavior (local PDFs when loaded)", "Local models only", "Remote models"};
-            ingest.add(row("AI processing", modes[PdfModel.mode(ui.c).ordinal()], () -> new AlertDialog.Builder(host)
-                .setTitle("AI processing").setSingleChoiceItems(modes, PdfModel.mode(ui.c).ordinal(), (dialog, which) -> {
-                    PdfModel.mode(ui.c, PdfModel.Mode.values()[which]); dialog.dismiss(); draw();
-                }).show()));
-            if (PdfModel.local(ui.c)) ingest.add(note("Gemma handles text, images and recall. Search uses keywords. Voice uses installed offline speech. Videos use sampled frames. Scout answers from local note excerpts. Web tools and editing require remote mode. Shared links still contact the source website.", false));
-            PdfModel.Status model = PdfModel.status(ui.c);
-            ingest.add(row("Gemma 4 E2B", model.label(), this::pdfModelDialog));
-            if (PdfModel.mode(ui.c) != PdfModel.Mode.REMOTE)
-                ingest.add(toggle("Interpret PDF figures", PdfModel.figures(ui.c), () -> { PdfModel.figures(ui.c, !PdfModel.figures(ui.c)); draw(); }));
-            main.removeCallbacks(refreshPdfModel);
-            if (visible && model.downloading()) main.postDelayed(refreshPdfModel, 1500);
-        }
         ingest.add(row("Ingest model", Ingest.model(ui.c), () -> modelDialog("Model for ingest", "An OpenRouter model id. A stronger model gives better topics.", "ingestModel", Ingest.model(ui.c), Ingest.DEFAULT_MODEL)));
         ingest.add(row("Lane and folder model", Classify.model(ui.c), () -> modelDialog("Model for Craft or Life", "An OpenRouter model id. It decides the lane and the subject folder of each new note.", "classifyModel", Classify.model(ui.c), Classify.DEFAULT_MODEL)));
         ingest.add(row("Instagram access", InstagramApi.signedIn() ? "Signed in on this phone" : "Sign in for reels unavailable publicly", () -> InstagramActivity.open(ui.c, "")));
@@ -134,12 +88,12 @@ final class SettingsScreen extends Screen {
 
         java.util.List<SettingRow> ai = group("AI key");
         boolean keySaved = !Model.key(ui.c).isEmpty();
-        ai.add(row("OpenRouter key", PdfModel.local(ui.c) ? "Disabled in local mode" : keySaved ? "Saved" : "Not set", () -> keyDialog()));
+        ai.add(row("OpenRouter key", keySaved ? "Saved" : "Not set", () -> keyDialog()));
         ai.add(row("Tagging model", prefs().getString("aiModel", Model.DEFAULT), () -> modelDialog("Model for tags", "An OpenRouter model id.", "aiModel", prefs().getString("aiModel", Model.DEFAULT), Model.DEFAULT)));
         ai.add(row("Scout model", Ask.model(ui.c), () -> modelDialog("Model for Scout", "It must support tool calls.", "askModel", Ask.model(ui.c), Ask.DEFAULT)));
         ai.add(row("Scout thinking", Scout.thinking(ui.c), () -> { String now = Scout.thinking(ui.c); int next = (java.util.Arrays.asList(Scout.LEVELS).indexOf(now) + 1) % Scout.LEVELS.length; prefs().edit().putString("scoutThinking", Scout.LEVELS[next]).apply(); draw(); }));
         ai.add(row("Card model", CardGen.model(ui.c), () -> modelDialog("Model for cards", "An OpenRouter model id.", "cardModel", CardGen.model(ui.c), CardGen.DEFAULT_MODEL)));
-        if (keySaved || PdfModel.localReady(ui.c)) {
+        if (keySaved) {
             boolean describe = prefs().getBoolean("describe", false);
             ai.add(toggle("Describe photos, PDFs and videos", describe, () -> { prefs().edit().putBoolean("describe", !describe).apply(); BackgroundJob.schedule(ui.c); draw(); }));
             if (keySaved) ai.add(row("Remove key", "", () -> { Model.clear(ui.c); draw(); }));
@@ -154,7 +108,7 @@ final class SettingsScreen extends Screen {
         }
         tools.add(row("Add a server", "Remote MCP over HTTPS. Save and test the connection.", () -> addServerDialog()));
 
-        java.util.List<SettingRow> spark = group("Spark");
+        java.util.List<SettingRow> spark = group("Review");
         int[] p = snap == null ? new int[]{0, 0} : CardGen.progress(snap);
         String state = CardGen.on(ui.c) ? (CardGen.running() ? "Making cards " + p[0] + " of " + p[1] : "Paused at " + p[0] + " of " + p[1]) : p[0] > 0 && p[0] >= p[1] ? "All notes done" : "Not started";
         spark.add(row("Make cards for existing notes", state, () -> host.push(new CardGenScreen())));

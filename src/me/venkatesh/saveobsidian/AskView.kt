@@ -296,14 +296,16 @@ private fun AskUi(store: AskState, a: AskActions, ui: Ui) {
                 if (s.offline) Box(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp)) { BlockUi(Banner("You are offline. Earlier answers stay readable. Scout needs a network connection.", false)) }
                 if (s.toolNotice.isNotEmpty()) Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { BlockUi(Banner(s.toolNotice, true)) }
                 if (intro != null) {
-                    Column(Modifier.weight(1f).padding(horizontal = 24.dp), verticalArrangement = Arrangement.Center) {
-                        Text("Scout", style = MaterialTheme.typography.headlineMedium)
-                        Text(intro.text, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
-                    }
-                    intro.suggestions.forEach { q ->
-                        Row(Modifier.fillMaxWidth().clickable { a.suggest(q) }.padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(8.dp).clip(CircleShape).background(cs.primary))
-                            Text(q, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 14.dp))
+                    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom)) {
+                        item {
+                            Text("Ask your notes", style = MaterialTheme.typography.headlineMedium)
+                            Text(intro.text, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
+                        }
+                        items(intro.suggestions.size) { index ->
+                            val q = intro.suggestions[index]
+                            Surface(onClick = { a.suggest(q) }, shape = RoundedCornerShape(12.dp), color = cs.surfaceContainerLow) {
+                                Text(q, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().padding(16.dp))
+                            }
                         }
                     }
                 } else Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -330,7 +332,10 @@ private fun AskUi(store: AskState, a: AskActions, ui: Ui) {
                     Text("Note in context: " + s.context, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     TextButton(onClick = { a.clearContext() }) { Text("Remove") }
                 }
-                Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Text(
+                        listOf(if (s.web) "Notes + web" else "Notes only", if (s.fullAccess) "Full access" else "Ask before changes").joinToString(" · "),
+                        style = MaterialTheme.typography.labelMedium, color = if (s.fullAccess) LocalStatus.current.warn else cs.onSurfaceVariant)
                     if (s.research) TextButton(onClick = { store.research(false) }) { Text("Research ×") }
                 }
                 Composer(s, store, a)

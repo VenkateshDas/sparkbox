@@ -80,8 +80,7 @@ final class FeedScreen extends Screen {
             view.toTop();
         }
         @Override public void menu(int which) {
-            if (which == 0) host.push(new ProfileScreen());
-            else if (which == 1) host.push(new SettingsScreen());
+            if (which == 1) host.push(new SettingsScreen());
             else if (which == 3) host.push(new DashboardScreen());
             else host.startActivity(new Intent(host, VaultActivity.class));
         }
@@ -141,7 +140,7 @@ final class FeedScreen extends Screen {
             });
         }
         @Override public void emptyAction(boolean vaultReady) {
-            if (vaultReady) scan(); else host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true));
+            if (vaultReady) captureMenu(); else host.startActivity(new Intent(host, VaultActivity.class).putExtra(VaultActivity.PICK_WRITE, true));
         }
         @Override public View thumb(Feed.Item it) { return Thumb.view(ui.c, ui, it.title, it.url, 0, 160); }
     };

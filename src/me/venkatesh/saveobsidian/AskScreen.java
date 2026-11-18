@@ -182,7 +182,7 @@ final class AskScreen extends Screen {
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         int n = 0;
         if (snap != null) for (Vault.Note note : snap.graph.notes) if (!note.catalog && !note.path.endsWith("/My cards.md")) n++;
-        view.header(n == 0 ? "Your vault is not loaded yet" : String.format(java.util.Locale.US, "%,d notes in your vault", n), !online());
+        view.header(n == 0 ? "Your vault is not loaded yet" : String.format(java.util.Locale.US, n == 1 ? "%,d note in your vault" : "%,d notes in your vault", n), !online());
         refresh();
         if (pendingQuestion != null) { String q = pendingQuestion; pendingQuestion = null; ask(q); }
     }
@@ -360,7 +360,6 @@ final class AskScreen extends Screen {
     private void intro() {
         VaultStore.Snap snap = VaultStore.cached(ui.c);
         if (!VaultStore.ready(ui.c) || snap == null) items.add(new Intro("Choose your vault folder first.", new ArrayList<>()));
-        else if (PdfModel.local(ui.c)) items.add(new Intro(PdfModel.localReady(ui.c) ? "Local Scout answers from matching vault notes." : "Load Gemma in Settings for local answers.", new ArrayList<>()));
         else if (Model.key(ui.c).isEmpty()) items.add(new Intro("Scout needs an OpenRouter key. Add one in Settings.", new ArrayList<>()));
         else {
             List<Vault.Note> hubs = new ArrayList<>();
@@ -368,7 +367,7 @@ final class AskScreen extends Screen {
             hubs.sort((a, b) -> snap.graph.in(b).size() - snap.graph.in(a).size());
             List<String> tries = new ArrayList<>();
             for (Vault.Note n : hubs.subList(0, Math.min(3, hubs.size()))) tries.add("What do my notes say about " + n.title + "?");
-            items.add(new Intro("Scout reads your notes, answers with citations, and can change notes when you ask. Every chat keeps working when you leave the app. Choose action approvals in the + menu; Full access runs without approval prompts. Start a message with /research for a thorough, multi-source investigation. What you ask, and the notes it reads, are sent to OpenRouter.", tries));
+            items.add(new Intro("Ask a question to find answers with sources. OpenRouter receives your question and the notes Scout reads.", tries));
         }
     }
 
@@ -390,7 +389,7 @@ final class AskScreen extends Screen {
             return;
         } // delivered after the current tools finish, before the next model call
         VaultStore.Snap snap = VaultStore.cached(ui.c);
-        if (snap == null || Model.key(ui.c).isEmpty() && !PdfModel.localReady(ui.c)) { refresh(); return; }
+        if (snap == null || Model.key(ui.c).isEmpty()) { refresh(); return; }
         if (!online()) { view.header("", true); Toast.makeText(ui.c, "You are offline", Toast.LENGTH_SHORT).show(); return; }
         flushDraft();
         String previousFile = file;

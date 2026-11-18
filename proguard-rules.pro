@@ -3,8 +3,3 @@
 # org.json comes from the platform
 -dontwarn org.json.**
 
-# LiteRT-LM 0.18.1 reads these getters by name in nativeSendMessage.
--keepclassmembers class com.google.ai.edge.litertlm.ThinkingConfig {
-    boolean getEnableThinking();
-    int getThinkingTokenBudget();
-}

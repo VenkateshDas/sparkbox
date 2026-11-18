@@ -10,9 +10,7 @@ import org.json.JSONObject;
 
 /** The streamed OpenRouter chat completion (SSE), pure Java so the JVM checks and scripts/live-agent.sh can use it. Model.stream delegates here. */
 public final class OpenRouter {
-    static volatile java.util.function.BooleanSupplier remoteAllowed = () -> true;
     static void requireRemote() throws IOException {
-        if (!remoteAllowed.getAsBoolean()) throw new IOException("Remote model calls are disabled in local mode.");
     }
 
     private OpenRouter() { }

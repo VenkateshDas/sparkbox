@@ -38,8 +38,6 @@ final class Tagger {
             if (c.getSharedPreferences("capture", 0).getString("inbox", "").isEmpty()) return;
             String[] stages;
             if (!key.isEmpty()) stages = new String[]{"sweep", "tag", "file", "transcribe", "describe", "cards", "backfill", "embed"};
-            else if (PdfModel.localReady(c)) stages = new String[]{"sweep", "transcribe", "tag", "file", "describe", "cards"};
-            else if (PdfModel.local(c)) stages = new String[]{"sweep", "transcribe"};
             else {
                 if (Ingest.ready(c)) Ingest.run(c, key);
                 return;
@@ -81,17 +79,14 @@ final class Tagger {
             List<InboxFile.Entry> all = InboxFile.parse(CaptureService.readText(c));
             for (int i = all.size() - 1; i >= 0 && next == null; i--) {
                 InboxFile.Entry e = all.get(i);
-                boolean worth = e.text ? e.body.length() >= 40 : !e.url.isEmpty() && !Ingest.ready(c); // a three-word note needs no summary; with processing on, links are tagged by the ingest call itself
+                boolean worth = (e.text ? e.body.length() >= IngestText.MIN_NOTE : !e.url.isEmpty()) && !Ingest.ready(c); // a three-word note needs no summary; with processing on, links are tagged by the ingest call itself
                 if (worth && (e.type.isEmpty() || e.heading.isEmpty() || e.heading.equals(e.title) || stale(c, e)) && !skipped.contains(e.raw)) next = e; // heading.isEmpty(): backfill titles for captures tagged before titles existed
             }
             if (next == null) return;
             String pageUrl = next.url;
             String[] result;
             try (Metrics.Operation metrics = Tracking.capture(c, next, "enrichment")) {
-                if (PdfModel.local(c) && next.text) {
-                    String reply = PdfVision.text(c, Enrich.NOTE + Enrich.INSTRUCTIONS, next.body + Enrich.notes(next.why, next.ideas), 300);
-                    result = Model.parseContent(reply);
-                } else result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(c, key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
+                result = next.text ? Model.enrichNote(key, model, next.body, next.why, next.ideas) : Model.enrich(c, key, model, next.title, next.url, next.why, next.ideas, page -> Content.save(c, pageUrl, page));
                 metrics.outcome("enriched");
             }
             catch (Exception failed) {
@@ -172,15 +167,10 @@ final class Tagger {
             if (job.optString("entry").isEmpty()) {
                 String text;
                 try (Metrics.Operation metrics = Metrics.operation("Capture processing", Tracking.scope(c, job.optString("captureId")), "transcription")) {
-                    text = PdfModel.local(c) ? LocalSpeech.read(audio) : Model.transcribe(key, Files.readAllBytes(audio.toPath()), job.optString("format", "m4a")); metrics.outcome("transcribed");
+                    text = Model.transcribe(key, Files.readAllBytes(audio.toPath()), job.optString("format", "m4a")); metrics.outcome("transcribed");
                 }
                 catch (Model.Rejected refused) { CaptureService.writeJob(file, job.put("error", refused.getMessage() + ". The recording is kept.")); continue; }
                 catch (java.nio.file.NoSuchFileException gone) { new AtomicFile(file).delete(); continue; }
-                catch (Exception failed) {
-                    if (!PdfModel.local(c) || halt()) throw failed;
-                    CaptureService.writeJob(file, job.put("error", "Local speech: " + failed.getMessage()));
-                    continue;
-                }
                 if (text.isEmpty()) { audio.delete(); new AtomicFile(file).delete(); continue; } // nothing was said
                 CaptureService.writeJob(file, job.put("entry", Capture.textEntry(job.getString("time"), text, "Sparkbox voice")).put("label", Capture.clean(text)));
             }
@@ -227,24 +217,14 @@ final class Tagger {
             try {
                 try (Metrics.Operation metrics = Tracking.capture(c, next, "vision")) {
                     if (pdf) {
-                        try (PdfVision vision = new PdfVision(c)) {
-                            String text;
-                            try { text = PdfCapture.read(c, uri, vision); }
-                            catch (java.io.IOException unreadable) { continue; }
-                            result = vision.available() ? IngestText.pdfTags(vision.plan(text, next.shownTitle(), next.why, next.ideas, "")) : Model.describePdfText(key, text);
-                        }
-                    } else if (video && PdfModel.local(c)) {
-                        try (PdfVision vision = new PdfVision(c)) {
-                            result = IngestText.mediaTags("video", vision.plan(vision.video(uri), next.file, next.why, next.ideas, ""));
-                        }
+                        String text;
+                        try { text = PdfCapture.read(c, uri); }
+                        catch (java.io.IOException unreadable) { continue; }
+                        result = Model.describePdfText(key, text);
                     } else {
                         byte[] data = video ? Attach.read(c, uri, 24 * 1024 * 1024) : Attach.jpeg(c, uri, 1024);
                         if (data == null) continue;
-                        if (PdfModel.local(c)) {
-                            try (PdfVision vision = new PdfVision(c)) {
-                                result = IngestText.mediaTags("image", vision.plan(vision.describe(data, true), next.file, next.why, next.ideas, ""));
-                            }
-                        } else result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, data);
+                        result = video ? Model.describeVideo(key, next.file, data) : Model.describe(key, next.file, data);
                     }
                     metrics.outcome("described");
                 }

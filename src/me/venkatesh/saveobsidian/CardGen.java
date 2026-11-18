@@ -78,7 +78,7 @@ final class CardGen {
      */
     static boolean run(Context c) {
         String key = Model.key(c);
-        if (key.isEmpty() && !PdfModel.localReady(c) || !VaultWrite.writable(c)) {
+        if (key.isEmpty() || !VaultWrite.writable(c)) {
             prefs(c).edit().putString("problem", key.isEmpty() ? "Add your OpenRouter key in Setup." : "Allow write access to your vault folder in Setup.").apply();
             return false;
         }
@@ -88,7 +88,7 @@ final class CardGen {
         final List<Vault.Note> batch = new ArrayList<>(todo.subList(0, Math.min(BATCH, todo.size())));
         if (batch.isEmpty()) return false;
         final java.util.concurrent.atomic.AtomicBoolean abort = new java.util.concurrent.atomic.AtomicBoolean();
-        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(PdfModel.local(c) ? 1 : Math.min(WORKERS, batch.size()));
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(Math.min(WORKERS, batch.size()));
         java.util.concurrent.CompletionService<Result> finished = new java.util.concurrent.ExecutorCompletionService<>(pool);
         for (final Vault.Note n : batch) finished.submit(() -> {
             Result r = new Result();
@@ -131,7 +131,6 @@ final class CardGen {
 
     /** One model call. A rate limit (429) is waited out once, because several calls run at a time now. */
     private static String call(Context c, String key, String input, boolean noReasoning) throws Exception {
-        if (PdfModel.local(c)) return PdfVision.text(c, CardPrompt.SYSTEM, input, 1000);
         try { return Model.complete(key, model(c), CardPrompt.SYSTEM, input, 4000, noReasoning); }
         catch (java.io.IOException limited) {
             if (!String.valueOf(limited.getMessage()).contains("answered 429")) throw limited;

@@ -25,10 +25,6 @@
             <action android:name="android.intent.action.BOOT_COMPLETED" />
             <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
         </intent-filter></receiver>
-        <receiver android:name=".PdfModel" android:exported="true">
-            <intent-filter><action android:name="android.intent.action.DOWNLOAD_COMPLETE" /></intent-filter>
-        </receiver>
-        <service android:name=".PdfVisionService" android:process=":pdf_inference" android:exported="false" />
         <service android:name=".PdfRenderService" android:isolatedProcess="true" android:exported="false" />
         <service android:name=".CaptureService" android:exported="false" android:foregroundServiceType="shortService" />
         <activity android:name=".ShareActivity" android:taskAffinity="" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:exported="true" android:excludeFromRecents="true">

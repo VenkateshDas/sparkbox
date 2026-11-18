@@ -56,7 +56,7 @@ final class SparkScreen extends Screen {
     private final SparkActions actions = new SparkActions() {
         @Override public void reveal(String confidence) { seconds = (int) Math.max(1, (System.currentTimeMillis() - shownAt) / 1000); conf = confidence; }
         @Override public void park() { if (card != null) { CardStore.park(ui.c, card, System.currentTimeMillis() + 24L * 3600 * 1000); next(); } }
-        @Override public void flag() { if (card != null) { CardStore.flag(ui.c, card, true); Toast.makeText(ui.c, "Flagged. It will not come back.", Toast.LENGTH_SHORT).show(); next(); } }
+        @Override public void flag() { if (card != null) { CardStore.flag(ui.c, card, true); Toast.makeText(ui.c, "Card paused. Unflag it in Cards to review it again.", Toast.LENGTH_SHORT).show(); next(); } }
         @Override public void source() { if (note != null) host.openNote(note.path); }
         @Override public void explain() { if (note != null) host.askAbout(note.path, note.title); }
         @Override public void edit() { if (card != null) CardSheet.show(host, ui, card, null, SparkScreen.this::draw); }
@@ -101,14 +101,14 @@ final class SparkScreen extends Screen {
         final Cards.Card k = card;
         final Vault.Note n = note;
         final String key = Model.key(ui.c);
-        if (k == null || key.isEmpty() && !PdfModel.localReady(ui.c)) return;
+        if (k == null || key.isEmpty()) return;
         view.showFeedback("Checking...");
         new Thread(() -> {
             String out;
             try (Metrics.Operation metrics = Metrics.operation("Recall feedback", java.util.UUID.randomUUID().toString(), "answer feedback")) {
                 String text = n == null ? null : VaultWrite.read(ui.c, n.path);
                 String in = "Card question: " + k.q + "\nKey answer: " + k.a + "\nNote:\n" + (text == null ? "" : CardPrompt.input(text)) + "\nOwner's answer: " + typed;
-                out = PdfModel.local(ui.c) ? PdfVision.text(ui.c, SYSTEM, in, 300) : Model.complete(key, CardGen.model(ui.c), SYSTEM, in, 300, true).trim();
+                out = Model.complete(key, CardGen.model(ui.c), SYSTEM, in, 300, true).trim();
                 metrics.done(); Metrics.event("recall_feedback", null);
             } catch (Exception e) { out = "Could not check: " + e.getMessage(); }
             final String shown = out;
@@ -209,7 +209,7 @@ final class SparkScreen extends Screen {
                 if (mode.equals("retry")) retried.add(k.id);
                 next();
             }));
-        boolean ai = (PdfModel.localReady(ui.c) || !Model.key(ui.c).isEmpty()) && !c.origin.equals("inspire") && (type.equals("why") || type.equals("teach") || type.equals("apply") || type.equals("classic") || type.equals("cloze"));
+        boolean ai = !Model.key(ui.c).isEmpty() && !c.origin.equals("inspire") && (type.equals("why") || type.equals("teach") || type.equals("apply") || type.equals("classic") || type.equals("cloze"));
         return new SparkCard(c.id, note == null ? "" : Lane.of(note.path, note.meta), c.mine() && note == null ? "My card" : note == null ? "Note" : note.title, type, q, a, expect, c.take,
             options, done, total, writable, note != null && !c.mine(), askConfidence(ui.c), ai, grades, canBack, canForward, pos);
     }

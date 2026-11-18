@@ -139,10 +139,11 @@ private fun DashboardPage(state: DashboardState, actions: DashboardActions) {
             }
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item {
-                    Text(when (section) { "Overview" -> "Your garden, in view."; "Costs" -> "Where did the money go?"; "Scout" -> "See what Scout did."; else -> section }, style = MaterialTheme.typography.headlineSmall)
+                    Text(when (section) { "Overview" -> "Library overview"; "Costs" -> "AI costs"; "Scout" -> "Scout activity"; else -> section }, style = MaterialTheme.typography.headlineSmall)
                     Text("Local snapshot · ${if (data.optLong("asOf") > 0) DateTimeFormatter.ofPattern("dd MMM, HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(data.optLong("asOf"))) else "Waiting for data"}", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                     if (data.has("error")) Text(data.optString("error"), color = cs.error)
                 }
+                if (data.optLong("asOf") == 0L) return@LazyColumn
                 item {
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(7 to "7 days", 30 to "30 days", 90 to "90 days", 0 to "All retained").forEach { (n, label) -> DashboardPill(label, days == n) { days = n; visibleRequests = 30 } }
@@ -289,6 +290,17 @@ private fun DashboardPage(state: DashboardState, actions: DashboardActions) {
 }
 private fun LazyListScope.overviewItems(data: JSONObject, requests: List<JSONObject>, navigate: (String) -> Unit, note: (String) -> Unit) {
     val vault = data.objectOrEmpty("vault"); val recall = data.objectOrEmpty("recall")
+    val health = data.objectOrEmpty("health")
+    val pending = health.optInt("pendingCaptures")
+    val recoveries = health.optInt("recoveries")
+    if (pending > 0 || recoveries > 0 || health.optInt("pendingCards") > 0) item {
+        DashboardPanel("Needs attention") {
+            if (pending > 0) DashboardValue("Pending captures", dn(pending.toLong()))
+            if (recoveries > 0) DashboardValue("Recovery copies", dn(recoveries.toLong()))
+            if (health.optInt("pendingCards") > 0) DashboardValue("Pending card saves", dn(health.optLong("pendingCards")))
+            TextButton(onClick = { navigate("Health") }) { Text("Open health details") }
+        }
+    }
     item { InventoryMetrics(vault) }
     item { DashboardMetrics(listOf("Cards with review state" to dn(recall.optLong("reviewed")), "Recorded AI spend" to money(sumCost(requests)))) }
     item { DashboardPanel("Captured · connected · revisited") { DashboardValue("Source records", dn(vault.optLong("sourceCount"))); DashboardValue("Source notes with cards", dn(vault.optLong("sourceCards"))); DashboardValue("Cards reviewed", dn(recall.optLong("reviewed"))); Muted("Current inventory, not a conversion funnel. Accumulation is not a learning score.") } }

@@ -17,27 +17,25 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-/** PDF bytes go only to Android's isolated renderer. The local model sees sampled page images. */
+/** PDF bytes go only to Android's isolated renderer. */
 final class PdfCapture {
     private record Image(int page, boolean scan, byte[] jpeg) { }
     private record Document(String text, int scans, int candidates, List<Image> images) { }
 
     static boolean supported() { return android.os.Build.VERSION.SDK_INT >= 35; }
 
-    static boolean modelReady(Context c) { return supported() && PdfModel.mode(c) != PdfModel.Mode.REMOTE && PdfModel.enabled(c) && PdfModel.file(c).isFile(); }
-
-    static String read(Context context, byte[] bytes, PdfVision vision) throws IOException {
-        return read(context, new java.io.ByteArrayInputStream(bytes), vision);
+    static String read(Context context, byte[] bytes) throws IOException {
+        return read(context, new java.io.ByteArrayInputStream(bytes));
     }
 
-    static String read(Context context, android.net.Uri uri, PdfVision vision) throws IOException {
+    static String read(Context context, android.net.Uri uri) throws IOException {
         try (var input = context.getContentResolver().openInputStream(uri)) {
             if (input == null) throw new IOException("PDF unavailable");
-            return read(context, input, vision);
+            return read(context, input);
         }
     }
 
-    private static String read(Context context, java.io.InputStream input, PdfVision vision) throws IOException {
+    private static String read(Context context, java.io.InputStream input) throws IOException {
         Context app = context.getApplicationContext();
         File temp = File.createTempFile("capture-", ".pdf", app.getCacheDir());
         Document pdf;
@@ -48,35 +46,18 @@ final class PdfCapture {
                 for (int n; (n = input.read(buffer)) != -1;) {
                     if (Tagger.halt()) throw new IOException("PDF reading paused");
                     total += n;
-                    if (total > IngestText.PDF_BYTES) throw new IOException("PDF exceeds the 10 MiB processing limit.");
+                    if (total > IngestText.PDF_BYTES) throw new IOException("PDF exceeds the 40 MiB processing limit.");
                     out.write(buffer, 0, n);
                 }
             }
             try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_READ_ONLY)) {
-                pdf = extract(app, fd, vision != null && vision.available() && PdfModel.figures(app));
+                pdf = extract(app, fd, false);
             }
         } finally { temp.delete(); }
         if (Tagger.halt()) throw new IOException("Processing paused");
-        if (pdf.text().isEmpty() && pdf.images().isEmpty())
+        if (pdf.text().isEmpty())
             throw new IOException("No readable text found in the PDF text layer or Latin-script OCR.");
         StringBuilder notes = new StringBuilder();
-        if (!pdf.images().isEmpty()) {
-            try {
-                for (Image image : pdf.images()) {
-                    if (Tagger.halt()) throw new IOException("Processing paused");
-                    String description = vision.describe(image.jpeg(), image.scan()).replaceAll("\\s+", " ").trim();
-                    if (!description.isEmpty()) notes.append("\n- Page ").append(image.page()).append(": ").append(description);
-                }
-            } catch (Net.Deferred paused) { throw paused; }
-            catch (Exception | LinkageError visionFailure) {
-                if (Tagger.halt()) throw new IOException("Processing paused", visionFailure);
-                if (pdf.text().isEmpty()) throw new IOException("The local vision model could not read this scan. Check the PDF vision model in Settings.", visionFailure);
-                notes.append("\n- The local vision model could not finish. Extracted text is available.");
-            }
-        }
-        if (pdf.text().isEmpty() && notes.length() == 0) throw new IOException("The local vision model found no readable scan content");
-        if (notes.length() > 0 && pdf.candidates() > pdf.images().size())
-            notes.append("\n- Visual analysis sampled ").append(pdf.images().size()).append(" of ").append(pdf.candidates()).append(" candidate pages.");
         if (pdf.scans() > 0) notes.append("\n- ").append(pdf.scans()).append(" page(s) had no readable text after OCR.");
         return pdf.text() + (notes.length() == 0 ? "" : IngestText.PDF_VISUAL_HEADING + notes);
     }

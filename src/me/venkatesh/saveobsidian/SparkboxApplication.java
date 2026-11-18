@@ -5,7 +5,6 @@ public final class SparkboxApplication extends android.app.Application {
     @Override public void onCreate() {
         super.onCreate();
         if (android.os.Process.myUid() != getApplicationInfo().uid || android.os.Build.VERSION.SDK_INT >= 28 && !getPackageName().equals(getProcessName())) return;
-        OpenRouter.remoteAllowed = () -> !PdfModel.local(this);
         Metrics.configure(new java.io.File(getFilesDir(), "metrics.jsonl"), getSharedPreferences("metrics", 0).getBoolean("enabled", true));
         new Thread(() -> { Metrics.prune(); Tracking.prune(this); }, "statistics-retention").start();
     }

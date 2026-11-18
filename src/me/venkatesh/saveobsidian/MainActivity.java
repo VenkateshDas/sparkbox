@@ -18,7 +18,7 @@ import java.util.List;
  */
 public class MainActivity extends androidx.activity.ComponentActivity {
     static final String TAB = "tab";
-    private static final String[] NAMES = {"Feed", "Spark", "Search", "Scout"};
+    private static final String[] NAMES = {"Library", "Review", "Search", "Scout"};
     /** Search has no tab of its own any more: slot 2 stays so the other tab numbers (widgets and notifications use them) do not move. */
     private static final int[] SHOWN = {0, 1, 3};
     private static final int[] ICONS = {R.drawable.ic_nav_feed, R.drawable.ic_nav_spark, 0, R.drawable.ic_nav_ask};
@@ -27,23 +27,28 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     private FrameLayout content;
     private LinearLayout nav;
     private final Screen[] tabs = new Screen[4];
-    private final View[] built = new View[4];
-    private final List<Screen> stack = new ArrayList<>();
-    private final List<View> stackViews = new ArrayList<>();
+    private final List<List<Screen>> histories = new ArrayList<>();
+    private final java.util.Map<Screen, View> views = new java.util.IdentityHashMap<>();
+    private View visibleView;
+    private int returnTab = -1;
+
+    private List<Screen> stack() { return histories.get(tab); }
     private int tab;
     private boolean dark;
+    private String activeVault;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false);
         tab = state != null ? state.getInt(TAB, 0) : Math.max(0, Math.min(3, getIntent().getIntExtra(TAB, 0)));
-        for (int i = 0; i < tabs.length; i++) { tabs[i] = screen(i); tabs[i].host = this; }
+        for (int i = 0; i < tabs.length; i++) { histories.add(new ArrayList<>()); tabs[i] = screen(i); tabs[i].host = this; }
+        if (tab == 2) tab = 0;
+        activeVault = VaultStore.tree(this);
         draw();
         // Back goes through the androidx dispatcher (predictive back on Android 13+, and Compose screens can add their own callbacks above this one)
         getOnBackPressedDispatcher().addCallback(this, shellBack);
         CardGen.resume(this);
         Reminder.schedule(this);
-        if (PdfCapture.supported()) PdfModel.status(this);
         ScoutJob.reschedule(this);
         Ingest.clearLegacyPdfError(this);
         BackgroundJob.schedule(this); // a force-stop or crash drops scheduled jobs: opening the app picks up unfinished captures
@@ -87,15 +92,25 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         super.onResume();
         InboxWidget.refresh(this); // the widget shows the inbox as it is now
         new Thread(() -> VaultWrite.healInbox(getApplicationContext())).start(); // sets the inbox from the vault folder, or repairs it after a move
+        if (!VaultStore.tree(this).equals(activeVault)) {
+            activeVault = VaultStore.tree(this);
+            for (int i = 0; i < tabs.length; i++) {
+                histories.get(i).clear();
+                tabs[i] = screen(i);
+                tabs[i].host = this;
+            }
+            tab = 0;
+            returnTab = -1;
+            draw();
+            return;
+        }
         if (Ui.dark(this) != dark) { draw(); return; } // the Theme setting changed while another screen was open
         current().onShow();
-        zapper.removeCallbacks(zap);
-        zapper.postDelayed(zap, 3000);
     }
 
-    @Override protected void onPause() { super.onPause(); current().onHide(); zapper.removeCallbacks(zap); }
+    @Override protected void onPause() { super.onPause(); current().onHide(); }
 
-    private Screen current() { return stack.isEmpty() ? tabs[tab] : stack.get(stack.size() - 1); }
+    private Screen current() { return stack().isEmpty() ? tabs[tab] : stack().get(stack().size() - 1); }
 
     /** Builds the whole shell. Runs at start and when the theme changes. */
     private void draw() {
@@ -132,35 +147,11 @@ public class MainActivity extends androidx.activity.ComponentActivity {
             return insets;
         });
         root.requestApplyInsets();
-        for (int i = 0; i < built.length; i++) built[i] = null;
-        List<Screen> keep = new ArrayList<>(stack);
-        stack.clear();
-        stackViews.clear();
-        showTab(); // the tab first, so back from the re-opened screens has it to return to
-        for (Screen s : keep) push(s);
+        views.clear();
+        visibleView = null;
+        showCurrent();
+
     }
-
-    // ---- the Spark icon zaps now and then when cards are due, so it asks for attention without a card in the Feed ----
-
-    private static final long ZAP_EVERY = 9000;
-    private android.widget.ImageView sparkIcon;
-    private final android.os.Handler zapper = new android.os.Handler(android.os.Looper.getMainLooper());
-    private final Runnable zap = new Runnable() {
-        @Override public void run() {
-            zapper.postDelayed(this, ZAP_EVERY);
-            if (sparkIcon == null || tab == 1 || !stack.isEmpty() || SparkScreen.plan(ui).queue.isEmpty()) return;
-            final android.widget.ImageView v = sparkIcon;
-            v.setImageTintList(ColorStateList.valueOf(ui.accent));
-            v.animate().scaleX(1.35f).scaleY(1.35f).setDuration(140).withEndAction(() -> {
-                android.animation.ObjectAnimator wiggle = android.animation.ObjectAnimator.ofFloat(v, View.ROTATION, 0f, -16f, 14f, -10f, 7f, 0f);
-                wiggle.setDuration(520);
-                wiggle.addListener(new android.animation.AnimatorListenerAdapter() {
-                    @Override public void onAnimationEnd(android.animation.Animator a) { v.animate().scaleX(1f).scaleY(1f).setDuration(160).withEndAction(() -> v.setImageTintList(ColorStateList.valueOf(tab == 1 ? ui.accent : ui.sub))).start(); }
-                });
-                wiggle.start();
-            }).start();
-        }
-    };
 
     private void fillNav() {
         nav.removeAllViews();
@@ -176,7 +167,6 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         item.setGravity(Gravity.CENTER);
         android.widget.ImageView icon = new android.widget.ImageView(this);
         icon.setImageResource(ICONS[i]);
-        if (i == 1) sparkIcon = icon;
         icon.setImageTintList(ColorStateList.valueOf(color));
         icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         item.addView(icon, new LinearLayout.LayoutParams(ui.dp(24), ui.dp(24)));
@@ -187,27 +177,71 @@ public class MainActivity extends androidx.activity.ComponentActivity {
         item.addView(label, lp);
         item.setContentDescription(NAMES[i]);
         item.setSelected(on);
-        item.setOnClickListener(v -> select(i));
+        item.setOnClickListener(v -> {
+            returnTab = -1;
+            if (i == tab) select(i); else switchTab(i);
+        });
         Ui.buttonRole(item);
         return item;
     }
 
-    /** Switches tab, closing any detail screens opened on the one being left. */
-    void select(int i) {
-        if (i == tab && stack.isEmpty()) { if (i == 1) ((SparkScreen) tabs[1]).reset(); return; } // tapping Spark again goes back to the topic picker
-        if (i == 1) ((SparkScreen) tabs[1]).reset();
-        current().onHide();
-        stack.clear();
-        stackViews.clear();
-        tab = i;
+    /** Explicit navigation (including widgets and note actions) targets the tab root. */
+    void select(int index) {
+        int target = index == 2 ? 0 : index;
+        if (tab != target) {
+            current().onHide();
+            tab = target;
+        } else if (!stack().isEmpty()) current().onHide();
+        else {
+            if (tab == 1) ((SparkScreen) tabs[1]).reset();
+            return;
+        }
+        while (!stack().isEmpty()) removeDetail();
+        if (tab == 1) ((SparkScreen) tabs[1]).reset();
         fillNav();
-        showTab();
+        showCurrent();
     }
 
-    private void showTab() {
-        if (built[tab] == null) built[tab] = tabs[tab].build(ui);
-        show(built[tab]);
-        tabs[tab].onShow();
+    private void switchTab(int target) {
+        current().onHide();
+        tab = target;
+        fillNav();
+        showCurrent();
+    }
+
+    private void showCurrent() {
+        Screen screen = current();
+        View view = views.get(screen);
+        if (view == null) {
+            view = screen.build(ui);
+            views.put(screen, view);
+            content.addView(view, new FrameLayout.LayoutParams(-1, -1));
+        }
+        if (visibleView != null && visibleView != view) {
+            visibleView.clearFocus();
+            visibleView.setVisibility(View.GONE);
+        }
+        view.setVisibility(View.VISIBLE);
+        visibleView = view;
+        screen.onShow();
+    }
+
+    /** A completed background edit closes only its own page, even after a tab switch. */
+    void finishDetail(Screen screen) {
+        if (current() == screen) {
+            getOnBackPressedDispatcher().onBackPressed();
+            return;
+        }
+        for (List<Screen> history : histories) history.remove(screen);
+        View view = views.remove(screen);
+        if (view != null) content.removeView(view);
+    }
+
+    private void removeDetail() {
+        Screen removed = stack().remove(stack().size() - 1);
+        View view = views.remove(removed);
+        if (view != null) content.removeView(view);
+        if (visibleView == view) visibleView = null;
     }
 
     /** The Theme setting changed: rebuild the shell in place, keeping the open screens (recreate() would drop them). */
@@ -227,6 +261,7 @@ public class MainActivity extends androidx.activity.ComponentActivity {
 
     /** Ask about this: opens the Ask tab with the note in context and the message left for you to write. */
     void askAbout(String path, String title) {
+        if (tab != 3) returnTab = tab;
         select(3);
         ((AskScreen) tabs[3]).attach(path, title);
     }
@@ -273,30 +308,23 @@ public class MainActivity extends androidx.activity.ComponentActivity {
     /** Opens a detail screen over the current tab. Back closes it. */
     void push(Screen s) {
         s.host = this;
-        View v = s.build(ui);
         current().onHide();
-        stack.add(s);
-        stackViews.add(v);
-        show(v);
-        s.onShow();
-    }
-
-    private void show(View v) {
-        content.removeAllViews();
-        if (v.getParent() != null) ((ViewGroup) v.getParent()).removeView(v);
-        content.addView(v, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        stack().add(s);
+        showCurrent();
     }
 
     private final androidx.activity.OnBackPressedCallback shellBack = new androidx.activity.OnBackPressedCallback(true) {
         @Override public void handleOnBackPressed() {
             if (current().onBack()) return;
-            if (!stack.isEmpty()) {
+            if (!stack().isEmpty()) {
                 current().onHide();
-                stack.remove(stack.size() - 1);
-                stackViews.remove(stackViews.size() - 1);
-                show(stack.isEmpty() ? built[tab] : stackViews.get(stackViews.size() - 1));
-                current().onShow();
-            } else if (tab != 0) select(0);
+                removeDetail();
+                showCurrent();
+            } else if (tab != 0) {
+                int destination = tab == 3 && returnTab >= 0 ? returnTab : 0;
+                returnTab = -1;
+                switchTab(destination);
+            }
             else { setEnabled(false); getOnBackPressedDispatcher().onBackPressed(); setEnabled(true); } // the system's own back: leave the app
         }
     };

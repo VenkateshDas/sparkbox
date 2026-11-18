@@ -24,23 +24,23 @@ Version `1.11.0` (version code `18`). Min API 26, target API 35, compiled agains
 - **Make cards** writes recall cards into existing notes; voice notes are transcribed; photos and PDFs can be described.
 - **Instagram reels** are read from their public embed data, downloaded and watched by GLM 5.3 Flash through OpenRouter. Whisper supplies the speech transcript separately. The caption, video description and transcript are cached for ingest and included in the Source note. Private, unavailable or blocked posts stay queued with a readable error. Video downloads are capped at 24 MB.
 - When a reel cannot be read publicly, Sparkbox falls back to Instagram's current metadata format. Use **Settings → Instagram access** to sign in for reels your account can access. That session is separate from the Instagram app's login. Access failures pause automatic retries and offer an Instagram access action on the capture. Session cookies stay on the phone and are sent only to Instagram, never OpenRouter.
-- **PDFs** use Android's text layer on Android 15+ and bundled Latin-script OCR for image-only pages. Older Android versions use OCR for each page. The reader accepts PDFs up to 10 MiB and reads up to 150 pages or 400,000 characters. Scanned text appears under its page number.
-- **Settings → Ingest → AI processing** on Android 15+ offers Existing behavior, Local models only, and Remote models. Existing behavior preserves the previous PDF routing. Local mode blocks new OpenRouter calls, including background embeddings. Link captures still contact their source websites. Download Gemma 4 E2B (2.59 GB, unmetered) under **Gemma 4 E2B**. **Interpret PDF figures** is optional and defaults off in Local mode. See the [model choices and validation plan](docs/local-processing.md) and the [original OnePlus audit](docs/2026-11-18-pdf-phone-validation.md).
+- **PDFs** use Android's text layer on Android 15+ and bundled Latin-script OCR for image-only pages. Older Android versions use OCR for each page. The reader accepts PDFs up to 40 MiB and reads up to 150 pages or 400,000 characters. Scanned text appears under its page number.
+- **PDFs** (shared files, PDF links and arXiv papers) are read on the phone: the text layer first, then bundled Latin-script OCR for pages without text (Android 15+ uses an isolated renderer). The text then goes to your OpenRouter models. On-device (Gemma) processing was removed for now; see [local-processing.md](docs/local-processing.md) and the [original OnePlus audit](docs/2026-11-18-pdf-phone-validation.md).
 - Shared video files can be summarized and tagged through **Settings → Describe photos, PDFs and videos**, using the same video and transcription path. The original file stays in the attachments folder.
 
 **Use**
-- **Feed**: captures and notes as cards, with each capture's processing steps shown live on its card. Filter by Craft, Life, Sources, Topics or People. The visible **⋮** menu opens **Edit note** (full Markdown), **Cards**, and **Keep**; Sources also offer lane changes and trash. **Kept** collects bookmarked notes, including older Topics and People without recall cards. Keep never changes Feed or Spark order. Pull down to rescan the vault.
-- **Spark**: a daily spaced-repetition review of the cards (the FSRS-4.5 scheduler, a daily cap, park and flag).
-- **Search** (top of the Feed, with the same filters): word match first, meaning-based matches merged in.
-- **Ask**: a chat over your notes. Answers cite the notes they come from, and say "Not in your knowledge base" instead of guessing.
+- **Library** shows captures and notes. Each card leads with its title and saved reason. Open Details for processing steps. Filter by Craft, Life, Sources, Topics or People. The visible **⋮** menu opens **Edit note** (full Markdown), **Cards**, and **Keep**; Sources also offer lane changes and trash. **Kept** collects bookmarked notes, including older Topics and People without recall cards. Bookmarks preserve Library and Review order. Pull down to rescan the vault.
+- **Review** opens on due cards, with a searchable topic list, a daily cap, and actions to snooze or pause a card.
+- **Search** (top of Library, with the same filters): word match first, meaning-based matches merged in.
+- **Scout** is a chat over your notes. Answers cite the notes they come from, and say "Not in your knowledge base" instead of guessing.
 - **Source** and **Topic** pages mark each section as *from the source*, *AI* or *yours*. Your own words are edited in place. The full Markdown editor retains drafts, checks for concurrent edits, and keeps recovery copies when a save cannot be verified.
 - **Cards** supports creating, editing and deleting user or AI cards. Topics group their own cards with linked notes; changes affect the owning note. Parked and flagged cards remain manageable.
-- **Vault browser** (menu → Browse vault): folders, notes, Read / Links / Similar.
-- **Settings**: vault and inbox, processing switches, models, key, Spark, theme (System, Dark, Light), recovery. Model roles use a searchable OpenRouter catalog, with offline cache, Refresh and Custom ID.
+- **Browse** opens folders, vault details and the note reader from Library. Wider windows also show a searchable note list beside the reader.
+- **Settings**: vault and inbox, processing switches, models, key, review, theme (System, Dark, Light), recovery. Model roles use a searchable OpenRouter catalog, with offline cache, Refresh and Custom ID.
 
 ### Dashboard and local tracking
 
-Open **Feed → menu → Dashboard**, or **Settings → Dashboard**. Seven native views cover the current vault, habits, recall, Scout, costs and health. Costs has date/model/workflow filters, input/output and cache/reasoning breakdowns, daily history, retries/failures, completed-operation averages, card economics and request/operation receipts. Export the filtered numerical data locally.
+Open **Library → menu → Dashboard**, or **Settings → Dashboard**. Seven native views cover the current vault, habits, recall, Scout, costs and health. Costs has date/model/workflow filters, input/output and cache/reasoning breakdowns, daily history, retries/failures, completed-operation averages, card economics and request/operation receipts. Export the filtered numerical data locally.
 
 New requests are measured across streaming and non-streaming calls, including embeddings, vision and transcription. Capture processing, standalone cards, direct notes, search, Ask, recall feedback and Scout interactions get operation attribution. Initial cards supplied by an ingest plan share that request's cost; their isolated drafting cost is unavailable. Background indexing is a shared batch and is shown separately. Retained Scout request journals are merged by existing request ID, so the shared ledger does not add them twice. Missing charges/tokens stay unavailable; independently billed tools and credit fees are excluded.
 
@@ -116,7 +116,7 @@ The inbox and vault on the phone are real. Copy the vault off the phone before a
 |---|---|
 | App shell and navigation | `MainActivity.java` (tabs, back stack, theme), `Screen.java` |
 | UI (Kotlin, Jetpack Compose, Material 3) | `SparkTheme.kt`, `FeedView.kt`, `SparkView.kt`, `AskView.kt`, `SettingsView.kt`, `QuickView.kt`, `PageView.kt` (shared detail-page blocks) |
-| Screens (Java: data and actions) | `FeedScreen`, `SparkScreen`, `AskScreen`, `SettingsScreen`, `ProfileScreen`, `UnitScreen` (Source), `TopicScreen`, `NotesListScreen`, `CardsScreen`, `CardGenScreen`, `CaptureScreen`, `CaptureMapScreen`, `VaultActivity`, `QuickActivity` |
+| Screens (Java: data and actions) | `FeedScreen`, `SparkScreen`, `AskScreen`, `SettingsScreen`, `UnitScreen` (Source), `TopicScreen`, `NotesListScreen`, `CardsScreen`, `CardGenScreen`, `CaptureScreen`, `CaptureMapScreen`, `VaultActivity`, `QuickActivity` |
 | Capture | `ShareActivity`, `CaptureService`, `RecordService`, `QuickTile`, `InboxWidget`, `Capture`, `InboxFile`, `AppendCheck` |
 | Processing | `BackgroundJob`, `Tagger` (the background run), `Ingest`, `IngestText`, `Classify`, `Enrich`, `CardGen`, `Transcript`, `Fetch`, `Web`, `Content`, `Model` (OpenRouter) |
 | Vault | `VaultStore` (scan, cache, embeddings), `Vault` (parsing, links, search), `VaultWrite`, `VerifiedEdit`, `NoteEdit`, `Edits`, `Layout`, `Lane` |

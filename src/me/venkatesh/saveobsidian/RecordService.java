@@ -119,7 +119,7 @@ public class RecordService extends Service {
                 CaptureService.enqueue(this, new JSONObject(getSharedPreferences("capture", 0).getString("recordDestination", "{}")).put("kind", "voice").put("audio", audio.getPath()).put("format", "m4a").put("label", "Voice note").put("time", startedAt));
                 getSharedPreferences("capture", 0).edit().remove("quickDestination").apply();
                 BackgroundJob.schedule(this);
-                toast(Model.key(this).isEmpty() && !PdfModel.local(this) ? "Saved. Add a key in Settings to transcribe." : "Saved. Transcribing…");
+                toast(Model.key(this).isEmpty() ? "Saved. Add a key in Settings to transcribe." : "Saved. Transcribing…");
             } catch (Exception e) { toast("Recording kept on this phone but not queued: " + e.getMessage()); }
         } else {
             audio.delete();

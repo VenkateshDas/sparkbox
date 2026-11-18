@@ -24,8 +24,8 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
         super.onCreate(state);
         if (android.os.Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false); // the app switcher must not show inbox contents
         Ui ui = new Ui(this);
-        view = new QuickState(getSharedPreferences("capture", 0).getString("draft", ""), CaptureService.inboxName(this),
-            PdfModel.local(this) ? "Transcribed on this phone with its offline speech model." : Model.key(this).isEmpty() ? "Add an OpenRouter key in Settings to turn recordings into text. Until then they wait on this phone." : "Sent to OpenRouter for a transcript, then the audio is deleted");
+        view = new QuickState(getSharedPreferences("capture", 0).getString("draft", ""),
+            Model.key(this).isEmpty() ? "Add an OpenRouter key in Settings to turn recordings into text. Until then they wait on this phone." : "Sent to OpenRouter for a transcript, then the audio is deleted");
         try { destination = new org.json.JSONObject(getSharedPreferences("capture", 0).getString(RecordService.active ? "recordDestination" : "quickDestination", "{}")); } catch (Exception ignored) { }
         view.setDestination(DestinationPicker.label(destination));
         QuickViewHost.set(this, ui, view, actions);
@@ -99,7 +99,7 @@ public class QuickActivity extends androidx.activity.ComponentActivity {
             }
             getSharedPreferences("capture", 0).edit().remove("draft").remove("quickDestination").apply();
             if (DirectCapture.direct(destination)) BackgroundJob.schedule(this); else ShareActivity.dispatch(this);
-            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Saved on this phone for " + DestinationPicker.label(destination), Toast.LENGTH_SHORT).show();
             closing = true;
             close();
         } catch (Exception e) { closing = false; Toast.makeText(this, "Could not save: " + e.getMessage(), Toast.LENGTH_LONG).show(); }

@@ -34,7 +34,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -162,7 +162,7 @@ private fun FeedScreenUi(state: FeedState, a: FeedActions, dark: Boolean) {
                                     is HeadingRow -> Text(row.text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
                                     is AttentionRow -> AttentionCard(row, a)
                                     is ItemRow -> ItemCard(row, a, state.steps, dark) { sheet = row }
-                                    is EmptyRow -> Empty(row, a)
+                                    is EmptyRow -> Empty(row, state.chip, a)
                                     is HitRow -> HitCard(row.hit, state.query, dark, a)
                                     is NoHitsRow -> NoHits(row, a)
                                 }
@@ -171,8 +171,9 @@ private fun FeedScreenUi(state: FeedState, a: FeedActions, dark: Boolean) {
                     }
                 }
             }
-            FloatingActionButton(onClick = { a.capture() }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)) { Text("+", style = MaterialTheme.typography.headlineSmall) }
+            val inlineCapture = state.chip == "All" && state.rows.any { it is EmptyRow && it.vaultReady }
+            if (!inlineCapture) ExtendedFloatingActionButton(onClick = { a.capture() }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)) { Text("Capture") }
         }
     }
     sheet?.let { row -> ItemSheet(row, a) { sheet = null } }
@@ -243,13 +244,14 @@ private fun Header(subtitle: String, a: FeedActions) {
     var open by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("Feed", style = MaterialTheme.typography.headlineSmall)
+            Text("Library", style = MaterialTheme.typography.headlineSmall)
             if (subtitle.isNotEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        TextButton(onClick = { a.menu(2) }) { Text("Browse") }
         Box {
-            IconButton(onClick = { open = true }) { Text("☰", style = MaterialTheme.typography.titleLarge) }
+            IconButton(onClick = { open = true }) { Icon(painterResource(R.drawable.ic_menu), contentDescription = "Library options") }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                listOf("Profile", "Settings", "Browse vault", "Dashboard").forEachIndexed { i, s -> DropdownMenuItem(text = { Text(s) }, onClick = { open = false; a.menu(i) }) }
+                listOf(1 to "Settings", 3 to "Dashboard").forEach { (i, s) -> DropdownMenuItem(text = { Text(s) }, onClick = { open = false; a.menu(i) }) }
             }
         }
     }
@@ -287,14 +289,6 @@ private fun AttentionCard(r: AttentionRow, a: FeedActions) = CardBox {
 private fun Pill(text: String, fg: Color, bg: Color) =
     Text(text, style = MaterialTheme.typography.labelMedium, color = fg, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(bg).padding(horizontal = 8.dp, vertical = 3.dp))
 
-@Composable
-private fun Avatar(seed: String, dark: Boolean) {
-    val hsv = floatArrayOf((Math.abs(seed.hashCode()) % 360).toFloat(), if (dark) 0.35f else 0.25f, if (dark) 0.38f else 0.92f)
-    Box(Modifier.size(36.dp).clip(CircleShape).background(Color(android.graphics.Color.HSVToColor(hsv))), contentAlignment = Alignment.Center) {
-        Text(seed.take(1).uppercase(), style = MaterialTheme.typography.titleSmall, color = if (dark) Color(0xFFDDDDDD) else Color(0xFF444444))
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Boolean, onLong: () -> Unit) {
@@ -303,22 +297,23 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
     val topic = it.kind == Feed.TOPIC
     CardBox(tint = calmTint(it.lane, dark), onClick = { a.open(it) }, onLong = if (r.canEdit || r.canRetry) onLong else null) {
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val who = if (source) it.sourceName.ifEmpty { "Note" } else if (topic) "Topic" else "Person"
-                Avatar(who, dark)
-                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                    Text(who, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val whenText = if (topic && it.count > 0) "${it.count} new sources" else if (topic) "Personal note" else it.age
-                    val line = listOf(whenText, it.lane).filter { s -> s.isNotEmpty() }.joinToString(" · ")
-                    if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (r.canEdit || r.canRetry) TextButton(onClick = onLong, modifier = Modifier.size(48.dp)) { Text("⋮", modifier = Modifier.semantics { contentDescription = "Note actions" }, style = MaterialTheme.typography.headlineSmall) }
-                if (source && it.status.isNotEmpty()) {
-                    if (it.status == Feed.PROCESSED) Pill(it.status, MaterialTheme.colorScheme.onPrimaryContainer, MaterialTheme.colorScheme.primaryContainer)
-                    else Pill(it.status, MaterialTheme.colorScheme.onSurfaceVariant, MaterialTheme.colorScheme.surfaceContainerHigh)
+            Row(verticalAlignment = Alignment.Top) {
+                Text(it.title, style = MaterialTheme.typography.titleLarge, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (r.canEdit || r.canRetry) IconButton(onClick = onLong) {
+                    Text("⋮", modifier = Modifier.semantics { contentDescription = "Note actions" }, style = MaterialTheme.typography.headlineSmall)
                 }
             }
-            Text(it.title, style = MaterialTheme.typography.titleLarge, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 12.dp))
+            val who = if (source) it.sourceName.ifEmpty { "Note" } else if (topic) "Topic" else "Person"
+            val whenText = if (topic && it.count > 0) "${it.count} new sources" else if (topic) "Personal note" else it.age
+            Text(listOf(who, whenText, it.lane).filter { part -> part.isNotEmpty() }.joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (source && it.status.isNotEmpty()) Text(it.status, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (it.why.isNotEmpty()) {
+                Column(Modifier.padding(top = 12.dp).fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(8.dp)).padding(12.dp)) {
+                    Text("Why I saved it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(it.why, style = MaterialTheme.typography.bodyLarge, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+            }
             if (it.kind == Feed.PERSON) Small("Mentioned in ${it.count} ${if (it.count == 1) "note" else "notes"}")
             if (it.tldr.isNotEmpty()) Text(it.tldr, style = MaterialTheme.typography.bodyLarge, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
             if (source && it.url.isNotEmpty()) AndroidView(factory = { _ -> a.thumb(it) }, modifier = Modifier.padding(top = 12.dp).fillMaxWidth().height(160.dp).clip(RoundedCornerShape(14.dp)))
@@ -326,7 +321,6 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
                 Text("Curiosity prompt", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(it.curiosity, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp))
             }
-            if (it.why.isNotEmpty()) Small("Why saved: ${it.why}")
             if (it.waiting.isNotEmpty()) Small(it.waiting)
             if (it.made.isNotEmpty()) Small(it.made)
             if (it.cards > 0) Small("${it.cards} ${if (it.cards == 1) "card" else "cards"}")
@@ -342,7 +336,10 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
                 }
             }
             HorizontalDivider(Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.fillMaxWidth()) {
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                maxItemsInEachRow = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 2 else 4
+            ) {
                 if (it.entry == null) Action("Ask", R.drawable.ic_nav_ask) { a.ask(it) }
                 else if (r.canRetry) Action("Retry", R.drawable.ic_retry) { a.retry(it) }
                 if (it.entry == null && it.path.isNotEmpty()) Action(if (r.kept) "Kept" else "Keep", R.drawable.ic_keep) { a.keep(it) }
@@ -357,9 +354,9 @@ private fun ItemCard(r: ItemRow, a: FeedActions, steps: List<String>, dark: Bool
 private fun Small(text: String) = Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.Action(label: String, icon: Int, onClick: () -> Unit) {
+private fun androidx.compose.foundation.layout.FlowRowScope.Action(label: String, icon: Int, onClick: () -> Unit) {
     // Small side padding: with four actions on a phone, the default 24dp left no room and "Open" and "Share" wrapped letter by letter.
-    TextButton(onClick = onClick, modifier = Modifier.weight(1f).heightIn(min = 44.dp), contentPadding = PaddingValues(horizontal = 2.dp), colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) {
+    TextButton(onClick = onClick, modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 2.dp), colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) {
         Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(4.dp))
         Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, softWrap = false)
@@ -370,8 +367,10 @@ private fun androidx.compose.foundation.layout.RowScope.Action(label: String, ic
 @Composable
 private fun Progress(r: ItemRow, steps: List<String>) {
     Column(Modifier.padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(12.dp)) {
-        Text(if (r.queued) "Waiting for its turn" else "Processing now", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        steps.forEachIndexed { i, s ->
+        var expanded by remember { mutableStateOf(false) }
+        Text(if (r.queued) "Waiting to process" else steps.getOrNull(r.stage) ?: "Processing", style = MaterialTheme.typography.titleSmall)
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide details" else "Show details") }
+        if (expanded) steps.forEachIndexed { i, s ->
             val done = (!r.queued && i < r.stage) || i == 0
             val active = !r.queued && i == r.stage
             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -385,12 +384,22 @@ private fun Progress(r: ItemRow, steps: List<String>) {
 }
 
 @Composable
-private fun Empty(r: EmptyRow, a: FeedActions) {
-    Column(Modifier.fillMaxWidth().padding(top = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(if (r.vaultReady) "Nothing here yet" else "Choose your vault folder", style = MaterialTheme.typography.titleLarge)
-        Text(if (r.vaultReady) "Share a link or text to Sparkbox from any app. It shows up here." else "Sparkbox reads Knowledge from your Obsidian vault.",
-            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
-        Button(onClick = { a.emptyAction(r.vaultReady) }, modifier = Modifier.padding(top = 16.dp)) { Text(if (r.vaultReady) "Check vault folder now" else "Choose folder") }
+private fun Empty(r: EmptyRow, filter: String, a: FeedActions) {
+    val filtered = r.vaultReady && filter != "All"
+    Column(Modifier.fillMaxWidth().padding(top = 32.dp), horizontalAlignment = Alignment.Start) {
+        Text(when {
+            !r.vaultReady -> "Connect your notes"
+            filtered -> "No notes in this filter"
+            else -> "Capture your first idea"
+        }, style = MaterialTheme.typography.headlineSmall)
+        Text(when {
+            !r.vaultReady -> "Choose your Obsidian folder. Allow folder access so Sparkbox can read your notes and save new ones there."
+            filtered -> "Choose All to see the rest of your library."
+            else -> "Write a thought here or share a link to Sparkbox from another app."
+        }, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+        Button(onClick = {
+            if (filtered) a.chip("All") else a.emptyAction(r.vaultReady)
+        }, modifier = Modifier.padding(top = 16.dp)) { Text(if (filtered) "Show all notes" else if (r.vaultReady) "Capture" else "Choose folder") }
     }
 }
 

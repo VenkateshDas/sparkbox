@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -83,6 +84,9 @@ class Danger(val text: String, val onClick: Runnable) : Block
 class Editor(val label: String, val saved: String, val draft: String, val hint: String, val onChange: java.util.function.Consumer<String>, val saver: Saver) : Block
 
 class PageState {
+    var availableNotes by mutableStateOf(emptyList<Vault.Note>())
+    var selectedPath by mutableStateOf("")
+    var route by mutableStateOf("")
     var blocks by mutableStateOf(emptyList<Block>()); private set
     var title by mutableStateOf(""); private set
     fun publish(b: List<Block>) { blocks = b }
@@ -90,6 +94,41 @@ class PageState {
 }
 
 object PageView {
+    @JvmStatic fun vault(c: Context, ui: Ui, state: PageState, back: Runnable, open: java.util.function.Consumer<String>): View = ComposeView(c).apply {
+        setContent {
+            SparkTheme(ui) {
+                val positions = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+                val reader: @Composable (Runnable?) -> Unit = { navigateBack ->
+                    positions.SaveableStateProvider(state.route) { Page("Knowledge", state, navigateBack) }
+                }
+                androidx.compose.foundation.layout.BoxWithConstraints {
+                    if (maxWidth >= 720.dp && state.availableNotes.isNotEmpty()) {
+                        Row(Modifier.fillMaxSize()) {
+                            Column(Modifier.weight(0.4f)) {
+                                TopBar("Browse", back)
+                                var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+                                OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Find a note") },
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp))
+                                val matches = remember(query, state.availableNotes) { state.availableNotes.filter { it.title.contains(query.trim(), ignoreCase = true) } }
+                                LazyColumn {
+                                    if (matches.isEmpty()) item { Text("No matching notes", modifier = Modifier.padding(16.dp)) }
+                                    items(matches.size, key = { matches[it].path }) { index ->
+                                        val note = matches[index]
+                                        val selected = note.path == state.selectedPath
+                                        Surface(onClick = { open.accept(note.path) }, color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface) {
+                                            Text(note.title, modifier = Modifier.fillMaxWidth().padding(16.dp))
+                                        }
+                                    }
+                                }
+                            }
+                            androidx.compose.material3.VerticalDivider()
+                            Column(Modifier.weight(0.6f)) { reader(null) }
+                        }
+                    } else reader(back)
+                }
+            }
+        }
+    }
     @JvmStatic fun create(c: Context, ui: Ui, title: String, state: PageState, back: Runnable): View = ComposeView(c).apply {
         setContent { SparkTheme(ui) { Page(title, state, back) } }
     }
@@ -107,7 +146,7 @@ fun TopBar(title: String, back: Runnable?, actions: @Composable () -> Unit = {})
 }
 
 @Composable
-private fun Page(title: String, state: PageState, back: Runnable) {
+private fun Page(title: String, state: PageState, back: Runnable?) {
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column {
             TopBar(state.title.ifEmpty { title }, back)
@@ -179,10 +218,10 @@ fun BlockUi(b: Block) {
             Row(verticalAlignment = Alignment.CenterVertically) { Text(b.label, style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant); OriginTag(b.origin) }
             Text(b.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 4.dp))
         }
-        is Heading -> Row(Modifier.padding(top = 8.dp).let { m -> b.onClick?.let { c -> m.clickable { c.run() } } ?: m }.heightIn(min = 32.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(b.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        is Heading -> Row(Modifier.padding(top = 8.dp).let { m -> b.onClick?.let { c -> m.clickable { c.run() } } ?: m }.heightIn(min = if (b.onClick == null) 32.dp else 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(b.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f, fill = false))
             OriginTag(b.origin)
-            if (b.onClick != null) { Spacer(Modifier.weight(1f)); Text("›", style = MaterialTheme.typography.titleLarge, color = cs.onSurfaceVariant) }
+            if (b.onClick != null) { Text("›", style = MaterialTheme.typography.titleLarge, color = cs.onSurfaceVariant) }
         }
         is Bullet -> Row {
             Text("•", style = MaterialTheme.typography.bodyLarge, color = cs.primary, modifier = Modifier.width(16.dp))
@@ -201,12 +240,12 @@ fun BlockUi(b: Block) {
                 Text(b.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(end = 8.dp))
                 if (b.body.isNotEmpty()) Text(b.body, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 6.dp, end = 8.dp))
                 if (b.note.isNotEmpty()) Text(b.note, style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, end = 8.dp))
-                if (b.acts.isNotEmpty()) Row(Modifier.padding(top = 2.dp)) { b.acts.forEach { a -> TextButton(onClick = { a.onClick.run() }) { Text(a.label) } } }
+                if (b.acts.isNotEmpty()) FlowRow(Modifier.padding(top = 2.dp)) { b.acts.forEach { a -> TextButton(onClick = { a.onClick.run() }) { Text(a.label) } } }
             }
         }
         is Field -> Column {
             if (b.label.isNotEmpty()) Text(b.label, style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
-            if (b.chips.isNotEmpty()) Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (b.chips.isNotEmpty()) FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 b.chips.forEach { c -> androidx.compose.material3.AssistChip(onClick = { c.onClick.run() }, label = { Text(c.label) }) }
             }
             var text by remember(b.value) { mutableStateOf(b.value) }

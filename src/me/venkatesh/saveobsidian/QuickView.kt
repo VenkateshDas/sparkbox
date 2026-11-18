@@ -37,6 +37,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -61,7 +63,7 @@ import androidx.compose.ui.unit.sp
 interface QuickActions { fun write(); fun speak(); fun save(text: String); fun discard(); fun stop(); fun dismiss(); fun draft(text: String); fun destination() }
 
 /** The capture sheet's state. QuickActivity keeps recording and saving; this only draws. */
-class QuickState(draft: String, val inbox: String, val hint: String) {
+class QuickState(draft: String, val hint: String) {
     val shown = MutableTransitionState(false)
     var speaking by mutableStateOf(false)
     var text by mutableStateOf(draft)
@@ -91,15 +93,14 @@ fun QuickSheet(s: QuickState, a: QuickActions) {
         }
         AnimatedVisibility(s.shown, modifier = Modifier.align(Alignment.BottomCenter), enter = slideInVertically { it }, exit = slideOutVertically { it }) {
             Surface(shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.navigationBarsPadding().imePadding().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp)) {
+                Column(Modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 20.dp)) {
                     Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)))
                     Row(Modifier.padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        SingleChoiceSegmentedButtonRow {
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                             SegmentedButton(selected = !s.speaking, onClick = { a.write() }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Write") }
                             SegmentedButton(selected = s.speaking, onClick = { a.speak() }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Speak") }
                         }
-                        Text(s.inbox, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.End, modifier = Modifier.weight(1f).padding(start = 12.dp))
+
                     }
                     androidx.compose.material3.TextButton(onClick = { a.destination() }, modifier = Modifier.fillMaxWidth()) { Text("Save to: " + s.destination, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     if (s.speaking) Speak(s, a) else Write(s, a)
